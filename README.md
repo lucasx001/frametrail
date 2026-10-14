@@ -18,10 +18,12 @@
 Windows 11 x64，准备工具链后在本目录运行：
 
 ```powershell
-.\scripts\build.ps1 -Configuration Release
-.\scripts\run.ps1 -Configuration Release
+.\scripts\build.cmd -Configuration Release
+.\scripts\run.cmd -Configuration Release
 ```
 
-默认测试排除需要实际设备的托管检查；实机补充运行 `scripts/test.ps1 -Configuration Release -IncludeHardware`。具体依赖、原生输出目录和验证命令见工具链文档。
+`.cmd` 入口适用于默认禁止脚本的 Windows PowerShell，通过独立子进程执行对应 `.ps1`；执行策略仅对子进程生效，不修改用户或系统的持久设置。若直接运行 `.ps1` 遇到“在此系统上禁止运行脚本”，请使用以上命令。
+
+默认测试排除需要实际设备的托管检查；实机补充运行 `.\scripts\test.cmd -Configuration Release -IncludeHardware`。具体依赖、原生输出目录和验证命令见工具链文档。
 
 当前是开发原型。摄像头周期分段仍有重启间隙，60 FPS、30 分钟联合音画同步及外设矩阵尚未验收；请查看规格中的实现边界。

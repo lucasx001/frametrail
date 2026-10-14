@@ -57,6 +57,13 @@
 - 主 agent 实际终止录制进程后恢复：保留第 1 个已完成片段及其声音/光标，明确排除未完成的第 2 段，再次打开成功。
 - 所有未实际完成的硬件、60 FPS 和 30 分钟同步验收保持未勾选；未创建提交、远程仓库或发布包。
 
+### 2026-10-14 — 修复 PowerShell 执行策略阻塞
+
+- 确认 Windows PowerShell 5.1 的有效策略为 `Restricted`，直接运行 `.ps1` 会在进入构建/启动逻辑前失败。
+- 增加 `build.cmd`、`run.cmd`、`test.cmd`、`doctor.cmd`；仅在独立 PowerShell 子进程中指定执行策略，透传参数和退出码，不修改持久策略。README 与工具链文档同步使用这些入口。
+- `doctor.cmd` 成功识别本地工具链；`build.cmd -Configuration Release -LockedRestore` 构建通过，0 警告、0 错误，4 组原生测试和 92 项默认托管测试通过。本次未运行硬件测试。
+- 验证无效 Configuration 参数返回非零退出码；从有效策略仍为 `Restricted` 的 Windows PowerShell 调用 `run.cmd -Configuration Release` 后应用窗口成功打开，执行结束后的持久策略保持原状。
+
 ## 后续记录模板
 
 ```text

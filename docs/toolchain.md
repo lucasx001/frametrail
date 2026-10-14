@@ -45,20 +45,35 @@ Windows App SDK 1.8 本身支持更早系统；本项目有意缩小为 Windows 
 在项目根目录打开PowerShell：
 
 ```powershell
-.\scripts\doctor.ps1
-.\scripts\build.ps1 -Configuration Debug
-.\scripts\test.ps1 -Configuration Debug
-.\scripts\test.ps1 -Configuration Debug -IncludeHardware  # 登录桌面的设备测试
-.\scripts\run.ps1
+.\scripts\doctor.cmd
+.\scripts\build.cmd -Configuration Debug
+.\scripts\test.cmd -Configuration Debug
+.\scripts\test.cmd -Configuration Debug -IncludeHardware  # 登录桌面的设备测试
+.\scripts\run.cmd
 ```
 
 只有Visual Studio生成器时：
 
 ```powershell
-.\scripts\build.ps1 -Configuration Release -Generator 'Visual Studio 17 2022'
+.\scripts\build.cmd -Configuration Release -Generator "Visual Studio 17 2022"
 ```
 
 已初始化cl环境或使用portable工具链时默认Ninja。不同生成器或不同Configuration用不同`-NativeBuildDirectory`，避免复用CMake缓存。可以传入`-NativeOnly`只构建原生引擎。已提交packages.lock.json后，CI使用`-LockedRestore`拒绝未审阅的依赖解析变化。
+
+### PowerShell 禁止运行脚本
+
+如果直接执行 `.ps1` 出现 `PSSecurityException` / `UnauthorizedAccess`，脚本尚未开始运行。Windows PowerShell 在未配置执行策略时通常使用 `Restricted`；PowerShell 7 的设置可能不同。
+
+优先使用上面的 `.cmd` 入口。它们通过系统自带的 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` 执行同名脚本，保留脚本参数与退出码，且不修改用户或系统的持久执行策略。该方式不需要管理员权限；企业组策略仍具有更高优先级。
+
+也可以只对单次调用显式指定策略：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Configuration Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -Configuration Release
+```
+
+可在报错的终端中运行 `Get-ExecutionPolicy -List` 检查各作用域。策略作用域与优先级见 [Microsoft 执行策略说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1)。
 
 WinUI应用采用unpackaged + WindowsAppSDKSelfContained，构建时复制FrameTrail.Engine/Capture/Audio/Recording DLL到应用目录。原生模块静态链接 CRT，避免缺少 Debug CRT 或加载过旧宿主运行库；所有跨 ABI 的缓冲由调用方提供，对象由创建它的 DLL 销毁，不跨 CRT 释放内存。媒体像素留在原生引擎，C#仅持有句柄及状态。当前是开发目录启动；MSIX签名、安装更新和发布留到0011。
 
