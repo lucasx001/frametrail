@@ -1,0 +1,43 @@
+<Window x:Class="FrameTrail.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="FrameTrail">
+ <ScrollViewer><StackPanel Padding="32" Spacing="16" MaxWidth="1000">
+  <TextBlock Text="FrameTrail" FontSize="36" FontWeight="SemiBold" />
+  <TextBlock Text="记录屏幕，清晰表达。" FontSize="18" />
+  <TextBlock x:Name="EngineStatus" Text="正在初始化…" TextWrapping="Wrap" AutomationProperties.Name="引擎状态" />
+  <StackPanel Orientation="Horizontal" Spacing="10">
+   <Button x:Name="RefreshButton" Content="刷新来源与设备" Click="Refresh_Click" />
+   <Button x:Name="SessionCheckButton" Content="检查引擎会话" Click="CheckSession_Click" />
+   <Button Content="打开项目" Click="Open_Click" /><Button Content="备忘录" Click="Memo_Click" />
+  </StackPanel>
+  <UserControl x:Name="SetupPanel"><StackPanel Spacing="12">
+   <ComboBox x:Name="SourcePicker" Header="显示器或窗口" DisplayMemberPath="Name" HorizontalAlignment="Stretch" />
+   <CheckBox x:Name="RegionEnabled" Content="录制显示器内区域（物理像素）" />
+   <StackPanel Orientation="Horizontal" Spacing="10">
+    <NumberBox x:Name="RegionX" Header="X" Value="0" Minimum="0" Width="110" /><NumberBox x:Name="RegionY" Header="Y" Value="0" Minimum="0" Width="110" />
+    <NumberBox x:Name="RegionWidth" Header="宽度" Value="1280" Minimum="2" Width="130" /><NumberBox x:Name="RegionHeight" Header="高度" Value="720" Minimum="2" Width="130" />
+    <ComboBox x:Name="FpsPicker" Header="帧率" SelectedIndex="0"><ComboBoxItem Content="30 FPS" /><ComboBoxItem Content="60 FPS" /></ComboBox>
+   </StackPanel>
+   <CheckBox x:Name="SoftwareAllowed" Content="允许软件编码降级（最高 1080p30）" />
+   <StackPanel Orientation="Horizontal" Spacing="16"><CheckBox x:Name="SystemEnabled" Content="系统声音" /><ComboBox x:Name="SystemPicker" Header="Loopback 输出设备" DisplayMemberPath="Name" MinWidth="300" /></StackPanel>
+   <CheckBox x:Name="ProcessAudio" Content="系统声音仅采集所选窗口的进程树（可能包含多个浏览器窗口 / 标签页）" />
+   <StackPanel Orientation="Horizontal" Spacing="16"><CheckBox x:Name="MicEnabled" Content="麦克风" /><ComboBox x:Name="MicPicker" Header="输入设备" DisplayMemberPath="Name" MinWidth="300" /></StackPanel>
+   <StackPanel Orientation="Horizontal" Spacing="16"><ComboBox x:Name="CameraPicker" Header="摄像头独立原始轨" DisplayMemberPath="Name" SelectionChanged="Camera_Changed" MinWidth="300" /><ComboBox x:Name="CameraFormatPicker" Header="格式" MinWidth="240" /></StackPanel>
+   <CheckBox x:Name="PointerEnabled" Content="独立记录光标与点击" IsChecked="True" />
+   <TextBox x:Name="ProjectPath" Header="新工程目录（.frametrailproject）" />
+   <TextBlock Text="每 60 秒完成一个可恢复分段。纯屏幕与音频使用重叠分段；摄像头分段需要重新打开设备，间隙会记录在工程诊断中。" TextWrapping="Wrap" />
+  </StackPanel></UserControl>
+  <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" CornerRadius="8" Padding="18"><StackPanel Spacing="12">
+   <TextBlock x:Name="RecordingStatus" Text="就绪" FontSize="20" AutomationProperties.Name="录制状态" /><TextBlock x:Name="DurationText" Text="00:00:00" FontSize="28" />
+   <ProgressBar x:Name="MicrophoneLevel" Minimum="0" Maximum="1" Value="0" AutomationProperties.Name="麦克风电平" />
+   <StackPanel Orientation="Horizontal" Spacing="10"><Button x:Name="StartButton" Content="开始录制" Click="Start_Click" /><Button x:Name="PauseButton" Content="暂停" Click="Pause_Click" IsEnabled="False" /><Button x:Name="StopButton" Content="停止" Click="Stop_Click" IsEnabled="False" /></StackPanel>
+   <StackPanel Orientation="Horizontal" Spacing="10"><TextBox x:Name="MarkerLabel" PlaceholderText="标记文字（可选）" Width="260" /><Button x:Name="MarkerButton" Content="添加标记" Click="Marker_Click" IsEnabled="False" /></StackPanel>
+   <CheckBox x:Name="ExcludeControl" Content="从采集中排除工作区与备忘录" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" />
+   <StackPanel Orientation="Horizontal" Spacing="12">
+    <ComboBox x:Name="StopKey" Header="停止：Ctrl + Shift +" SelectedIndex="3"><ComboBoxItem Content="F6" /><ComboBoxItem Content="F7" /><ComboBoxItem Content="F8" /><ComboBoxItem Content="F9" /><ComboBoxItem Content="F10" /><ComboBoxItem Content="F11" /><ComboBoxItem Content="F12" /></ComboBox>
+    <ComboBox x:Name="MarkerKey" Header="标记：Ctrl + Shift +" SelectedIndex="4"><ComboBoxItem Content="F6" /><ComboBoxItem Content="F7" /><ComboBoxItem Content="F8" /><ComboBoxItem Content="F9" /><ComboBoxItem Content="F10" /><ComboBoxItem Content="F11" /><ComboBoxItem Content="F12" /></ComboBox>
+    <Button Content="应用快捷键" Click="Hotkey_Click" VerticalAlignment="Bottom" />
+   </StackPanel><TextBlock x:Name="HotkeyStatus" TextWrapping="Wrap" />
+  </StackPanel></Border>
+  <TextBlock x:Name="Feedback" TextWrapping="Wrap" IsTextSelectionEnabled="True" AutomationProperties.Name="工作区提示" />
+  <ComboBox x:Name="RecoveryPicker" Header="未正常结束的工程" DisplayMemberPath="Directory" HorizontalAlignment="Stretch" /><Button Content="恢复所选工程" Click="Recover_Click" />
+ </StackPanel></ScrollViewer>
+</Window>

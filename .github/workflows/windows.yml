@@ -1,0 +1,23 @@
+name: Windows build and logic tests
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build native engine, WinUI app, and run CPU tests
+        shell: pwsh
+        run: ./scripts/build.ps1 -Configuration Release -LockedRestore
+      - name: Preserve test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: artifacts/test-results
+      # Interactive capture, GPU correctness, and device tests require a logged-on
+      # dedicated Windows desktop; hosted CI does not provide that acceptance.

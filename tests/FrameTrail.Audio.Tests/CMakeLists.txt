@@ -1,0 +1,5 @@
+add_executable(FrameTrail.Audio.Tests audio_tests.cpp)
+target_compile_features(FrameTrail.Audio.Tests PRIVATE cxx_std_20)
+target_compile_definitions(FrameTrail.Audio.Tests PRIVATE NOMINMAX UNICODE _UNICODE)
+target_link_libraries(FrameTrail.Audio.Tests PRIVATE FrameTrail.Audio winmm)
+add_test(NAME FrameTrail.Audio.Clock COMMAND FrameTrail.Audio.Tests)

@@ -1,0 +1,23 @@
+{
+  "description": "Human-calculated vectors from the shared project-v1 fixture, not executed Swift output.",
+  "outputDurationTicks": 110000000,
+  "outputToSource": [
+    { "outputTicks": 0, "sourceTicks": 60000000, "segmentId": "later-fast" },
+    { "outputTicks": 5000000, "sourceTicks": 80000000, "segmentId": "later-fast" },
+    { "outputTicks": 10000000, "sourceTicks": 0, "segmentId": "earlier-slow" },
+    { "outputTicks": 50000000, "sourceTicks": 10000000, "segmentId": "earlier-slow" },
+    { "outputTicks": 90000000, "sourceTicks": 40000000, "segmentId": "middle-normal" },
+    { "outputTicks": 100000000, "sourceTicks": 50000000, "segmentId": "middle-normal" },
+    { "outputTicks": 110000000, "sourceTicks": null, "segmentId": null },
+    { "outputTicks": -1, "sourceTicks": null, "segmentId": null }
+  ],
+  "sourceToOutput": [
+    { "sourceTicks": 0, "outputTicks": 10000000, "segmentId": "earlier-slow" },
+    { "sourceTicks": 10000000, "outputTicks": 50000000, "segmentId": "earlier-slow" },
+    { "sourceTicks": 20000000, "outputTicks": null, "segmentId": null },
+    { "sourceTicks": 30000000, "outputTicks": null, "segmentId": null },
+    { "sourceTicks": 40000000, "outputTicks": 90000000, "segmentId": "middle-normal" },
+    { "sourceTicks": 60000000, "outputTicks": 0, "segmentId": "later-fast" },
+    { "sourceTicks": 100000000, "outputTicks": null, "segmentId": null }
+  ]
+}

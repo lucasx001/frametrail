@@ -1,0 +1,11 @@
+artifacts/
+/build/
+.vs/
+.tools/
+**/bin/
+**/obj/
+**/TestResults/
+CMakeUserPresets.json
+*.user
+*.suo
+*.frametrailproject/

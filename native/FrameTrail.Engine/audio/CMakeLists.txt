@@ -1,0 +1,5 @@
+add_library(FrameTrail.Audio SHARED audio.cpp)
+target_compile_definitions(FrameTrail.Audio PRIVATE FT_AUDIO_EXPORTS WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_compile_options(FrameTrail.Audio PRIVATE /W4 /EHsc /permissive-)
+target_link_libraries(FrameTrail.Audio PRIVATE ole32 uuid avrt mmdevapi propsys user32)
+target_include_directories(FrameTrail.Audio PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

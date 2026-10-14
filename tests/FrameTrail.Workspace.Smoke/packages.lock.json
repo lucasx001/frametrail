@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0": {
+      "frametrail.domain": {
+        "type": "Project"
+      },
+      "frametrail.interop": {
+        "type": "Project",
+        "dependencies": {
+          "FrameTrail.Domain": "[1.0.0, )"
+        }
+      },
+      "frametrail.workspace": {
+        "type": "Project",
+        "dependencies": {
+          "FrameTrail.Interop": "[1.0.0, )"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+add_library(FrameTrail.Recording SHARED camera.cpp pointer.cpp)
+target_compile_definitions(FrameTrail.Recording PRIVATE FT_RECORDING_EXPORTS WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_compile_options(FrameTrail.Recording PRIVATE /W4 /EHsc /permissive- /utf-8)
+target_link_libraries(FrameTrail.Recording PRIVATE mf mfplat mfreadwrite mfuuid ole32 uuid user32 gdi32 dwmapi windowscodecs)
+target_include_directories(FrameTrail.Recording PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
