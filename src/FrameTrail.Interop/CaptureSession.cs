@@ -11,6 +11,7 @@ public sealed record CaptureSource(CaptureSourceKind Kind, nuint Handle, string 
 }
 public readonly record struct CaptureRegion(int X, int Y, int Width, int Height);
 public sealed record CaptureCapabilities(bool WgcSupported, uint HardwareH264Count, uint SoftwareH264Count, long QpcFrequency);
+public sealed record CapturePerformance(bool GpuSamples, ulong Converted, ulong ConversionQpc, ulong ConversionMaxQpc, ulong WriterQpc, ulong WriterMaxQpc);
 public sealed record CaptureSettings(CaptureSource Source, string OutputPath,
     CaptureRegion? Region = null, uint Fps = 30, uint Bitrate = 10_000_000, uint QueueCapacity = 4, bool AllowSoftware = false);
 public sealed record CaptureStatus(CaptureState State, int ErrorCode, uint Width, uint Height,
@@ -102,6 +103,16 @@ public sealed class CaptureSession : IDisposable, IAsyncDisposable
     {
         lock (_gate) { ObjectDisposedException.ThrowIf(_disposed, this); CaptureNative.Check(boundaryQpc.HasValue
             ? CaptureNative.PauseAt(_handle, boundaryQpc.Value) : CaptureNative.Pause(_handle)); }
+    }
+    public CapturePerformance GetPerformance()
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var value = new CaptureNative.Performance { StructSize = (uint)Marshal.SizeOf<CaptureNative.Performance>() };
+            CaptureNative.Check(CaptureNative.GetPerformance(_handle, ref value));
+            return new(value.GpuSamples != 0, value.Converted, value.ConversionQpc, value.ConversionMaxQpc, value.WriterQpc, value.WriterMaxQpc);
+        }
     }
     public void Resume(long? boundaryQpc = null)
     {

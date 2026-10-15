@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using FrameTrail.Domain;
 using FrameTrail.Interop;
 
@@ -93,6 +94,14 @@ public sealed class NativeRecordingDriver : IRecordingDriver
                 try { pointer?.StopAt(boundaryQpc); } catch (Exception error) { warnings.Add("Pointer finalize: " + error.Message); }
             });
             var screenStatus = await screen.StopAsync();
+            try
+            {
+                await File.WriteAllTextAsync(Path.ChangeExtension(paths.Diagnostics, ".capture.json"), JsonSerializer.Serialize(new {
+                    epochQpc = Start.EpochQpc, boundaryQpc, screen = screenStatus, performance = screen.GetPerformance(),
+                    cameraSourceIdentity = camera?.SourceIdentity, camera = camera?.GetStatus()
+                }, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception error) { warnings.Add("Capture diagnostics: " + error.Message); }
             if (screenStatus.ErrorCode < 0) warnings.Add("Screen source: " + screenStatus.Message);
             var tracks = new List<CompletedTrack>();
             // A new overlapping segment may already have established the next epoch. Physical files may contain

@@ -59,6 +59,9 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { engineStatus = error.Message; ShowFeedback("引擎初始化失败", error.Message, false); }
         coordinator.StatusChanged += UpdateStatus;
         RecorderWindowChrome.Configure(this, 374, 56, 28, center: true);
+        var launchArgs = Environment.GetCommandLineArgs(); var dragTrace = Array.IndexOf(launchArgs, "--drag-diagnostics");
+        RecorderWindowChrome.EnableDragging(this, RecorderRoot, HideFlyouts, dragTrace >= 0 && launchArgs.Length > dragTrace + 1
+            ? line => File.AppendAllText(launchArgs[dragTrace + 1], line + Environment.NewLine) : null);
         RecorderRoot.ActualThemeChanged += (_, _) => ApplyIcons();
         AppWindow.Changed += (_, args) => { if (args.DidSizeChange) RecorderWindowChrome.Round(this, SetupPanel.Visibility == Visibility.Visible ? 28 : 24); };
         AppWindow.Closing += async (_, args) =>
@@ -96,6 +99,7 @@ public sealed partial class MainWindow : Window
                 await ExecuteAsync(async () => {
                     opened = await ProjectWorkspace.OpenAsync(Path.GetFullPath(args[editorIndex + 1]));
                     var testIndex = Array.IndexOf(args, "--m2-self-test");
+                    if (testIndex < 0) testIndex = Array.IndexOf(args, "--m3-self-test");
                     PresentEditor(opened, testIndex >= 0 && args.Length > testIndex + 1 ? args[testIndex + 1] : null);
                 }); return;
             }
@@ -328,6 +332,7 @@ public sealed partial class MainWindow : Window
         if (busy) return; busy = true; ApplyInteraction();
         try { await action(); } catch (Exception error) {
             var arguments = Environment.GetCommandLineArgs(); var validationIndex = Array.IndexOf(arguments, "--m2-self-test");
+            if (validationIndex < 0) validationIndex = Array.IndexOf(arguments, "--m3-self-test");
             if (validationIndex >= 0 && arguments.Length > validationIndex + 1) { var directory = Path.GetFullPath(arguments[validationIndex + 1]); Directory.CreateDirectory(directory); File.WriteAllText(Path.Combine(directory, "editor-startup-error.txt"), error.ToString()); }
             AppWindow.Show(); ShowFeedback("操作未完成", error.Message);
         }
@@ -455,7 +460,6 @@ public sealed partial class MainWindow : Window
         HideFlyouts();
         ShowFeedback("录制来源", chosenSource is null ? "尚未选择来源。" : chosenSource.Name + (chosenRegion is CaptureRegion r ? $"\n{r.Width} × {r.Height} · 区域 ({r.X}, {r.Y})" : $"\n{chosenSource.Width} × {chosenSource.Height}"));
     }
-    private void Drag_Pressed(object sender, PointerRoutedEventArgs e) { HideFlyouts(); RecorderWindowChrome.Drag(this, e); }
     private void Root_KeyDown(object sender, KeyRoutedEventArgs e) { if (e.Key == VirtualKey.Escape) { HideFlyouts(); e.Handled = true; } }
     private void Quit_Click(object sender, RoutedEventArgs e) { HideFlyouts(); Close(); }
     private void Exclusion_Changed(object sender, RoutedEventArgs e) { if (loaded) ApplyExclusion(); }

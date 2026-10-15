@@ -13,7 +13,7 @@ namespace FrameTrail.App;
 // Only visible clips, ruler marks and waveform buckets become XAML elements.
 internal sealed class EditorTimeline : Grid
 {
-    private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Disabled };
+    private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled };
     private readonly Canvas canvas = new() { Height = 148, Background = new SolidColorBrush(Colors.Transparent) };
     private ResolvedTimeline? timeline;
     private string? selected;
@@ -22,6 +22,9 @@ internal sealed class EditorTimeline : Grid
     private bool dragging;
     private string? dragKind;
     private ResolvedClip? dragClip;
+    private ResolvedEffect? dragEffect;
+    private long effectGrabOffset;
+    private string? selectedVisual;
     private readonly Dictionary<long, BitmapImage> thumbnails = new();
     private float[]? waveform;
     private Dictionary<string, int> clipIndices = new();
@@ -30,6 +33,7 @@ internal sealed class EditorTimeline : Grid
     private readonly Border playHandle = new() { Width = 8, Height = 15, CornerRadius = new CornerRadius(4), Background = Brush(255, 69, 59), IsHitTestVisible = false };
     internal event Action<long>? Seek;
     internal event Action<string>? SelectClip;
+    internal event Action<string>? SelectEffect;
     internal event Action? BeginEdit;
     internal event Action<object>? PreviewEdit;
     internal event Action<bool>? EndEdit;
@@ -41,6 +45,7 @@ internal sealed class EditorTimeline : Grid
     private bool waveformMode;
     internal bool WaveformMode { get => waveformMode; set { waveformMode = value; Draw(); } }
     internal void RefreshAppearance() => Draw();
+    internal void SelectVisual(string? id) { selectedVisual = id; Draw(); }
     internal int RenderedElementCount => canvas.Children.Count;
     internal EditorTimeline()
     {
@@ -49,10 +54,11 @@ internal sealed class EditorTimeline : Grid
         canvas.PointerCaptureLost += (_, _) => { if (dragging) Finish(false); };
         ActualThemeChanged += (_, _) => Draw();
     }
-    internal void Set(ResolvedTimeline value, string? selection, long ticks) { timeline = value; selected = selection; playhead = ticks; clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i); markers = value.Markers.OrderBy(m => m.Ticks).ToArray(); Draw(); }
+    internal void Set(ResolvedTimeline value, string? selection, long ticks) { timeline = value; selected = selection; playhead = ticks; clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i); markers = value.Markers.OrderBy(m => m.Ticks).ToArray(); canvas.Height = value.Effects.Count > 0 ? 294 : 148; Draw(); }
     internal void Position(long ticks) { playhead = ticks; Canvas.SetLeft(playLine, X(playhead)); Canvas.SetLeft(playHandle, X(playhead) - 3.5); }
     internal void SetWaveform(float[]? values) { waveform = values; Draw(); }
     internal void ClearAssets() { waveform = null; thumbnails.Clear(); Draw(); }
+    internal void ClearThumbnails() { thumbnails.Clear(); Draw(); }
     internal void AddThumbnail(long ticks, string path)
     {
         if (thumbnails.Count >= 160) thumbnails.Remove(thumbnails.Keys.First()); thumbnails[ticks] = new BitmapImage(new Uri(path)); Draw();
@@ -80,11 +86,14 @@ internal sealed class EditorTimeline : Grid
             double start = X(clip.OutputStart), end = X(clip.OutputStart + clip.OutputDuration); double x = Math.Max(start, left), w = Math.Max(1, Math.Min(end, right) - x - 2);
             if (w < 3 && clip.Id != selected) { if (x < lastDenseClip + 3) continue; lastDenseClip = x; }
             var body = new Grid { Width = w, Height = 60, CornerRadius = new CornerRadius(6), Background = RecorderTheme.Brush(this, "EditorClip"), IsHitTestVisible = false };
-            var nearest = thumbnails.Where(k => k.Key >= clip.OutputStart && k.Key < clip.OutputStart + clip.OutputDuration).OrderBy(k => k.Key).FirstOrDefault();
-            if (nearest.Value is null && ThumbnailsEnabled && !waveformMode && w >= 14) ThumbnailNeeded?.Invoke(clip.OutputStart);
-            if (nearest.Value is not null && !waveformMode && w >= 6) {
+            // The first tick of an entrance can be transparent. An interior sample
+            // keeps the filmstrip useful without increasing its bounded cache.
+            long representative = clip.OutputStart + Math.Min(5_000_000, clip.OutputDuration / 2);
+            var nearest = thumbnails.TryGetValue(representative, out var thumbnail) ? thumbnail : null;
+            if (nearest is null && ThumbnailsEnabled && !waveformMode && w >= 14) ThumbnailNeeded?.Invoke(representative);
+            if (nearest is not null && !waveformMode && w >= 6) {
                 int count = Math.Min(24, (int)Math.Ceiling(w / 82)); var strip = new Grid { Height = 46, VerticalAlignment = VerticalAlignment.Top, CornerRadius = new CornerRadius(5) };
-                for (int tile = 0; tile < count; tile++) { strip.ColumnDefinitions.Add(new ColumnDefinition()); var image = new Image { Source = nearest.Value, Stretch = Stretch.UniformToFill }; Grid.SetColumn(image, tile); strip.Children.Add(image); }
+                for (int tile = 0; tile < count; tile++) { strip.ColumnDefinitions.Add(new ColumnDefinition()); var image = new Image { Source = nearest, Stretch = Stretch.UniformToFill }; Grid.SetColumn(image, tile); strip.Children.Add(image); }
                 body.Children.Add(strip);
             }
             if (w > 26) {
@@ -115,7 +124,13 @@ internal sealed class EditorTimeline : Grid
         int ml = 0, mh = markers.Length; while (ml < mh) { int m = (ml + mh) / 2; if (X(markers[m].Ticks) < left) ml = m + 1; else mh = m; }
         double lastMarker = double.NegativeInfinity;
         for (int i = ml; i < markers.Length && X(markers[i].Ticks) <= right; ++i) { double x = X(markers[i].Ticks); if (x - lastMarker < 4) continue; lastMarker = x; At(new TextBlock { Text = "◆", FontSize = 11, Foreground = Brush(235, 185, 95), IsHitTestVisible = false }, x - 5, 22); }
-        At(playLine, X(playhead), 14); At(playHandle, X(playhead) - 3.5, 6);
+        foreach (var effect in timeline.Effects.Where(e => X(e.OutputStart + e.OutputDuration) >= left && X(e.OutputStart) <= right)) {
+            double start = X(effect.OutputStart), end = X(effect.OutputStart + effect.OutputDuration), x = Math.Max(left, start), width = Math.Max(2, Math.Min(right, end) - x - 2);
+            var body = new Border { Width = width, Height = 20, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(effect.Id == selectedVisual ? (byte)190 : (byte)65, 90, 174, 255)), BorderBrush = Brush(90,174,255), BorderThickness = new Thickness(effect.Id == selectedVisual ? 2 : 1), IsHitTestVisible = false };
+            if(width > 38) body.Child = new TextBlock { Text = effect.Kind switch { "zoom" => "缩放", "tilt" => "透视", "mask" => "遮挡", "focus" => "聚焦", "intro" => "开场", _ => "贴图" }, FontSize = 10, Margin = new Thickness(6,0,3,0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = RecorderTheme.Brush(this, "EditorInk") };
+            At(body, x, EffectY(effect.Kind));
+        }
+        playLine.Height = canvas.Height - 14; At(playLine, X(playhead), 14); At(playHandle, X(playhead) - 3.5, 6);
     }
     private IEnumerable<ResolvedClip> VisibleClips(double left, double right)
     {
@@ -136,6 +151,13 @@ internal sealed class EditorTimeline : Grid
     {
         if (timeline is null) return; var point = e.GetCurrentPoint(canvas); if (!point.Properties.IsLeftButtonPressed) return;
         var p = point.Position; var ticks = T(p.X); var clip = timeline.Clips.FirstOrDefault(c => ticks >= c.OutputStart && ticks < c.OutputStart + c.OutputDuration);
+        var effect = timeline.Effects.LastOrDefault(c => ticks >= c.OutputStart && ticks < c.OutputStart + c.OutputDuration && p.Y >= EffectY(c.Kind) && p.Y <= EffectY(c.Kind) + 20);
+        if(effect is not null) {
+            bool already = selectedVisual == effect.Id; selectedVisual = effect.Id; SelectEffect?.Invoke(effect.Id);
+            if(EditingEnabled && already) { dragEffect = effect; effectGrabOffset = ticks-effect.OutputStart; dragKind = Math.Abs(p.X-X(effect.OutputStart)) <= 10 ? "start" : Math.Abs(p.X-X(effect.OutputStart+effect.OutputDuration)) <= 10 ? "end" : "move"; BeginEdit?.Invoke(); dragging = true; }
+            else { Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration-1))); dragKind = "seek"; }
+            canvas.CapturePointer(e.Pointer); e.Handled = true; Draw(); return;
+        }
         if (clip is not null && p.Y >= 32 && p.Y <= 96) {
             var prior = selected; SelectClip?.Invoke(clip.Id); selected = clip.Id; dragClip = clip;
             if (EditingEnabled && prior == clip.Id) {
@@ -151,6 +173,7 @@ internal sealed class EditorTimeline : Grid
         if (timeline is null || !e.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed) return;
         var ticks = Snap(T(e.GetCurrentPoint(canvas).Position.X));
         if (!dragging) { if (dragKind == "seek") Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); return; }
+        if(dragEffect is not null) { PreviewEdit?.Invoke(new { op = "effectAtOutput", effectId = dragEffect.Id, outputTicks = dragKind == "move" ? ticks-effectGrabOffset : ticks, edge = dragKind }); e.Handled = true; return; }
         if (dragClip is null) return;
         object command;
         if (dragKind == "move") {
@@ -160,7 +183,8 @@ internal sealed class EditorTimeline : Grid
         PreviewEdit?.Invoke(command); e.Handled = true;
     }
     private void Released(object sender, PointerRoutedEventArgs e) { if (dragging) Finish(true); dragKind = null; canvas.ReleasePointerCapture(e.Pointer); e.Handled = true; }
-    private void Finish(bool commit) { dragging = false; dragKind = null; dragClip = null; EndEdit?.Invoke(commit); }
+    private void Finish(bool commit) { dragging = false; dragKind = null; dragClip = null; dragEffect = null; EndEdit?.Invoke(commit); }
+    private static int EffectY(string kind) => kind switch { "zoom" => 148, "tilt" => 172, "intro" => 196, "mask" => 220, "focus" => 244, _ => 268 };
 }
 
 internal static class ReadOnlyListExtensions

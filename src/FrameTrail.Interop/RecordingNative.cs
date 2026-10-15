@@ -26,6 +26,7 @@ internal static class RecordingNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_set_epoch(CameraHandle handle, long qpc, long frequency);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_stop_at(CameraHandle handle, long qpc);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_get_status(CameraHandle handle, ref CameraStatus status);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_get_source_identity(CameraHandle handle, out ulong identity);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_camera_destroy(nint handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_recording_probe(string path, uint video, out long duration);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_pointer_start(in PointerOptions options, out PointerHandle handle);
@@ -81,6 +82,7 @@ public sealed class CameraCaptureSession : IDisposable
     }
     public void SetEpoch(long qpc, long frequency) => RecordingNative.Check(RecordingNative.ft_camera_set_epoch(handle, qpc, frequency));
     public void StopAt(long qpc) => RecordingNative.Check(RecordingNative.ft_camera_stop_at(handle, qpc));
+    public ulong SourceIdentity { get { RecordingNative.Check(RecordingNative.ft_camera_get_source_identity(handle, out var identity)); return identity; } }
     public CameraCaptureStatus GetStatus()
     {
         var value = new RecordingNative.CameraStatus { Size = (uint)Marshal.SizeOf<RecordingNative.CameraStatus>() };

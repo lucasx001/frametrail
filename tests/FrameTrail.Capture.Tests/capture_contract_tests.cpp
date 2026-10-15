@@ -1,4 +1,5 @@
 #include "capture.h"
+#include "frame_pacing.h"
 #include <iostream>
 #include <limits>
 
@@ -7,6 +8,12 @@ int failures{};
 void expect(bool value, char const* name) { if (!value) { ++failures; std::cerr << "FAIL: " << name << '\n'; } }
 }
 int main() {
+    int admitted = 0; int64_t previous_slot = -1;
+    for (int64_t i = 0; i < 600; ++i) {
+        auto slot = capture_frame_slot(i * 10'000'000 / 60 + (i % 2 ? -2000 : 2000), 60);
+        if (slot > previous_slot) { ++admitted; previous_slot = slot; }
+    }
+    expect(admitted == 600, "60 Hz jitter must not drop alternate capture frames");
     static_assert(sizeof(ft_capture_source) == 552);
     static_assert(sizeof(ft_capture_options) == 56);
     static_assert(sizeof(ft_capture_status) == 1136);
@@ -16,6 +23,7 @@ int main() {
     expect(ft_capture_start(nullptr, nullptr) < 0, "invalid start rejected");
     expect(ft_capture_pause(nullptr) < 0, "null pause rejected");
     expect(ft_capture_stop(nullptr) < 0, "null stop rejected");
+    expect(ft_capture_get_performance(nullptr, nullptr) < 0, "null performance rejected");
     ft_capture_destroy(nullptr);
     int32_t region[4]{};
     expect(ft_capture_region_from_dip(120, 10, 20, 800, 600, 2560, 1440, region) == 0, "125 percent region accepted");

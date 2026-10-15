@@ -44,6 +44,6 @@
 - MF 解码至 NV12，GPU 显式按 SDR 矩阵转 BGRA；FrameScene 在 Core 求值。屏幕/裁切/圆角/阴影/光标/摄像头由同一个 Renderer 合成，预览只降低栅格尺寸，不改项目参数。
 - 预览使用音频设备样本时钟或 Stopwatch，按合成事件提交；generation 拒绝旧 seek。最小化暂停，恢复提交有效画面，重新加载可重建整个预览会话。
 - 解码器/指针/图像缓存设上限；万片段时间线只绘制可见或聚合元素。关闭编辑器先取消缓存任务并释放 swap chain / reader，再返回录制条。
-- 本机 1080p 原生合成吞吐与实际 WinUI 展示帧率分别记录；窗口短测约 47 FPS，未宣称达到 60 FPS。跨适配器、真实 DPI 切换和 device lost 注入仍待验收。
+- 本机 1080p 原生合成吞吐与实际 WinUI 展示帧率分别记录；2026-10-15 修正预览帧槽调度后，1080p 窗口短测约 60 FPS，见 [连续性与性能记录](validation/capture-continuity-performance.md)。跨适配器、长时性能、真实 DPI 切换和 device lost 注入仍待验收。
 
 完成后更新本文件清单与 progress.md；需求变化同时修改 spec.md。未达到的验收项保持未勾选。

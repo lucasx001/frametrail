@@ -8,7 +8,7 @@
 
 录屏界面已参照 DogSC 重做为悬浮胶囊与输入配置面板，包含来源选择遮罩、区域拖框、录制条、完成卡片和备忘录。实现与验证边界见 [录屏 UI 记录](docs/validation/0005-recorder-ui.md)。
 
-编辑器、六项检查器、通栏时间线、导出与设置界面也已按 DogSC 截图及设计源码重做，支持统一的明暗外观。尚未实现的高级视觉能力保持明确的不可用状态，见 [整体 UI 验证](docs/validation/dogsc-editor-ui.md)。
+编辑器、六项检查器、通栏时间线、导出与设置界面也已按 DogSC 截图及设计源码重做，支持统一的明暗外观。M3 已接通点击自动运镜、手动缩放/透视、聚焦与遮挡、贴图、开场/摄像头动画、工程内背景和场景预设，见 [M3 验证](docs/validation/m3-motion-effects.md)；参考来源与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 - [产品规格](docs/spec.md)
 - [实现进度与任务顺序](docs/progress.md)
@@ -50,3 +50,14 @@ M2 媒体验证入口（额外需要本机 ffmpeg/ffprobe 和 Python，仅用于
 ```powershell
 .\scripts\validate-m2.cmd -Matrix
 ```
+
+M3 效果回归（先按相同原生目录构建 Release，同样需要 ffmpeg/ffprobe/Python）：
+
+```powershell
+.\scripts\build.cmd -Configuration Release -NativeBuildDirectory "$PWD\artifacts\native-release" -LockedRestore
+.\scripts\validate-m3.cmd
+```
+
+在编辑器「运镜」页添加或按录制点击生成效果，选择片段后调整参数即可实时预览，无需点击应用。滑块拖动过程中预览，松手后自动保存并合并为一次撤销；数字/文字输入短暂停顿后保存，输入焦点保持。当前播放头不在效果有效区间时，会定位到该效果的可见时刻。时间线可选择效果，再拖动片段或两端裁边；Ctrl+C / Ctrl+V 复制到播放头，Delete 删除当前效果，Ctrl+Z / Ctrl+Y 撤销重做。效果按源时间保存，剪辑和变速通过统一映射同步处理。
+
+「画面」支持工程内图片、循环视频和渐变背景，「样机」选择窗口/浏览器/设备边框；「开场」设置屏幕或摄像头的动画，「摄像头」选择形状，「光标」调整平滑。场景预设菜单可应用内置预设，或保存/恢复当前工程预设。素材复制进工程后重开无需原始导入路径；视觉预设保留当前声音设置。

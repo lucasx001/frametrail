@@ -41,6 +41,28 @@ public sealed class PersistenceTests : IAsyncLifetime
         await File.WriteAllBytesAsync(path, FinalizedMp4Header);
         Assert.True(await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch));
     }
+    [Fact] public async Task MissingVisualAssetRejectsSaveAndAllowsSameRevisionRetry()
+    {
+        await using var workspace = await CreateAsync();
+        var snapshot = Snapshot() with { Editor = new() { Backdrop = new() { Kind = "image", Path = "assets/background.png" } } };
+        await Assert.ThrowsAsync<FileNotFoundException>(() => workspace.SaveAsync(snapshot, workspace.SessionEpoch));
+        await File.WriteAllBytesAsync(workspace.Resolve("assets/background.png"), new byte[] { 1 });
+        Assert.True(await workspace.SaveAsync(snapshot, workspace.SessionEpoch));
+    }
+    [Fact] public async Task MissingStickerFallsBackToPreviousReadableSnapshot()
+    {
+        var workspace = await CreateAsync();
+        await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch);
+        var asset = workspace.Resolve("assets/sticker.png"); await File.WriteAllBytesAsync(asset, new byte[] { 1 });
+        var effect = new SourceEffect { Id = "sticker", Kind = "sticker", SourceStart = MediaTime.FromTicks(0), SourceDuration = MediaTime.FromTicks(10_000_000), Parameters = JsonSerializer.SerializeToElement(new { path = "assets/sticker.png" }) };
+        await workspace.SaveAsync(Snapshot(2) with { Effects = new[] { effect } }, workspace.SessionEpoch);
+        await workspace.WriteManifestAsync(new() { ProjectId = "project1", CheckpointJson = ProjectJson.Serialize(Snapshot(2) with { Effects = new[] { effect } }) });
+        await workspace.DisposeAsync(); File.Delete(asset);
+        await Assert.ThrowsAsync<FileNotFoundException>(() => ProjectWorkspace.OpenAsync(Project, Validate, Probe));
+        var recovery = await ProjectWorkspace.RecoverAsync(Project, Validate, Probe); await using var reopened = recovery.Workspace;
+        Assert.Equal(1, reopened.Snapshot!.Revision); Assert.Empty(reopened.Snapshot.Effects);
+        Assert.Contains(recovery.Warnings, w => w.Contains("sticker.png"));
+    }
     [Fact] public async Task EpochAndIdentityRejectStaleWork()
     {
         await using var workspace = await CreateAsync();
@@ -127,16 +149,18 @@ public sealed class CoordinatorTests : IAsyncLifetime
     private static RecordingCoordinator Coordinator(IRecordingDriver driver) => new(driver, ProjectJson.ValidateProtocol, (_, _) => { });
     private sealed class FakeDriver : IRecordingDriver
     {
-        internal int Started, Disposed; internal bool Fail;
+        internal int Started, Disposed; internal bool Fail, BackdateFirst, FailCheckpoint;
+        internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Events = new();
+        internal readonly TaskCompletionSource CheckpointFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<IRecordingSegment> StartAsync(RecordingPlan plan, SegmentPaths paths, CancellationToken token)
-        { if (Fail) throw new IOException("Fake acquisition failed"); Started++; return Task.FromResult<IRecordingSegment>(new Segment(this, paths)); }
-        private sealed class Segment(FakeDriver driver, SegmentPaths paths) : IRecordingSegment
+        { if (Fail || (FailCheckpoint && Started > 0)) throw new IOException("Fake acquisition failed"); Started++; Events.Enqueue($"start-{Started}"); return Task.FromResult<IRecordingSegment>(new Segment(this, paths, Started)); }
+        private sealed class Segment(FakeDriver driver, SegmentPaths paths, int index) : IRecordingSegment
         {
-            public SegmentStart Start { get; } = new(Stopwatch.GetTimestamp(), Stopwatch.Frequency, 640, 360);
+            public SegmentStart Start { get; } = new(Stopwatch.GetTimestamp() - (driver.BackdateFirst && index == 1 ? Stopwatch.Frequency * 6 : 0), Stopwatch.Frequency, 640, 360);
             public RecordingHealth Poll() => new(false, null, Array.Empty<string>(), 0.5);
             public async Task<CompletedCapture> FinishAsync(long boundary)
-            { await File.WriteAllBytesAsync(paths.Screen, PersistenceTests.FinalizedMp4Header); return new(10_000_000, new[] { new CompletedTrack(MediaKind.Screen, paths.Screen, 10_000_000, Width: 640, Height: 360) }, Array.Empty<string>()); }
-            public ValueTask DisposeAsync() { driver.Disposed++; return ValueTask.CompletedTask; }
+            { driver.Events.Enqueue($"finish-{index}"); await File.WriteAllBytesAsync(paths.Screen, PersistenceTests.FinalizedMp4Header); if (index == 1) driver.CheckpointFinished.TrySetResult(); return new(10_000_000, new[] { new CompletedTrack(MediaKind.Screen, paths.Screen, 10_000_000, Width: 640, Height: 360) }, Array.Empty<string>()); }
+            public ValueTask DisposeAsync() { driver.Disposed++; driver.Events.Enqueue($"dispose-{index}"); return ValueTask.CompletedTask; }
         }
     }
     [Fact] public async Task PauseResumeBuildsIndependentSegmentsAndMarkersIgnorePause()
@@ -165,5 +189,24 @@ public sealed class CoordinatorTests : IAsyncLifetime
         var driver = new FakeDriver(); await using var coordinator = Coordinator(driver); await coordinator.StartAsync(Plan); await coordinator.PauseAsync(); driver.Fail = true;
         await Assert.ThrowsAsync<IOException>(() => coordinator.ResumeAsync()); Assert.Equal(RecordingWorkspaceState.Paused, coordinator.State);
         var result = await coordinator.StopAsync(); Assert.Single(result!.Segments);
+    }
+    [Fact] public async Task CameraCheckpointStartsNextBeforeFinalizingPrevious()
+    {
+        var driver = new FakeDriver { BackdateFirst = true }; await using var coordinator = Coordinator(driver);
+        await coordinator.StartAsync(Plan with { Camera = new("fake", "camera"), CameraFormat = new(640, 360, 30, 1) });
+        await driver.CheckpointFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var result = await coordinator.StopAsync();
+        Assert.Equal(new[] { "start-1", "start-2", "finish-1", "dispose-1", "finish-2", "dispose-2" }, driver.Events.ToArray());
+        Assert.Equal(2, result!.Segments.Count);
+    }
+    [Fact] public async Task FailedCameraCheckpointKeepsActiveTakeRunning()
+    {
+        var driver = new FakeDriver { BackdateFirst = true, FailCheckpoint = true }; await using var coordinator = Coordinator(driver);
+        var warned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        coordinator.StatusChanged += (_, status) => { if (status.Warnings.Any(w => w.Contains("active recording continues"))) warned.TrySetResult(); };
+        await coordinator.StartAsync(Plan with { Camera = new("fake", "camera"), CameraFormat = new(640, 360, 30, 1) });
+        await warned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(RecordingWorkspaceState.Recording, coordinator.State); Assert.Equal(0, driver.Disposed);
+        var result = await coordinator.StopAsync(); Assert.Single(result!.Segments); Assert.Equal(1, driver.Disposed);
     }
 }

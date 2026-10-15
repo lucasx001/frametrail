@@ -113,7 +113,7 @@
    <Button x:Name="SystemButton" Style="{StaticResource RecorderIconButton}" Click="System_Click" AutomationProperties.Name="系统声音：关闭" ToolTipService.ToolTip="系统声音"><local:RecorderGlyph x:Name="SystemGlyph" Kind="Speaker" IsOn="False" Width="16" Height="16" /></Button>
    <Button x:Name="MoreButton" Style="{StaticResource RecorderIconButton}" Click="More_Click" AutomationProperties.Name="保存与录制配置" ToolTipService.ToolTip="保存与录制配置"><Grid><local:RecorderGlyph Kind="More" Width="16" Height="16" /><Ellipse x:Name="NoticeBadge" Width="5" Height="5" Fill="{StaticResource RecorderAmber}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0" Visibility="Collapsed" /></Grid></Button>
    <Button x:Name="StartButton" Margin="4,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Start_Click" AutomationProperties.Name="选择来源并开始录制" ToolTipService.ToolTip="开始录制"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Ellipse Fill="White" Width="12" Height="12" /></Grid></Button>
-   <Grid Width="22" Height="40" Background="Transparent" PointerPressed="Drag_Pressed" AutomationProperties.Name="拖动录制条" ToolTipService.ToolTip="拖动录制条"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
+   <Grid Width="22" Height="40" Background="Transparent" AutomationProperties.Name="拖动录制条" ToolTipService.ToolTip="按住胶囊空白处或此处拖动"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
   </StackPanel>
   <StackPanel x:Name="RecordingPanel" Orientation="Horizontal" Padding="15,0,5,0" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="录制控制">
    <StackPanel Orientation="Horizontal" Spacing="9" Margin="0,0,12,0" VerticalAlignment="Center">
@@ -126,7 +126,7 @@
    <Button x:Name="PauseButton" Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Pause_Click" AutomationProperties.Name="暂停录制" ToolTipService.ToolTip="暂停录制"><local:RecorderGlyph x:Name="PauseGlyph" Kind="Pause" Width="13" Height="13" /></Button>
    <Button x:Name="RecordingMoreButton" Width="32" Height="36" Style="{StaticResource RecorderIconButton}" Click="RecordingMore_Click" AutomationProperties.Name="更多录制操作" ToolTipService.ToolTip="更多录制操作"><local:RecorderGlyph Kind="More" Width="15" Height="15" /></Button>
    <Button x:Name="StopButton" Width="36" Height="36" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Stop_Click" AutomationProperties.Name="结束录制" ToolTipService.ToolTip="结束录制"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Border Background="White" CornerRadius="2.5" Width="11" Height="11" /></Grid></Button>
-   <Grid Width="22" Height="36" Background="Transparent" PointerPressed="Drag_Pressed" ToolTipService.ToolTip="拖动录制条"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
+   <Grid Width="22" Height="36" Background="Transparent" AutomationProperties.Name="拖动录制条" ToolTipService.ToolTip="按住胶囊空白处或此处拖动"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
   </StackPanel>
   <StackPanel x:Name="ProgressPanel" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="正在处理录制">
    <ProgressRing x:Name="TransitionProgress" IsActive="False" Width="16" Height="16" Foreground="{ThemeResource RecorderInk}" /><TextBlock x:Name="RecordingStatus" Text="正在准备…" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" />

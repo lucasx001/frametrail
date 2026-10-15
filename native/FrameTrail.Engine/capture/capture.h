@@ -58,6 +58,11 @@ typedef struct ft_capture_capabilities {
     uint32_t wgc_supported, hardware_h264_count, software_h264_count;
     int64_t qpc_frequency;
 } ft_capture_capabilities;
+// Additive diagnostics API; capture-status ABI remains unchanged.
+typedef struct ft_capture_performance {
+    uint32_t struct_size, gpu_samples;
+    uint64_t converted, conversion_qpc, conversion_max_qpc, writer_qpc, writer_max_qpc;
+} ft_capture_performance;
 // Enumeration is two-pass; count returns required number; insufficient buffer => HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER).
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_enumerate_sources(ft_capture_source* sources, uint32_t capacity, uint32_t* count);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_get_capabilities(ft_capture_capabilities* capabilities);
@@ -70,6 +75,7 @@ FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_resume_at(ft_capture_handle ha
 FT_CAPTURE_API const wchar_t* FT_CAPTURE_CALL ft_capture_last_error(void);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_stop(ft_capture_handle handle);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_get_status(ft_capture_handle handle, ft_capture_status* status);
+FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_get_performance(ft_capture_handle handle, ft_capture_performance* performance);
 FT_CAPTURE_API void FT_CAPTURE_CALL ft_capture_destroy(ft_capture_handle handle);
 // Convert selected monitor-local DIP rectangle to inward physical crop. Rejects empty/out-of-bounds/cross-monitor rectangles.
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_region_from_dip(uint32_t dpi, double x, double y, double width, double height, int32_t monitor_width, int32_t monitor_height, int32_t* physical_xywh);

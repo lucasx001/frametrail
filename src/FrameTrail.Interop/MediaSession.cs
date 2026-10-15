@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 using FrameTrail.Domain;
 
@@ -23,11 +24,13 @@ public struct MediaStatus
 internal static class MediaNative
 {
     private const string Dll = "FrameTrail.Media.dll";
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_probe_visual(string path, uint video, out uint width, out uint height, out long duration);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_create(byte[] json, uint length, string root, out ulong handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_media_destroy(ulong handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_swapchain(MediaHandle handle, out nint swapchain);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_resize(MediaHandle handle, uint width, uint height, double sx, double sy);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_generation(MediaHandle handle, ulong generation);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_update_effects(MediaHandle handle, byte[] json, uint length, ulong generation);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_render(MediaHandle handle, long ticks, ulong generation, string? png);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_status_get(MediaHandle handle, ref MediaStatus status);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_cancel(MediaHandle handle);
@@ -49,6 +52,9 @@ internal static class MediaNative
 public sealed class MediaSession : IDisposable
 {
     private readonly MediaHandle handle;
+    private static readonly JsonSerializerOptions EffectJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    public static (uint Width, uint Height, long Duration) ProbeVisual(string path, bool video)
+    { MediaNative.Check(MediaNative.ft_media_probe_visual(Path.GetFullPath(path), video ? 1u : 0u, out var width, out var height, out var duration)); return (width, height, duration); }
     public MediaSession(ProjectSnapshot snapshot, string directory)
     {
         var json = Encoding.UTF8.GetBytes(ProjectJson.Serialize(snapshot));
@@ -57,6 +63,12 @@ public sealed class MediaSession : IDisposable
     public nint AcquireSwapChain() { MediaNative.Check(MediaNative.ft_media_swapchain(handle, out var pointer)); return pointer; }
     public void Resize(uint width, uint height, double sx = 1, double sy = 1) => MediaNative.Check(MediaNative.ft_media_resize(handle, width, height, sx, sy));
     public void SetGeneration(ulong value) => MediaNative.Check(MediaNative.ft_media_generation(handle, value));
+    /// <summary>Replace effects at an edit boundary without recreating native media resources.</summary>
+    public void UpdateEffects(ProjectSnapshot snapshot, ulong generation)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new { revision = snapshot.Revision, effects = snapshot.Effects }, EffectJson);
+        MediaNative.Check(MediaNative.ft_media_update_effects(handle, bytes, (uint)bytes.Length, generation));
+    }
     public void Render(long ticks, ulong generation = 0, string? png = null) => MediaNative.Check(MediaNative.ft_media_render(handle, ticks, generation, png));
     public MediaStatus Status { get { var s = new MediaStatus { Size = (uint)Marshal.SizeOf<MediaStatus>() }; MediaNative.Check(MediaNative.ft_media_status_get(handle, ref s)); return s; } }
     public void PrepareAudio(string wav) => MediaNative.Check(MediaNative.ft_media_audio_prepare(handle, Path.GetFullPath(wav)));

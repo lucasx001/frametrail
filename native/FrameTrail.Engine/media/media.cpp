@@ -17,6 +17,24 @@ template<class F> int32_t protect(F&& function) noexcept {
 }
 }
 extern "C" {
+int32_t __cdecl ft_media_probe_visual(const wchar_t* path,uint32_t video,uint32_t* width,uint32_t* height,int64_t* duration) {
+    return protect([&] {
+        if(!path || !width || !height || !duration)winrt::throw_hresult(E_INVALIDARG);
+        MfScope runtime;*width=*height=0;*duration=0;
+        if(video) {
+            VideoReader reader(path,nullptr);*width=reader.width;*height=reader.height;*duration=reader.duration;
+            DWORD flags{};ComPtr<IMFSample> sample;FT_MEDIA_CHECK(reader.reader->ReadSample(video_stream_id,0,nullptr,&flags,nullptr,&sample));if(!sample || *duration<=0)throw ValidationError("asset","video has no decodable frame");
+        } else {
+            ComPtr<IWICImagingFactory> wic;FT_MEDIA_CHECK(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic)));
+            ComPtr<IWICBitmapDecoder> decoder;FT_MEDIA_CHECK(wic->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,&decoder));
+            ComPtr<IWICBitmapFrameDecode> frame;FT_MEDIA_CHECK(decoder->GetFrame(0,&frame));FT_MEDIA_CHECK(frame->GetSize(width,height));
+            if(uint64_t(*width)* *height>16'777'216)throw ValidationError("asset","image exceeds 16 megapixel limit");
+            ComPtr<IWICFormatConverter> converter;FT_MEDIA_CHECK(wic->CreateFormatConverter(&converter));FT_MEDIA_CHECK(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));
+            WICRect pixel{0,0,1,1};BYTE data[4]{};FT_MEDIA_CHECK(converter->CopyPixels(&pixel,4,4,data));
+        }
+        if(!*width || !*height || *width>8192 || *height>8192)throw ValidationError("asset","unsupported visual asset dimensions");
+    });
+}
 int32_t __cdecl ft_media_create(const char* json, uint32_t length, const wchar_t* root, ft_media_handle* handle) {
     if (!handle) return E_POINTER; *handle = 0;
     return protect([&] {
@@ -41,6 +59,20 @@ int32_t __cdecl ft_media_resize(ft_media_handle handle, uint32_t width, uint32_t
 int32_t __cdecl ft_media_generation(ft_media_handle handle, uint64_t generation) {
     return protect([&] { auto s = get(handle); auto old = s->generation.load(); while (generation > old && !s->generation.compare_exchange_weak(old, generation)) { } });
 }
+int32_t __cdecl ft_media_update_effects(ft_media_handle handle,const char* json,uint32_t length,uint64_t generation) {
+    return protect([&] {
+        if(!json || !length || length>16u*1024u*1024u)winrt::throw_hresult(E_INVALIDARG);
+        auto changes=Json::parse(std::string_view(json,length));
+        if(!changes.is_object() || changes.size()!=2 || !changes.contains("revision") || !changes.contains("effects"))winrt::throw_hresult(E_INVALIDARG);
+        auto s=get(handle);std::scoped_lock lock(s->mutex);s->check_cancel();
+        if(generation<s->generation)winrt::throw_hresult(cancelled_hr);
+        auto value=Json::parse(serialize_project(s->project));value["revision"]=changes["revision"];value["effects"]=changes["effects"];
+        auto project=parse_project(value.dump());FrameSceneEvaluator evaluator(project);
+        if(generation<s->generation)winrt::throw_hresult(cancelled_hr);
+        s->project=std::move(project);s->evaluator=std::move(evaluator);
+        auto old=s->generation.load();while(generation>old && !s->generation.compare_exchange_weak(old,generation)){}
+    });
+}
 int32_t __cdecl ft_media_render(ft_media_handle handle, int64_t ticks, uint64_t generation, const wchar_t* png) {
     return protect([&] {
         auto s = get(handle); if (generation < s->generation) winrt::throw_hresult(cancelled_hr);
@@ -57,7 +89,7 @@ int32_t __cdecl ft_media_render(ft_media_handle handle, int64_t ticks, uint64_t 
 }
 int32_t __cdecl ft_media_status_get(ft_media_handle handle, ft_media_status* status) {
     if (!status || status->size != sizeof(*status)) return E_INVALIDARG;
-    return protect([&] { auto s = get(handle); *status = {sizeof(*status), s->stage, s->completed, s->total, s->last_progress, s->evaluator.timeline().output_duration(), s->rendered_ticks, s->audio_ticks, s->software, s->cpu_fallback, s->audio_running}; });
+    return protect([&] { auto s = get(handle); *status = {sizeof(*status), s->stage, s->completed, s->total, s->last_progress, s->output_duration, s->rendered_ticks, s->audio_ticks, s->software, s->cpu_fallback, s->audio_running}; });
 }
 int32_t __cdecl ft_media_cancel(ft_media_handle handle) { return protect([&] { auto s = get(handle); s->cancelled = true; }); }
 int32_t __cdecl ft_media_export(ft_media_handle handle, const wchar_t* target, uint32_t audio_only) {

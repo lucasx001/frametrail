@@ -1,4 +1,5 @@
 #include "frametrail/core/project.hpp"
+#include "frametrail/core/effects.hpp"
 #include "frametrail/core/timeline.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -221,7 +222,17 @@ Project parse_project(std::string_view text) {
 
 void validate_project(const Project& project) {
     const auto editor = Json::parse(project.editor_json);
-    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop"});
+    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "frameStyle", "cameraShape", "backdrop"});
+    if(editor.contains("cursorSmoothing")) { auto v=number(editor["cursorSmoothing"],"editor.cursorSmoothing"); if(v<0 || v>0.5)invalid("editor.cursorSmoothing","must be 0..0.5 seconds"); }
+    if(editor.contains("frameStyle")) { auto s=editor["frameStyle"].get<std::string>(); if(s!="none" && s!="window" && s!="browser" && s!="device")invalid("editor.frameStyle","unsupported frame"); }
+    if(editor.contains("cameraShape")) { auto s=editor["cameraShape"].get<std::string>(); if(s!="rounded" && s!="rectangle" && s!="circle")invalid("editor.cameraShape","unsupported shape"); }
+    if(editor.contains("backdrop")) {
+        auto b=editor["backdrop"]; object(b,"editor.backdrop",{"kind","path","secondary"});
+        auto kind=b.value("kind",std::string("solid")); if(kind!="solid" && kind!="gradient" && kind!="image" && kind!="video")invalid("editor.backdrop.kind","unsupported background");
+        auto path=b.value("path",std::string{});
+        if((kind=="image" || kind=="video") && (!is_project_relative_path(path) || !path.starts_with("assets/")))invalid("editor.backdrop.path","background must reference a project asset");
+        if(b.contains("secondary")) { auto c=read_color(b["secondary"],"editor.backdrop.secondary"); for(auto v:{c.r,c.g,c.b,c.a})if(v<0 || v>1)invalid("editor.backdrop.secondary","invalid color"); }
+    }
     for (const auto* key : {"systemGain", "microphoneGain", "cornerRadius", "shadow", "cursorScale"}) if (editor.contains(key)) {
         const auto v = number(editor[key], std::string("editor.") + key);
         const double max = std::string_view(key) == "cornerRadius" ? 200 : (std::string_view(key) == "shadow" ? 1 : 4);
@@ -303,6 +314,17 @@ void validate_project(const Project& project) {
             const auto parameters = Json::parse(effect.parameters_json);
             if (!parameters.is_object()) invalid("effects.parameters", "expected object");
         } catch (const Json::exception&) { invalid("effects.parameters", "invalid JSON object"); }
+        validate_visual_parameters(effect);
+    }
+    for(auto attachment:{"screen","canvas"}) {
+        std::vector<std::pair<int64_t,int>> boundaries;
+        for(auto&e:project.effects)if(e.kind=="mask" || e.kind=="focus"){auto p=Json::parse(e.parameters_json);if(p.value("attachment",std::string("screen"))==attachment){auto t=normalized_ticks(e.source_start);boundaries.emplace_back(t,1);boundaries.emplace_back(t+normalized_ticks(e.source_duration),-1);}}
+        std::sort(boundaries.begin(),boundaries.end());int active=0;for(auto [_,delta]:boundaries){active+=delta;if(active>32)invalid("effects","at most 32 masking regions can overlap on one attachment");}
+    }
+    {
+        std::vector<std::pair<int64_t,int>> boundaries;
+        for(auto&e:project.effects)if(e.kind=="sticker"){auto t=normalized_ticks(e.source_start);boundaries.emplace_back(t,1);boundaries.emplace_back(t+normalized_ticks(e.source_duration),-1);}
+        std::sort(boundaries.begin(),boundaries.end());int active=0;for(auto [_,delta]:boundaries){active+=delta;if(active>64)invalid("effects","at most 64 stickers can overlap");}
     }
     if (project.markers.size() > 100'000) invalid("markers", "marker count limit exceeded");
     for (const auto& marker : project.markers) {

@@ -1,6 +1,6 @@
 # FrameTrail project schema 1
 
-状态：M0 领域模型已实现。日期：2026-10-14。
+状态：M0 领域模型与 M2/M3 编辑扩展已实现。更新日期：2026-10-15。
 
 权威实现是 `native/FrameTrail.Engine/core`；C# 的 `FrameTrail.Domain` 仅负责快照 DTO 与传输格式校验。App 必须调用 `EngineSession.ValidateProject(snapshot)` 通过原生完整语义校验后，才可提交候选修订或保存。领域测试共用 `tests/FrameTrail.Core.Tests/fixtures/project-v1.json`。
 
@@ -17,7 +17,7 @@
 | `media` | Media[] | 1–100000 项源轨道 manifest |
 | `segments` | Segment[] | 1–100000 项成片顺序，数组顺序是输出顺序 |
 | `canvas` | Canvas | 布局与 SDR 背景 |
-| `effects` | Effect[] | 0–100000 项源时间效果；M0 只验证/保存包络 |
+| `effects` | Effect[] | 0–100000 项源时间效果，M3 校验参数并参与渲染 |
 | `markers` | Marker[] | 可省略，默认空数组；最多 100000 项录制标记 |
 | `export` | Export | 当前输出约束 |
 
@@ -83,11 +83,11 @@ Core `map_pointer_events` 接受归一后的 `{ticks,x,y,kind,cursor_id}`，位�
 
 基础 FrameSceneEvaluator 根据成片时间求源时间，再选中该时刻的 screen/camera 媒体分段，输出媒体 ID、本地 tick、按比例居中的输出像素矩形、镜像与背景。screen 在区域内应用 padding 后按媒体比例 fit；camera 也执行等比例 fit。结果携带 revision 以拒绝过期预览。
 
-本任务没有实现 GPU、圆角、阴影、缩放效果动画或音频时间伸缩；`effects` 存在不代表这些效果已渲染。
+M2/M3 的共享原生 Renderer 已实现 GPU 合成、圆角、阴影和下述视觉效果；音频时间伸缩仍由独立音频链路处理。原生 FrameScene 还携带源时间求值后的屏幕/摄像头运动、遮挡与贴图，Media 直接使用该场景，不逐帧传输 JSON。
 
 ## 效果、标记、导出
 
-Effect 必需字段为 `id`、`kind`、`sourceStart`、`sourceDuration`、`parameters`。kind 允许 `zoom/mask/sticker/focus/tilt/intro`；效果时间在源范围内且正时长。包络稳定，参数由后续效果实现按类型定义；当前完整保留参数，不解释高级效果。
+Effect 必需字段为 `id`、`kind`、`sourceStart`、`sourceDuration`、`parameters`。kind 允许 `zoom/mask/sticker/focus/tilt/intro`；效果时间在源范围内且正时长。M3 定义的已知参数见下节；未识别的扩展键继续完整保留。
 
 Marker 为 `{id,time,label}`。time 为 0–sourceDuration（含末端）的源时间；label 可为空，UTF-8 最多 512 字节。成片显示时使用 TimelineMap；被删除区间的标记不进入成片。
 
@@ -119,3 +119,31 @@ Schema 1 增加可选 `editor` 对象；旧录制没有此字段时使用中性�
 - `crop`：可省略的归一化源画面矩形，采用与已有 Rect 相同的边界规则。源裁切后重新等比例 fit；实际解码图层和光标使用同一裁切。
 
 新 C ABI `ft_project_edit` 执行 split/trim/trimOutput/delete/move/rate/restore/settings/batch；结果经 Core 全量校验并增加 revision。`ft_project_timeline` 返回解析后的输出范围与标记，C# 不另写映射。拖动预览不写持久化，提交只入一次历史；撤销/重做恢复内容并赋予新的 revision。效果包络仍锚定源时间，不因剪辑重写其时间。
+
+## M3 视觉设置与参数（2026-10-15）
+
+继续使用 schema 1 的可选 `editor` 和预留 `effects[].parameters`。旧工程缺省值兼容；旧版严格解析器会拒绝不认识的新 editor 字段，不能用旧版覆盖新工程。
+
+- `editor.cursorSmoothing`：0–0.5 秒，默认 0.08；0 关闭平滑。因果指数加权，仅取采样时刻及之前四个时间常数内的事件。
+- `editor.frameStyle`：`none/window/browser/device`；默认 none。
+- `editor.cameraShape`：`rounded/rectangle/circle`；默认 rounded。圆形使用中心正方形裁切，保持独立镜像和位置。
+- `editor.backdrop`：可省略的 `{kind,path,secondary}`；kind 为 `solid/gradient/image/video`，secondary 为 SDR RGBA。图片与视频的 path 必须为工程 `assets/` 内相对路径；视频按输出时间循环。
+
+| 效果 | 已知参数 |
+|---|---|
+| zoom | scale 1–4；focusX/Y 0–1，属于裁切并 fit 后的屏幕内容；可选 focusPoints 为严格递增的 `{ticks,x,y}` 源时间关键点，最多 10000 项 |
+| tilt | angleX/Y 为 −35°–35°；target 为 screen/camera |
+| mask | mode 为 solid/pixelate/blur；strength 1–64 源像素；归一化 x/y/width/height 必须完全位于 attachment 内 |
+| focus | 同样的矩形与 strength，矩形内部清晰、外部柔化 |
+| sticker | text 最多 1024 UTF-8 字节，或 assets/ 图片 path；rotation 为 −180°–180°；矩形和 opacity |
+| intro | style 为 fade/rise/scale/slide；target 为 screen/camera；可选 outsideHidden |
+
+所有效果可携带 enter/exit（0–5 秒）、easing（linear/cubic/spring）、springFrequency（1–12）、damping（0.2–2）、opacity（0–1）。运动效果默认进入/退出 0.7 秒；intro 默认进入 0.7 秒、退出 0；遮挡与贴图默认无淡入淡出。过短效果将单侧过渡限制到自身半长。弹簧采用闭式求值，预览调用次数不改变结果。
+
+mask/focus/sticker 的 attachment 为 screen/canvas。screen 坐标相对裁切后的屏幕，光标/贴图随屏幕投影；canvas 坐标相对整个成片。图层顺序为背景 → 屏幕内容及其遮挡 → 光标/屏幕贴图及样机 → 屏幕投影 → 独立摄像头投影 → 画布贴图 → 画布遮挡。区域效果固定按聚焦、柔化、像素化、实心遮挡处理，防止后续柔化重新暴露实心遮挡区域。同一 attachment 最多同时 32 个区域，最多同时 64 个贴图，均在接受工程时验证。
+
+新增 autoZoom/effectUpsert/effectDelete/effectAtOutput 命令；后者把输出拖动位置交给唯一 TimelineMap 转为源时间，移动/裁边保留或重定位焦点关键点。效果时间线范围通过区间索引解析，最多 100 万个输出范围。origin 为 manual/automatic/edited；只有 origin=automatic 且 planner=dogsc-v1 的片段参与自动替换，编辑后保留。自动片段 ID 在与手工 ID 冲突时稳定加后缀。
+
+参数实时预览通过 `ft_media_update_effects` 传递 `{revision,effects}` 编辑候选及请求代际，不允许修改媒体、时间线、声音或画布。它在现有媒体会话内校验并原子替换场景，保持 swap chain 与解码器；请求代际控制预览回退/重做，修订可回到已接受快照，不能用该入口绕过工作区的持久化修订规则。像素渲染仍在原生层执行，参数仅在编辑时更新，不作为逐帧 IPC。
+
+导入图片限 32 MB、8192 单边且最多 1600 万像素，背景视频限 2 GB、8192 单边；复制后以原生解码器探测，失败删除本次新建文件。素材存在性参与保存和重开检查；缺素材不会被静默丢弃，显式恢复流程可选择上一份可读快照。工程内预设保存到 assets/presets/saved.json，应用时保留声音设置；源素材导出同时携带视觉素材与预设。

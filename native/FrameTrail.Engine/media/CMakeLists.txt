@@ -1,5 +1,5 @@
-add_library(FrameTrail.Media SHARED media.cpp decoder.cpp renderer.cpp audio.cpp export.cpp)
+add_library(FrameTrail.Media SHARED media.cpp decoder.cpp renderer.cpp visual_gpu.cpp audio.cpp export.cpp)
 target_compile_definitions(FrameTrail.Media PRIVATE FT_MEDIA_EXPORTS WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_include_directories(FrameTrail.Media PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(FrameTrail.Media PRIVATE FrameTrail.Core nlohmann_json::nlohmann_json d3d11 dxgi d2d1 mfplat mfreadwrite mfuuid windowscodecs ole32 propsys winmm windowsapp runtimeobject)
+target_link_libraries(FrameTrail.Media PRIVATE FrameTrail.Core nlohmann_json::nlohmann_json d3d11 d3dcompiler dxgi d2d1 dwrite mfplat mfreadwrite mfuuid windowscodecs ole32 propsys winmm windowsapp runtimeobject)
 target_compile_options(FrameTrail.Media PRIVATE /W4 /EHsc /permissive- /utf-8)

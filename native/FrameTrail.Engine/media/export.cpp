@@ -62,7 +62,6 @@ void validate_output(const std::filesystem::path& path, bool video, int64_t expe
 }
 }
 void Session::export_file(const std::filesystem::path& destination, bool audio_only) {
-    if (!audio_only && !project.effects.empty()) throw ValidationError("effects", "advanced visual effects require M3; export is disabled to avoid silently omitting authored effects");
     check_cancel(); auto target = std::filesystem::absolute(destination).lexically_normal();
     for (auto path = target; !path.empty();) {
         const auto attributes = GetFileAttributesW(path.c_str());

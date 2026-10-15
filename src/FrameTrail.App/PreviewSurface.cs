@@ -35,6 +35,18 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
         finally { if (pointer != 0) Marshal.Release(pointer); }
     }
     internal void InvalidateRequests() { generation++; media?.SetGeneration(generation); }
+    internal async Task UpdateEffectsAsync(ProjectSnapshot snapshot, long ticks)
+    {
+        var current = media; if (current is null || disposed) return;
+        InvalidateRequests(); var request = generation;
+        await renderGate.WaitAsync();
+        try {
+            if (ReferenceEquals(media, current) && request == generation)
+                await Task.Run(() => { current.UpdateEffects(snapshot, request); current.Render(ticks, request); });
+        }
+        catch (OperationCanceledException) { }
+        finally { renderGate.Release(); }
+    }
     internal async Task RenderAsync(long ticks, bool supersede = true, string? png = null)
     {
         var current = media; if (current is null || disposed) return;

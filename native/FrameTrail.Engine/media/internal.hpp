@@ -6,6 +6,7 @@
 #include <d3d10.h>
 #include <dxgi1_3.h>
 #include <d2d1_1.h>
+#include <dwrite.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
@@ -57,9 +58,11 @@ struct VideoReader {
 struct PointerSample { int64_t ticks; float x, y; uint32_t shape; bool visible; };
 struct PointerTrack {
     std::vector<PointerSample> points;
+    std::vector<FocusPoint> smooth_points;
     struct Shape { std::string file; float x{}, y{}; };
     std::unordered_map<uint32_t, Shape> shapes;
 };
+class VisualGpu;
 struct Renderer {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
@@ -69,6 +72,11 @@ struct Renderer {
     ComPtr<ID2D1Device> d2device;
     ComPtr<ID2D1DeviceContext> d2;
     ComPtr<ID3D11Texture2D> output;
+    ComPtr<ID3D11Texture2D> composition, screen_plane, camera_plane;
+    std::unique_ptr<VisualGpu> visuals;
+    std::unique_ptr<VideoReader> backdrop_reader;
+    std::string backdrop_path;
+    ComPtr<IDWriteFactory> text_factory;
     std::unordered_map<std::string, std::unique_ptr<VideoReader>> readers;
     std::unordered_map<std::string, PointerTrack> pointers;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> images;
@@ -76,14 +84,18 @@ struct Renderer {
     uint32_t width{}, height{}, software{}, fallbacks{};
     Json cached_settings = Json::object(); const Project* settings_source{};
     Renderer(const std::filesystem::path& path);
+    ~Renderer();
     void resize(uint32_t w, uint32_t h, double sx, double sy);
     ID3D11Texture2D* render(const Project& project, const FrameScene& scene, uint32_t w, uint32_t h);
     void present();
     void clear_decoders() { readers.clear(); }
 private:
-    ComPtr<ID2D1Bitmap1> bitmap(ID3D11Texture2D* texture, bool target = false);
+    ComPtr<ID2D1Bitmap1> bitmap(ID3D11Texture2D* texture, bool target = false, bool alpha = false);
     ComPtr<ID2D1Bitmap1> image(const std::filesystem::path& path);
-    void layer(const Project& project, const MediaFrame& frame, float radius, bool shadow, const Json& settings, bool screen);
+    void layer(const Project& project, const MediaFrame& frame, float radius, bool shadow, const Json& settings, bool screen, const VisualScene& visual);
+    void ensure_surface(ComPtr<ID3D11Texture2D>& texture, uint32_t w, uint32_t h);
+    void background(const Project& project, const FrameScene& scene);
+    void stickers(const FrameScene& scene, bool attached);
 };
 struct AudioReader {
     ComPtr<IMFSourceReader> reader; std::vector<float> data;
@@ -97,6 +109,7 @@ std::vector<float> stretch_wsola(const std::vector<float>& input, double rate, s
 struct Session {
     MfScope mf;
     Project project; FrameSceneEvaluator evaluator;
+    const int64_t output_duration;
     std::filesystem::path root;
     std::unique_ptr<Renderer> renderer;
     std::mutex mutex, audio_mutex;
@@ -107,7 +120,7 @@ struct Session {
     std::atomic_int64_t audio_ticks{-1};
     std::atomic_uint32_t audio_running{}, software{}, cpu_fallback{};
     std::thread audio_thread; std::atomic_bool audio_stop{};
-    explicit Session(Project p, std::filesystem::path path) : project(std::move(p)), evaluator(project), root(std::move(path)) { }
+    explicit Session(Project p, std::filesystem::path path) : project(std::move(p)), evaluator(project), output_duration(evaluator.timeline().output_duration()), root(std::move(path)) { }
     ~Session();
     Renderer& gpu() { if (!renderer) renderer = std::make_unique<Renderer>(root); return *renderer; }
     void check_cancel() { if (cancelled) winrt::throw_hresult(cancelled_hr); }

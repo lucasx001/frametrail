@@ -58,6 +58,16 @@ public sealed partial class EditorWindow
             checks.Add("Native decoder renders actual media and rejects superseded seek generations.");
             position = last; var loadedAt = DateTime.UtcNow;
             while (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio) && preparedAudio is null && DateTime.UtcNow - loadedAt < TimeSpan.FromSeconds(30)) await Task.Delay(100);
+            await SeekAsync(0); await StartPlaybackAsync(); int timingBefore = renderedFrames;
+            var timingClock = System.Diagnostics.Stopwatch.StartNew();
+            await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(editor.Timeline.Duration / 10_000_000.0 - 0.05, 0.01, 2)));
+            timingClock.Stop(); int timingFrames = renderedFrames - timingBefore; Pause();
+            await File.WriteAllTextAsync(Path.Combine(directory, "playback-performance.json"), JsonSerializer.Serialize(new {
+                seconds = timingClock.Elapsed.TotalSeconds, frames = timingFrames,
+                fps = timingFrames / timingClock.Elapsed.TotalSeconds,
+                width = editor.Snapshot.Canvas.Width, height = editor.Snapshot.Canvas.Height,
+                note = "Actual completed compositor presentations in the WinUI window; includes dispatcher scheduling, no repeated-frame padding."
+            }, new JsonSerializerOptions { WriteIndented = true }));
             position = 0; int before = renderedFrames; await StartPlaybackAsync();
             for (int i = 0; i < 6; i++) { Appearance_Click(this, new Microsoft.UI.Xaml.RoutedEventArgs()); await Task.Delay(100); }
             await Task.Delay(150); Pause();

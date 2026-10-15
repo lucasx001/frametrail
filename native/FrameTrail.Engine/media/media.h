@@ -19,6 +19,8 @@ FTM_API void __cdecl ft_media_destroy(ft_media_handle handle);
 FTM_API int32_t __cdecl ft_media_swapchain(ft_media_handle handle, void** swapchain);
 FTM_API int32_t __cdecl ft_media_resize(ft_media_handle handle, uint32_t width, uint32_t height, double scale_x, double scale_y);
 FTM_API int32_t __cdecl ft_media_generation(ft_media_handle handle, uint64_t generation);
+// Low-frequency authored effect edits only; preserves decoder/device/swapchain.
+FTM_API int32_t __cdecl ft_media_update_effects(ft_media_handle handle, const char* json, uint32_t length, uint64_t generation);
 FTM_API int32_t __cdecl ft_media_render(ft_media_handle handle, int64_t ticks, uint64_t generation, const wchar_t* png);
 FTM_API int32_t __cdecl ft_media_status_get(ft_media_handle handle, ft_media_status* status);
 FTM_API int32_t __cdecl ft_media_cancel(ft_media_handle handle);
@@ -28,4 +30,5 @@ FTM_API int32_t __cdecl ft_media_audio_prepare(ft_media_handle handle, const wch
 FTM_API int32_t __cdecl ft_media_audio_play(ft_media_handle handle, const wchar_t* wav, int64_t ticks);
 FTM_API int32_t __cdecl ft_media_audio_stop(ft_media_handle handle);
 FTM_API int32_t __cdecl ft_media_error(wchar_t* output, uint32_t capacity);
+FTM_API int32_t __cdecl ft_media_probe_visual(const wchar_t* path, uint32_t video, uint32_t* width, uint32_t* height, int64_t* duration);
 }

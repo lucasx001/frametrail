@@ -1,5 +1,6 @@
 #pragma once
 #include "timeline.hpp"
+#include "effects.hpp"
 
 namespace frametrail::core {
 struct MediaFrame {
@@ -15,6 +16,7 @@ struct FrameScene {
     Color background;
     MediaFrame screen;
     std::optional<MediaFrame> camera;
+    VisualScene visual;
 };
 
 // Returns nullopt outside the half-open output range. Immutable project input;
@@ -28,5 +30,7 @@ private:
     Project project_;
     TimelineMap timeline_;
     double crop_width_{1}, crop_height_{1};
+    std::vector<VisualEffect> effects_;
+    std::string frame_style_, camera_shape_;
 };
 } // namespace frametrail::core

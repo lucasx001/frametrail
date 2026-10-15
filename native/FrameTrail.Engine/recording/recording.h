@@ -23,6 +23,8 @@ FT_RECORDING_API int32_t __cdecl ft_camera_start(const ft_camera_options*, ft_ca
 FT_RECORDING_API int32_t __cdecl ft_camera_set_epoch(ft_camera_handle, int64_t qpc, int64_t frequency);
 FT_RECORDING_API int32_t __cdecl ft_camera_stop_at(ft_camera_handle, int64_t qpc);
 FT_RECORDING_API int32_t __cdecl ft_camera_get_status(ft_camera_handle, ft_camera_status*);
+// Diagnostics: overlapping segments must retain the same device-source identity.
+FT_RECORDING_API int32_t __cdecl ft_camera_get_source_identity(ft_camera_handle, uint64_t*);
 FT_RECORDING_API void __cdecl ft_camera_destroy(ft_camera_handle);
 // Decode at least one video/audio sample and obtain container duration; used before accepting recovery media.
 FT_RECORDING_API int32_t __cdecl ft_recording_probe(const wchar_t* path, uint32_t video, int64_t* duration_100ns);

@@ -44,6 +44,12 @@ internal static class CaptureNative
         internal uint StructSize, WgcSupported, HardwareH264Count, SoftwareH264Count;
         internal long QpcFrequency;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Performance
+    {
+        internal uint StructSize, GpuSamples;
+        internal ulong Converted, ConversionQpc, ConversionMaxQpc, WriterQpc, WriterMaxQpc;
+    }
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_get_capabilities")]
     internal static extern int GetCapabilities(ref Capabilities capabilities);
@@ -63,6 +69,8 @@ internal static class CaptureNative
     internal static extern int Stop(CaptureSafeHandle handle);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_get_status")]
     internal static extern int GetStatus(CaptureSafeHandle handle, ref Status status);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_get_performance")]
+    internal static extern int GetPerformance(CaptureSafeHandle handle, ref Performance performance);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_destroy")]
     internal static extern void Destroy(nint handle);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_last_error")]

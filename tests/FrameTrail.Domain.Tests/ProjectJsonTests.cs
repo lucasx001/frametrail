@@ -10,6 +10,16 @@ public sealed class ProjectJsonTests
     private static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", name));
 
     [Fact]
+    public void VisualSettingsAndProjectAssetsRoundtripWithoutMachinePaths()
+    {
+        var project = ProjectJson.Deserialize(Fixture("project-v1.json")) with { Editor = new() { CursorSmoothing = 0.12, CameraShape = "circle", FrameStyle = "browser", Backdrop = new() { Kind = "video", Path = "assets/background.mp4" } } };
+        var restored = ProjectJson.Deserialize(ProjectJson.Serialize(project));
+        Assert.Equal(ProjectJson.Serialize(project), ProjectJson.Serialize(restored));
+        Assert.Equal("assets/background.mp4", restored.Editor!.Backdrop!.Path);
+        Assert.Contains("\"cursorSmoothing\": 0.12", ProjectJson.Serialize(restored), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SharedSnapshotRoundtripRetainsTypedMetadataAndParameters()
     {
         var project = ProjectJson.Deserialize(Fixture("project-v1.json"));

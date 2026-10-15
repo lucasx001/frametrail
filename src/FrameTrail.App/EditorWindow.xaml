@@ -21,7 +21,7 @@
    </StackPanel>
    <Grid x:Name="TitleDragRegion" Grid.Column="1" Background="Transparent" MinWidth="12"/>
    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
-    <Button x:Name="ScenePresetButton" IsEnabled="False" ToolTipService.ToolTip="场景预设暂未开放"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Layers" Width="14" Height="14"/><TextBlock Text="场景预设" FontSize="11"/><local:EditorGlyph Kind="Chevron" Width="8" Height="8"/></StackPanel></Button>
+    <Button x:Name="ScenePresetButton" Click="ScenePreset_Click" ToolTipService.ToolTip="应用或保存场景预设"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Layers" Width="14" Height="14"/><TextBlock Text="场景预设" FontSize="11"/><local:EditorGlyph Kind="Chevron" Width="8" Height="8"/></StackPanel></Button>
     <Button Style="{StaticResource EditorIconButton}" Click="Appearance_Click" AutomationProperties.Name="切换明暗外观" ToolTipService.ToolTip="切换明暗外观"><local:EditorGlyph Kind="Sun"/></Button><Button Style="{StaticResource EditorIconButton}" Click="Settings_Click" AutomationProperties.Name="设置" ToolTipService.ToolTip="设置"><local:EditorGlyph Kind="Settings"/></Button>
     <Border Width="1" Height="16" Background="{ThemeResource EditorLine}" Margin="6,0"/>
     <Button x:Name="ExportButton" Style="{StaticResource EditorPrimaryButton}" Click="Export_Click" AutomationProperties.Name="导出"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Share" Foreground="{StaticResource EditorBlueInk}" Width="14" Height="14"/><TextBlock x:Name="ExportLabel" Text="导出" Foreground="{StaticResource EditorBlueInk}" FontFamily="{StaticResource RecorderSemiboldFont}"/></StackPanel></Button>
@@ -46,7 +46,7 @@
     <Border x:Name="FrameNavigation" Grid.Row="2" Background="{ThemeResource EditorWell}" CornerRadius="18" Margin="14,0,14,14" Padding="2"><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
      <Button x:Name="BackgroundTab" Background="{StaticResource EditorBlue}" Foreground="{StaticResource EditorBlueInk}" Height="32" HorizontalAlignment="Stretch" Click="BackgroundTab_Click"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Layers" Width="14" Height="14"/><TextBlock Text="背景" FontSize="12"/></StackPanel></Button>
      <Button x:Name="LayoutTab" Grid.Column="1" Height="32" HorizontalAlignment="Stretch" Click="LayoutTab_Click"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Layout" Width="14" Height="14"/><TextBlock Text="布局" FontSize="12"/></StackPanel></Button>
-     <Button Grid.Column="2" IsEnabled="False" Height="32" HorizontalAlignment="Stretch" ToolTipService.ToolTip="样机暂未开放"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Film" Width="14" Height="14"/><TextBlock Text="样机" FontSize="12"/></StackPanel></Button>
+     <Button x:Name="MockupTab" Grid.Column="2" Height="32" HorizontalAlignment="Stretch" Click="FrameMockup_Click" ToolTipService.ToolTip="窗口、浏览器与设备边框"><StackPanel Orientation="Horizontal" Spacing="6"><local:EditorGlyph Kind="Film" Width="14" Height="14"/><TextBlock Text="样机" FontSize="12"/></StackPanel></Button>
     </Grid></Border>
     <ScrollViewer x:Name="InspectorScroll" Grid.Row="3" VerticalScrollBarVisibility="Hidden" Padding="14,0,14,20"><StackPanel Spacing="16">
      <StackPanel x:Name="PictureSettings" Spacing="16">
@@ -55,10 +55,10 @@
        <StackPanel><TextBlock Text="背景素材" Style="{StaticResource SectionLabel}"/><Border Style="{StaticResource EditorTile}"><StackPanel Spacing="12">
         <Border Background="{ThemeResource EditorPanel}" CornerRadius="18" Padding="2">
          <Grid x:Name="BackgroundSourceTabs"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-          <Button Content="壁纸" Style="{StaticResource EditorSegmentButton}" IsEnabled="False" ToolTipService.ToolTip="壁纸素材暂未开放"/>
-          <Button Grid.Column="1" Content="网格" Style="{StaticResource EditorSegmentButton}" IsEnabled="False" ToolTipService.ToolTip="图案背景暂未开放"/>
-          <Button Grid.Column="2" Content="动效" Style="{StaticResource EditorSegmentButton}" IsEnabled="False" ToolTipService.ToolTip="动态背景暂未开放"/>
-          <Button Grid.Column="3" Content="纯色" Style="{StaticResource EditorSegmentButton}" Background="{StaticResource EditorBlue}" Foreground="{StaticResource EditorBlueInk}"/>
+          <Button Content="壁纸" Tag="image" Click="Backdrop_Click" Style="{StaticResource EditorSegmentButton}" ToolTipService.ToolTip="导入背景图片"/>
+          <Button Grid.Column="1" Content="渐变" Tag="gradient" Click="Backdrop_Click" Style="{StaticResource EditorSegmentButton}"/>
+          <Button Grid.Column="2" Content="动效" Tag="video" Click="Backdrop_Click" Style="{StaticResource EditorSegmentButton}" ToolTipService.ToolTip="导入循环视频"/>
+          <Button Grid.Column="3" Content="纯色" Tag="solid" Click="Backdrop_Click" Style="{StaticResource EditorSegmentButton}" Background="{StaticResource EditorBlue}" Foreground="{StaticResource EditorBlueInk}"/>
          </Grid>
         </Border>
         <Grid x:Name="BackgroundColors" ColumnSpacing="8" RowSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition/><RowDefinition/></Grid.RowDefinitions>

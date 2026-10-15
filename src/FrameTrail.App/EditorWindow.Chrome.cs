@@ -13,6 +13,7 @@ public sealed partial class EditorWindow
     private bool loadingInspector;
     private int inspectorTab;
     private bool layoutPage;
+    private bool mockupPage;
     private EditorSettingsWindow? settingsWindow;
     private readonly HashSet<NumberBox> changedNumbers = new();
     private readonly HashSet<NumberBox> pictureNumbers = new();
@@ -25,7 +26,7 @@ public sealed partial class EditorWindow
         ExtendsContentIntoTitleBar = true; SetTitleBar(TitleDragRegion); AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         Root.RequestedTheme = EditorAppearance.Current;
         UpdateCaptionTheme();
-        Root.ActualThemeChanged += (_, _) => { UpdateCaptionTheme(); DrawInspectorTabs(); };
+        Root.ActualThemeChanged += (_, _) => { UpdateCaptionTheme(); DrawInspectorTabs(); UpdateFrameNavigation(); if (ready) UpdateBackdropTabs(); };
         foreach (var number in new[] { CanvasWidth, CanvasHeight, CropX, CropY, CropWidth, CropHeight, CameraX, CameraY }) {
             pictureNumbers.Add(number);
             number.ValueChanged += (sender, _) => { if (!loadingInspector && ready) changedNumbers.Add(sender); };
@@ -72,21 +73,29 @@ public sealed partial class EditorWindow
         CameraSettings.Visibility = tab == 4 ? Visibility.Visible : Visibility.Collapsed;
         CursorSettings.Visibility = tab == 3 ? Visibility.Visible : Visibility.Collapsed;
         ClipSettings.Visibility = tab == 6 ? Visibility.Visible : Visibility.Collapsed;
-        UnavailableSettings.Visibility = tab is 1 or 2 ? Visibility.Visible : Visibility.Collapsed;
-        if (tab is 1 or 2) { UnavailableTitle.Text = tab == 1 ? "开场效果暂未开放" : "运镜效果暂未开放"; UnavailableGlyph.Kind = tabGlyphs[tab]; }
+        UnavailableSettings.Visibility = Visibility.Collapsed;
+        openingSettings.Visibility = tab == 1 ? Visibility.Visible : Visibility.Collapsed;
+        motionSettings.Visibility = tab == 2 ? Visibility.Visible : Visibility.Collapsed;
         InspectorHeading.Text = tab == 6 ? "片段" : tabLabels[tab];
         InspectorScope.Text = tab == 6 && SelectedClip is { } c ? $"第 {editor.Timeline.Clips.IndexOf(c) + 1} 段" : tab == 4 ? "全片基础布局" : "全片";
         InspectorScroll.ChangeView(null, 0, null, true); DrawInspectorTabs();
     }
     private void SetFramePage(bool layout)
     {
-        layoutPage = layout; BackgroundSettings.Visibility = layout ? Visibility.Collapsed : Visibility.Visible; LayoutSettings.Visibility = layout ? Visibility.Visible : Visibility.Collapsed;
-        BackgroundTab.Background = layout ? new SolidColorBrush(Colors.Transparent) : (Brush)Application.Current.Resources["EditorBlue"]; LayoutTab.Background = layout ? (Brush)Application.Current.Resources["EditorBlue"] : new SolidColorBrush(Colors.Transparent);
-        foreach (var button in new[] { BackgroundTab, LayoutTab }) if (button.Content is StackPanel row) foreach (var child in row.Children) {
-            var brush = (button == LayoutTab ? layout : !layout) ? (Brush)Application.Current.Resources["EditorBlueInk"] : RecorderTheme.Brush(Root, "EditorSecondary");
-            if (child is TextBlock text) text.Foreground = brush; if (child is EditorGlyph icon) icon.Foreground = brush;
-        }
+        layoutPage = layout; mockupPage = false; UpdateFrameNavigation();
         InspectorScroll.ChangeView(null, 0, null, true);
+    }
+    private void UpdateFrameNavigation()
+    {
+        BackgroundSettings.Visibility = !layoutPage && !mockupPage ? Visibility.Visible : Visibility.Collapsed;
+        LayoutSettings.Visibility = layoutPage && !mockupPage ? Visibility.Visible : Visibility.Collapsed;
+        mockupSettings.Visibility = mockupPage ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var button in new[] { BackgroundTab, LayoutTab, MockupTab }) {
+            bool active = button == MockupTab ? mockupPage : !mockupPage && (button == LayoutTab ? layoutPage : !layoutPage);
+            button.Background = active ? (Brush)Application.Current.Resources["EditorBlue"] : new SolidColorBrush(Colors.Transparent);
+            var brush = active ? (Brush)Application.Current.Resources["EditorBlueInk"] : RecorderTheme.Brush(Root, "EditorSecondary");
+            if (button.Content is StackPanel row) foreach (var child in row.Children) { if (child is TextBlock text) text.Foreground = brush; if (child is EditorGlyph icon) icon.Foreground = brush; }
+        }
     }
     private void BackgroundTab_Click(object sender, RoutedEventArgs e) => SetFramePage(false);
     private void LayoutTab_Click(object sender, RoutedEventArgs e) => SetFramePage(true);
@@ -160,10 +169,10 @@ public sealed partial class EditorWindow
             item.BorderThickness = new Thickness(match ? 2 : 0); item.BorderBrush = Hex(0x5AAEFF);
         }
     }
-    private void Appearance_Click(object sender, RoutedEventArgs e) { Root.RequestedTheme = Root.ActualTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark; EditorAppearance.Save(Root.RequestedTheme); SetFramePage(layoutPage); timeline.RefreshAppearance(); }
+    private void Appearance_Click(object sender, RoutedEventArgs e) { Root.RequestedTheme = Root.ActualTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark; EditorAppearance.Save(Root.RequestedTheme); UpdateFrameNavigation(); timeline.RefreshAppearance(); }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; SetFramePage(layoutPage); timeline.RefreshAppearance(); }); settingsWindow.Closed += (_, _) => settingsWindow = null; }
+        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; UpdateFrameNavigation(); timeline.RefreshAppearance(); }); settingsWindow.Closed += (_, _) => settingsWindow = null; }
         settingsWindow.Activate();
     }
     private void Snap_Click(object sender, RoutedEventArgs e) { timeline.SnappingEnabled = !timeline.SnappingEnabled; SnapLabel.Text = timeline.SnappingEnabled ? "吸附" : "吸附已关"; SnapButton.Background = timeline.SnappingEnabled ? new SolidColorBrush(Windows.UI.Color.FromArgb(32, 90, 174, 255)) : new SolidColorBrush(Colors.Transparent); }

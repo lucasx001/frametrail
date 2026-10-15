@@ -1,5 +1,6 @@
 #include "frametrail/core/editor.hpp"
 #include "frametrail/core/timeline.hpp"
+#include "frametrail/core/effects.hpp"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <limits>
@@ -50,6 +51,34 @@ void apply_command(Project& p, const Json& cmd) {
         std::vector<Media> screens; for (auto& m : p.media) if (m.kind == MediaKind::screen) screens.push_back(m);
         std::sort(screens.begin(), screens.end(), [](auto& a, auto& b) { return normalized_ticks(a.start_offset) < normalized_ticks(b.start_offset); });
         for (size_t i = 0; i < screens.size(); ++i) p.segments.push_back({prefix + std::to_string(i), screens[i].start_offset, screens[i].duration, {1, 1}});
+    } else if (op == "effectAtOutput") {
+        auto id=cmd.at("effectId").get<std::string>();auto found=std::find_if(p.effects.begin(),p.effects.end(),[&](auto&e){return e.id==id;});
+        if(found==p.effects.end())throw ValidationError("effectId","effect no longer exists");
+        TimelineMap map(p.source_duration,p.segments);auto mapped=map.source_time(std::clamp(cmd.at("outputTicks").get<int64_t>(),int64_t(0),map.output_duration()-1));
+        auto start=normalized_ticks(found->source_start),end=start+normalized_ticks(found->source_duration),old=start,total=normalized_ticks(p.source_duration);auto edge=cmd.value("edge",std::string("move"));
+        if(edge!="start" && edge!="end" && edge!="move")throw ValidationError("edge","expected start, end or move");
+        if(edge=="start")start=std::clamp(mapped->ticks,int64_t(0),end-1);
+        else if(edge=="end")end=std::clamp(mapped->ticks,start+1,total);
+        else {auto length=end-start;start=std::clamp(mapped->ticks,int64_t(0),total-length);end=start+length;}
+        auto parameters=Json::parse(found->parameters_json);parameters["origin"]="edited";
+        if(parameters.contains("focusPoints")){
+            Json keys=Json::array();
+            if(edge!="move" && !parameters["focusPoints"].empty()) {
+                auto sampled=evaluate_visuals({parse_visual_effect(*found)},start).screen;
+                keys.push_back({{"ticks",start},{"x",sampled.focus_x},{"y",sampled.focus_y}});
+            }
+            for(auto key:parameters["focusPoints"]){auto tick=key["ticks"].get<int64_t>()+(edge=="move"?start-old:0);if(tick>=start && tick<end && (keys.empty() || tick>keys.back()["ticks"].get<int64_t>())){key["ticks"]=tick;keys.push_back(key);}}
+            parameters["focusPoints"]=keys;
+        }
+        found->source_start=canonical_time(start);found->source_duration=canonical_time(end-start);found->parameters_json=parameters.dump();
+    } else if (op == "autoZoom") {
+        generate_auto_zoom(p,cmd.dump());
+    } else if (op == "effectUpsert" || op == "effectDelete") {
+        auto json=Json::parse(serialize_project(p)); auto id=cmd.at("effectId").get<std::string>(); auto& effects=json["effects"];
+        auto found=std::find_if(effects.begin(),effects.end(),[&](auto&e){return e["id"]==id;});
+        if(op=="effectDelete") { if(found==effects.end())throw ValidationError("effectId","effect no longer exists"); effects.erase(found); }
+        else { auto value=cmd.at("effect"); value["id"]=id; if(found!=effects.end()) { value["parameters"]["origin"]="edited"; *found=value; } else effects.push_back(value); }
+        p=parse_project(json.dump());
     } else if (op == "settings") {
         auto json = Json::parse(serialize_project(p));
         for (const auto* key : {"canvas", "export", "editor", "effects"}) if (cmd.contains(key)) json[key] = cmd[key];
@@ -68,10 +97,34 @@ Project edit_project(const Project& project, std::string_view text) {
     } catch (const Json::exception& e) { throw ValidationError("command", e.what()); }
 }
 std::string timeline_json(const Project& project) {
-    TimelineMap map(project.source_duration, project.segments); Json clips = Json::array(), markers = Json::array();
+    TimelineMap map(project.source_duration, project.segments); Json clips = Json::array(), markers = Json::array(), effects = Json::array();
     for (auto& s : map.segments()) clips.push_back({{"id", s.id}, {"sourceStart", s.source_start}, {"sourceDuration", s.source_duration},
         {"outputStart", s.output_start}, {"outputDuration", s.output_duration}, {"numerator", s.rate.numerator}, {"denominator", s.rate.denominator}});
     for (auto& m : project.markers) if (auto mapped = map.output_time(normalized_ticks(m.time))) markers.push_back({{"id", m.id}, {"ticks", mapped->ticks}, {"label", m.label}});
-    return Json{{"duration", map.output_duration()}, {"clips", clips}, {"markers", markers}}.dump();
+    std::vector<const ResolvedSegment*> ordered;
+    for(auto&s:map.segments())ordered.push_back(&s);
+    std::sort(ordered.begin(),ordered.end(),[](auto a,auto b){return a->source_start<b->source_start;});
+    std::vector<int64_t> maximum(ordered.size()*4);
+    auto build=[&](auto&& self,size_t node,size_t lo,size_t hi)->int64_t {
+        if(hi-lo==1)return maximum[node]=ordered[lo]->source_end();
+        auto mid=lo+(hi-lo)/2;return maximum[node]=std::max(self(self,node*2,lo,mid),self(self,node*2+1,mid,hi));
+    };
+    if(!ordered.empty())build(build,1,0,ordered.size());
+    for(auto&e:project.effects) {
+      auto first=normalized_ticks(e.source_start),last=first+normalized_ticks(e.source_duration);
+      auto visit=[&](auto&& self,size_t node,size_t lo,size_t hi)->void {
+        if(maximum[node]<=first || ordered[lo]->source_start>=last)return;
+        if(hi-lo>1){auto mid=lo+(hi-lo)/2;self(self,node*2,lo,mid);self(self,node*2+1,mid,hi);return;}
+        auto&s=*ordered[lo];
+        auto start=std::max(normalized_ticks(e.source_start),s.source_start), end=std::min(normalized_ticks(e.source_start)+normalized_ticks(e.source_duration),s.source_end());
+        if(end<=start)return;
+        auto out=s.output_start+multiply_ratio(start-s.source_start,s.rate.denominator,s.rate.numerator);
+        auto finish=s.output_start+multiply_ratio(end-s.source_start,s.rate.denominator,s.rate.numerator);
+        effects.push_back({{"id",e.id},{"kind",e.kind},{"outputStart",out},{"outputDuration",std::max(int64_t(1),finish-out)}});
+        if(effects.size()>1000000)throw ValidationError("effects","too many resolved effect ranges");
+      };
+      if(!ordered.empty())visit(visit,1,0,ordered.size());
+    }
+    return Json{{"duration", map.output_duration()}, {"clips", clips}, {"markers", markers}, {"effects",effects}}.dump();
 }
 }

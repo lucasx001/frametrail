@@ -48,6 +48,6 @@
 - 构建与自动测试：WinUI/C++ 构建通过，Workspace 21 项测试通过，详见统一审阅记录。
 - 实机环境与结果：Windows 11 x64 build 26300；实际联合录制、分段、重开、终止进程后恢复通过。
 - 证据路径：[0005 记录](validation/0005-workspace-validation.md)、[主 agent 统一审阅](validation/m0-m1-review.md)。
-- 已知问题：摄像头周期分段仍有重启间隙，摄像头实时预览待后续任务；未测项保持未勾选。
+- 2026-10-15：摄像头周期分段改为共享持续采集源，本机连续切换、真实产品 checkpoint / 暂停恢复通过；Workspace 26 项测试通过，见 [连续性记录](validation/capture-continuity-performance.md)。摄像头实时预览、外设矩阵与长时同步待后续验收；未测项保持未勾选。
 
 完成后更新本文件清单与 progress.md；需求变化同时修改 spec.md。未达到的验收项保持未勾选。

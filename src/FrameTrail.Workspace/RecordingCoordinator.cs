@@ -241,19 +241,11 @@ public sealed class RecordingCoordinator : IAsyncDisposable
                     }
                     if (!checkpointDisabled && CurrentTicks() - sourceTicks >= TimeSpan.FromSeconds(plan!.CheckpointSeconds).Ticks)
                     {
-                        if (plan.Camera is null)
-                        {
-                            var previous = active;
-                            try { await BeginSegmentAsync(token); }
-                            catch (Exception error) when (error is not OperationCanceledException)
-                            { checkpointDisabled = true; AddWarning("Overlapping checkpoint unavailable; active recording continues. Pause to finalize a recoverable checkpoint. " + error.Message); }
-                            if (!ReferenceEquals(active, previous)) await CompleteSegmentAsync(active!.Start.EpochQpc, previous);
-                        }
-                        else
-                        {
-                            AddWarning("Camera checkpoints restart the exclusive device; a measured capture gap is excluded from source time.");
-                            await CompleteSegmentAsync(Stopwatch.GetTimestamp()); await BeginSegmentAsync(token);
-                        }
+                        var previous = active;
+                        try { await BeginSegmentAsync(token); }
+                        catch (Exception error) when (error is not OperationCanceledException)
+                        { checkpointDisabled = true; AddWarning("Overlapping checkpoint unavailable; active recording continues. Pause to finalize a recoverable checkpoint. " + error.Message); }
+                        if (!ReferenceEquals(active, previous)) await CompleteSegmentAsync(active!.Start.EpochQpc, previous);
                     }
                     Publish();
                 }

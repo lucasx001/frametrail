@@ -1,4 +1,5 @@
 #include "capture.h"
+#include "frame_pacing.h"
 #include <windows.h>
 #include <roapi.h>
 #include <d3d11.h>
@@ -137,6 +138,7 @@ class capture_run {
     std::deque<frame_entry> queue_;
     std::vector<com_ptr<ID3D11Texture2D>> free_;
     ft_capture_status status_{};
+    ft_capture_performance performance_{sizeof(ft_capture_performance)};
     bool stopping_{};
     int64_t first_hns_{-1}, last_accepted_hns_{-1}, resume_cutoff_qpc_{};
     int64_t stop_qpc_{};
@@ -150,6 +152,8 @@ class capture_run {
     winrt::Windows::Graphics::SizeInt32 source_size_{};
     D3D11_BOX crop_{};
     com_ptr<IMFSinkWriter> writer_;
+    com_ptr<IMFDXGIDeviceManager> device_manager_;
+    com_ptr<IMFVideoSampleAllocatorEx> sample_allocator_;
     DWORD stream_{};
     com_ptr<ID3D11VideoDevice> video_device_;
     com_ptr<ID3D11VideoContext> video_context_;
@@ -242,6 +246,12 @@ class capture_run {
         CloseHandle(file);
         com_ptr<IMFAttributes> attrs; check_hresult(MFCreateAttributes(attrs.put(), 3));
         check_hresult(attrs->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE));
+        // WGC already supplies real-time pacing. Writer throttling blocks the only
+        // conversion worker and can keep the shared D3D context busy across frames.
+        check_hresult(attrs->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
+        UINT reset_token{}; check_hresult(MFCreateDXGIDeviceManager(&reset_token, device_manager_.put()));
+        check_hresult(device_manager_->ResetDevice(device_.get(), reset_token));
+        check_hresult(attrs->SetUnknown(MF_SINK_WRITER_D3D_MANAGER, device_manager_.get()));
         check_hresult(MFCreateSinkWriterFromURL(path_.c_str(), nullptr, attrs.get(), writer_.put()));
         com_ptr<IMFMediaType> output; check_hresult(MFCreateMediaType(output.put()));
         check_hresult(output->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
@@ -260,6 +270,29 @@ class capture_run {
         check_hresult(output->CopyAllItems(input.get())); check_hresult(input->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12));
         check_hresult(writer_->SetInputMediaType(stream_, input.get(), nullptr));
         check_hresult(writer_->BeginWriting());
+        // The allocator recycles textures only after the encoder releases the sample.
+        // A fixed NV12 surface reused immediately after WriteSample would corrupt
+        // asynchronous encoders. Keep a bounded pool, including encoder lookahead.
+        bool d3d_encoder = false;
+        if (auto extended = writer_.try_as<IMFSinkWriterEx>()) {
+            for (DWORD i = 0; i < 16; ++i) {
+                GUID category{}; com_ptr<IMFTransform> transform;
+                if (FAILED(extended->GetTransformForStream(stream_, i, &category, transform.put()))) break;
+                if (category != MFT_CATEGORY_VIDEO_ENCODER) continue;
+                com_ptr<IMFAttributes> encoder_attrs; UINT32 aware{};
+                d3d_encoder = SUCCEEDED(transform->GetAttributes(encoder_attrs.put())) && SUCCEEDED(encoder_attrs->GetUINT32(MF_SA_D3D11_AWARE, &aware)) && aware;
+            }
+        }
+        if (d3d_encoder) {
+            com_ptr<IMFVideoSampleAllocatorEx> allocator;
+            com_ptr<IMFAttributes> allocation; check_hresult(MFCreateAttributes(allocation.put(), 2));
+            check_hresult(allocation->SetUINT32(MF_SA_D3D11_BINDFLAGS, D3D11_BIND_RENDER_TARGET));
+            check_hresult(allocation->SetUINT32(MF_SA_D3D11_USAGE, D3D11_USAGE_DEFAULT));
+            HRESULT initialized = MFCreateVideoSampleAllocatorEx(__uuidof(IMFVideoSampleAllocatorEx), allocator.put_void());
+            if (SUCCEEDED(initialized)) initialized = allocator->SetDirectXManager(device_manager_.get());
+            if (SUCCEEDED(initialized)) initialized = allocator->InitializeSampleAllocatorEx(options_.queue_capacity, 16, allocation.get(), input.get());
+            if (SUCCEEDED(initialized)) { sample_allocator_ = std::move(allocator); performance_.gpu_samples = 1; }
+        }
         status_.hardware_active = inspect_hardware(hardware_classes) ? 1U : 0U;
         if (!status_.hardware_active && !software_allowed) throw hresult_error(MF_E_TOPO_CODEC_NOT_FOUND,
             L"Hardware encoding was not confirmed. Enable bounded 1080p30 software mode or choose a supported GPU configuration.");
@@ -282,7 +315,7 @@ class capture_run {
                 if (first_hns_ < 0) { first_hns_ = hns; status_.first_frame_qpc = qpc; }
                 mapped_time = hns - first_hns_ - scale_time(status_.paused_qpc_ticks, status_.qpc_frequency, hns_per_second);
                 // Bucket against session time instead of last callback: jitter near a frame interval must not halve capture rate.
-                if (last_accepted_hns_ >= 0 && mapped_time * options_.fps / hns_per_second <= last_accepted_hns_ * options_.fps / hns_per_second) {
+                if (last_accepted_hns_ >= 0 && capture_frame_slot(mapped_time, options_.fps) <= capture_frame_slot(last_accepted_hns_, options_.fps)) {
                     ++status_.frames_rate_limited; frame.Close(); return;
                 }
                 if (free_.empty()) { ++status_.frames_dropped; frame.Close(); return; }
@@ -307,11 +340,34 @@ class capture_run {
         catch (...) { fail(E_FAIL, L"Capture callback failed."); }
     }
     com_ptr<IMFSample> encode_sample(frame_entry const& entry) {
+        com_ptr<IMFSample> gpu_sample;
+        com_ptr<ID3D11VideoProcessorOutputView> output_view;
+        if (sample_allocator_) {
+            HRESULT allocated = sample_allocator_->AllocateSample(gpu_sample.put());
+            if (allocated == MF_E_SAMPLEALLOCATOR_EMPTY) return {}; // bounded backpressure, never grow without limit
+            check_hresult(allocated);
+            com_ptr<IMFMediaBuffer> buffer; check_hresult(gpu_sample->GetBufferByIndex(0, buffer.put()));
+            DWORD length{}; check_hresult(buffer.as<IMF2DBuffer>()->GetContiguousLength(&length));
+            check_hresult(buffer->SetCurrentLength(length));
+            auto dxgi = buffer.as<IMFDXGIBuffer>(); com_ptr<ID3D11Texture2D> texture;
+            check_hresult(dxgi->GetResource(__uuidof(ID3D11Texture2D), texture.put_void()));
+            UINT subresource{}; check_hresult(dxgi->GetSubresourceIndex(&subresource));
+            D3D11_TEXTURE2D_DESC desc{}; texture->GetDesc(&desc);
+            D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC output{};
+            output.ViewDimension = D3D11_VPOV_DIMENSION_TEXTURE2DARRAY;
+            output.Texture2DArray.MipSlice = subresource % desc.MipLevels;
+            output.Texture2DArray.FirstArraySlice = subresource / desc.MipLevels; output.Texture2DArray.ArraySize = 1;
+            check_hresult(video_device_->CreateVideoProcessorOutputView(texture.get(), processor_enum_.get(), &output, output_view.put()));
+        }
         D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC input{}; input.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
         com_ptr<ID3D11VideoProcessorInputView> view;
         check_hresult(video_device_->CreateVideoProcessorInputView(entry.texture.get(), processor_enum_.get(), &input, view.put()));
         D3D11_VIDEO_PROCESSOR_STREAM stream{}; stream.Enable = TRUE; stream.pInputSurface = view.get();
-        check_hresult(video_context_->VideoProcessorBlt(processor_.get(), nv12_view_.get(), 0, 1, &stream));
+        check_hresult(video_context_->VideoProcessorBlt(processor_.get(), output_view ? output_view.get() : nv12_view_.get(), 0, 1, &stream));
+        if (gpu_sample) {
+            context_->Flush(); // Submit conversion before the encoder consumes the GPU buffer.
+            check_hresult(gpu_sample->SetSampleTime(entry.time)); return gpu_sample;
+        }
         context_->CopyResource(staging_.get(), nv12_.get());
         D3D11_MAPPED_SUBRESOURCE mapped{}; check_hresult(context_->Map(staging_.get(), 0, D3D11_MAP_READ, 0, &mapped));
         com_ptr<IMFMediaBuffer> buffer;
@@ -375,10 +431,19 @@ class capture_run {
                     if (source_hdr(options_.kind, options_.source_handle) != 0) throw hresult_error(E_NOTIMPL, L"Source moved to HDR/unknown display color mode; recording ended.");
                     health_checked = qpc_now();
                 }
+                auto convert_start = qpc_now();
                 auto current = encode_sample(entry);
+                if (!current) {
+                    std::lock_guard lock(mutex_); ++status_.frames_dropped; free_.push_back(std::move(entry.texture)); continue;
+                }
+                auto convert_elapsed = static_cast<uint64_t>(qpc_now() - convert_start);
+                { std::lock_guard lock(mutex_); ++performance_.converted; performance_.conversion_qpc += convert_elapsed; performance_.conversion_max_qpc = std::max(performance_.conversion_max_qpc, convert_elapsed); }
                 if (pending) {
                     check_hresult(pending->SetSampleDuration(std::max<int64_t>(1, entry.time - pending_time)));
+                    auto write_start = qpc_now();
                     check_hresult(writer_->WriteSample(stream_, pending.get()));
+                    auto write_elapsed = static_cast<uint64_t>(qpc_now() - write_start);
+                    { std::lock_guard lock(mutex_); performance_.writer_qpc += write_elapsed; performance_.writer_max_qpc = std::max(performance_.writer_max_qpc, write_elapsed); }
                     std::lock_guard lock(mutex_); ++status_.frames_written; status_.duration_100ns = entry.time;
                 }
                 pending = std::move(current); pending_time = entry.time;
@@ -395,6 +460,7 @@ class capture_run {
                 check_hresult(pending->SetSampleDuration(end - pending_time));
                 check_hresult(writer_->WriteSample(stream_, pending.get()));
                 { std::lock_guard lock(mutex_); ++status_.frames_written; status_.duration_100ns = end; }
+                pending = nullptr;
             }
             check_hresult(writer_->Finalize()); writer_ = nullptr;
             { std::lock_guard lock(mutex_); if (SUCCEEDED(status_.error_code)) status_.state = FT_CAPTURE_STOPPED; }
@@ -407,6 +473,8 @@ class capture_run {
             if (writer_) { writer_->Finalize(); writer_ = nullptr; }
             if (!signalled) ready_.set_value(E_FAIL);
         }
+        if (sample_allocator_) { sample_allocator_->UninitializeSampleAllocator(); sample_allocator_ = nullptr; }
+        device_manager_ = nullptr;
     }
     int64_t started_qpc_{};
 public:
@@ -433,6 +501,7 @@ public:
         status_.pause_started_qpc = 0; status_.state = FT_CAPTURE_RECORDING; return S_OK;
     }
     void status(ft_capture_status& target) const { std::lock_guard lock(mutex_); target = status_; }
+    void performance(ft_capture_performance& target) const { std::lock_guard lock(mutex_); target = performance_; }
 };
 }
 extern "C" {
@@ -470,6 +539,10 @@ int32_t FT_CAPTURE_CALL ft_capture_stop(ft_capture_handle h) { if (!h) return E_
 int32_t FT_CAPTURE_CALL ft_capture_get_status(ft_capture_handle h, ft_capture_status* s) {
     if (!h || !s || s->struct_size != sizeof(*s)) return E_INVALIDARG;
     return guard([&] { static_cast<capture_run*>(h)->status(*s); });
+}
+int32_t FT_CAPTURE_CALL ft_capture_get_performance(ft_capture_handle h, ft_capture_performance* p) {
+    if (!h || !p || p->struct_size != sizeof(*p)) return E_INVALIDARG;
+    return guard([&] { static_cast<capture_run*>(h)->performance(*p); });
 }
 void FT_CAPTURE_CALL ft_capture_destroy(ft_capture_handle h) { try { delete static_cast<capture_run*>(h); } catch (...) {} }
 int32_t FT_CAPTURE_CALL ft_capture_region_from_dip(uint32_t dpi, double x, double y, double w, double h, int32_t mw, int32_t mh, int32_t* result) {

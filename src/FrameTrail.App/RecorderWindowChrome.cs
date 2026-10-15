@@ -2,6 +2,8 @@ using System.Runtime.InteropServices;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 
 namespace FrameTrail.App;
@@ -23,6 +25,7 @@ internal static class RecorderWindowChrome
     [DllImport("user32.dll")] private static extern int SetWindowRgn(nint window, nint region, bool redraw);
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(nint value);
     [DllImport("user32.dll")] private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")] private static extern bool GetCursorPos(out PointInt32 point);
     [DllImport("user32.dll")] private static extern nint SendMessage(nint window, uint message, nuint wparam, nint lparam);
     [DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint window, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
@@ -113,5 +116,42 @@ internal static class RecorderWindowChrome
     {
         if (!args.GetCurrentPoint(null).Properties.IsLeftButtonPressed) return;
         args.Handled = true; ReleaseCapture(); SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(window), 0xA1, 2, 0);
+    }
+    internal static void EnableDragging(Window window, FrameworkElement surface, Action started, Action<string>? trace = null)
+    {
+        uint? pointer = null;
+        PointInt32 anchor = default, origin = default;
+        surface.PointerPressed += (_, args) => {
+            trace?.Invoke($"pressed {args.OriginalSource?.GetType().Name} left={args.GetCurrentPoint(surface).Properties.IsLeftButtonPressed} point={args.GetCurrentPoint(surface).Position}");
+            if (pointer is not null || !args.GetCurrentPoint(surface).Properties.IsLeftButtonPressed) return;
+            // Routed events from button content may be unhandled. Walk the entire
+            // ancestry so pressing an icon or label never starts a window drag.
+            for (var node = args.OriginalSource as DependencyObject; node is not null && node != surface; node = VisualTreeHelper.GetParent(node))
+                if (node is Control) { trace?.Invoke($"control {node.GetType().Name}"); return; }
+            var press = args.GetCurrentPoint(surface).Position;
+            origin = window.AppWindow.Position;
+            double scale = surface.XamlRoot?.RasterizationScale ?? Scale(window);
+            // Use the press event's coordinates: queued mouse input may already
+            // have moved the global cursor by the time this handler executes.
+            anchor = new PointInt32(origin.X + (int)Math.Round(press.X * scale), origin.Y + (int)Math.Round(press.Y * scale));
+            if (!surface.CapturePointer(args.Pointer)) { trace?.Invoke("capture-failed"); return; }
+            pointer = args.Pointer.PointerId;
+            trace?.Invoke($"captured origin={origin.X},{origin.Y} cursor={anchor.X},{anchor.Y}");
+            started(); args.Handled = true;
+        };
+        surface.PointerMoved += (_, args) => {
+            if (pointer != args.Pointer.PointerId || !GetCursorPos(out var current)) return;
+            // Desktop physical coordinates avoid cumulative drift and feedback as
+            // the window moves under the pointer, including between displays.
+            window.AppWindow.Move(new PointInt32(origin.X + current.X - anchor.X, origin.Y + current.Y - anchor.Y));
+            trace?.Invoke($"moved {window.AppWindow.Position.X},{window.AppWindow.Position.Y}");
+            args.Handled = true;
+        };
+        surface.PointerReleased += (_, args) => {
+            if (pointer != args.Pointer.PointerId) return;
+            pointer = null; surface.ReleasePointerCapture(args.Pointer); args.Handled = true;
+        };
+        surface.PointerCanceled += (_, _) => { pointer = null; surface.ReleasePointerCaptures(); };
+        surface.PointerCaptureLost += (_, _) => { trace?.Invoke("capture-lost"); pointer = null; };
     }
 }

@@ -20,6 +20,7 @@ public sealed class EditorBarSlider : Slider
     private double dragStart, dragOffset;
     internal bool IsDragging => held;
     public event EventHandler? Committed;
+    internal event Action<bool>? InteractionEnded;
     public static readonly DependencyProperty SuffixProperty = DependencyProperty.Register(nameof(Suffix), typeof(string), typeof(EditorBarSlider), new PropertyMetadata("", Changed));
     public static readonly DependencyProperty AccentProperty = DependencyProperty.Register(nameof(Accent), typeof(Brush), typeof(EditorBarSlider), new PropertyMetadata(null, Changed));
     public static readonly DependencyProperty InkProperty = DependencyProperty.Register(nameof(Ink), typeof(Brush), typeof(EditorBarSlider), new PropertyMetadata(null, Changed));
@@ -137,6 +138,7 @@ public sealed class EditorBarSlider : Slider
         if (!commit) Value = dragStart;
         held = false; UpdateFeedback();
         if (commit && changed) Committed?.Invoke(this, EventArgs.Empty);
+        InteractionEnded?.Invoke(commit);
     }
     protected override void OnKeyDown(KeyRoutedEventArgs e)
     {

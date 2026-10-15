@@ -130,6 +130,17 @@ public sealed record EditorSettings
     public double Shadow { get; init; } = 0.35;
     public double CursorScale { get; init; } = 1;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NormalizedRect? Crop { get; init; }
+    public double CursorSmoothing { get; init; } = 0.08;
+    public string FrameStyle { get; init; } = "none";
+    public string CameraShape { get; init; } = "rounded";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public BackdropSettings? Backdrop { get; init; }
+}
+
+public sealed record BackdropSettings
+{
+    public string Kind { get; init; } = "solid";
+    public string Path { get; init; } = "";
+    public SdrColor Secondary { get; init; } = new() { R = 0.16, G = 0.25, B = 0.42 };
 }
 
 public sealed record RecordingMarker

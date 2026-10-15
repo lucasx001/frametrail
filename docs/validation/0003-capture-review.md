@@ -2,6 +2,8 @@
 
 日期：2026-10-14。测试材料在本地 `artifacts/validation/`，不提交录屏或窗口标题列表。
 
+2026-10-15 补充：下方 CPU 回读及 44.14 FPS 为旧实现的历史结果。GPU 编码输入与受控短测见 [连续性与性能记录](capture-continuity-performance.md)，新路径长测仍待执行。
+
 ## 环境
 
 - Windows 11 x64 build 26300（本机是预览系统，不能替代稳定版系统矩阵）。

@@ -5,7 +5,7 @@ using FrameTrail.Interop;
 namespace FrameTrail.Workspace;
 
 /// <summary>One editor per writable lease. Undo restores content with a newer revision.</summary>
-public sealed class EditorSession
+public sealed partial class EditorSession
 {
     private readonly ProjectWorkspace workspace;
     private readonly List<string> undo = new(), redo = new();
@@ -56,7 +56,7 @@ public sealed class EditorSession
     public async Task CommitTransactionAsync()
     {
         await gate.WaitAsync();
-        try { EnsureEditable(); if (transaction is null) return; var candidate = Preview; transaction = Preview = null; if (candidate is null) return; Push(undo, Snapshot); redo.Clear(); await AcceptAsync(candidate); }
+        try { EnsureEditable(); if (transaction is null) return; var candidate = Preview; transaction = Preview = null; if (candidate is null || ProjectJson.Serialize(candidate with { Revision = Snapshot.Revision }) == ProjectJson.Serialize(Snapshot)) return; Push(undo, Snapshot); redo.Clear(); await AcceptAsync(candidate); }
         finally { gate.Release(); }
     }
     public async Task UndoAsync() => await RestoreAsync(undo, redo);

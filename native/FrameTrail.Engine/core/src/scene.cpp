@@ -29,6 +29,8 @@ FrameSceneEvaluator::FrameSceneEvaluator(Project project)
     validate_project(project_);
     const auto settings = nlohmann::json::parse(project_.editor_json);
     const auto crop = settings.value("crop", nlohmann::json::object()); crop_width_ = crop.value("width", 1.0); crop_height_ = crop.value("height", 1.0);
+    frame_style_=settings.value("frameStyle",std::string("none")); camera_shape_=settings.value("cameraShape",std::string("rounded"));
+    for(auto&e:project_.effects)effects_.push_back(parse_visual_effect(e));
 }
 
 std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_ticks) const {
@@ -48,6 +50,13 @@ std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_tick
                 fit(pixels(canvas.camera.rect, canvas), camera->width, camera->height), canvas.camera.mirror};
         }
     }
+    scene.visual=evaluate_visuals(effects_,mapped->ticks); scene.visual.frame_style=frame_style_; scene.visual.camera_shape=camera_shape_;
+    // Authored focus is normalized to the fitted/cropped screen. GPU projection
+    // uses canvas coordinates, which also include padding and letterboxing.
+    scene.visual.screen.focus_x=(scene.screen.output_rect.x+scene.visual.screen.focus_x*scene.screen.output_rect.width)/canvas.width;
+    scene.visual.screen.focus_y=(scene.screen.output_rect.y+scene.visual.screen.focus_y*scene.screen.output_rect.height)/canvas.height;
+    if(scene.camera && camera_shape_=="circle") { auto box=pixels(canvas.camera.rect,canvas); auto side=std::min(box.width,box.height); scene.camera->output_rect={box.x+(box.width-side)/2,box.y+(box.height-side)/2,side,side}; }
+    if(scene.camera){auto r=scene.camera->output_rect;scene.visual.camera.focus_x=(r.x+r.width/2)/canvas.width;scene.visual.camera.focus_y=(r.y+r.height/2)/canvas.height;scene.visual.camera.fixed_anchor=true;}
     return scene;
 }
 } // namespace frametrail::core

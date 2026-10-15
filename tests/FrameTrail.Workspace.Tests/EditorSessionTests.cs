@@ -39,6 +39,12 @@ public sealed class EditorSessionTests : IAsyncLifetime
         }
         await editor.FlushAsync(); Assert.False(editor.IsDirty); Assert.Null(editor.SaveError); Assert.Equal(2, workspace.Snapshot!.Revision); Assert.Equal(2, workspace.Snapshot.Segments[0].Rate.Numerator);
     }
+    [Fact] public async Task UnchangedPreviewDoesNotAddHistoryOrRevision()
+    {
+        await using var workspace = await CreateAsync(); var editor = new EditorSession(workspace);
+        editor.BeginTransaction(); editor.PreviewCommand(new { op = "rate", segmentId = "clip", numerator = 1, denominator = 1 }); await editor.CommitTransactionAsync();
+        Assert.Equal(1, editor.Snapshot.Revision); Assert.False(editor.CanUndo); Assert.False(editor.IsDirty);
+    }
     [Fact] public async Task NewEditAfterUndoClearsRedoAndReopenMatchesContent()
     {
         var workspace = await CreateAsync(); var editor = new EditorSession(workspace);

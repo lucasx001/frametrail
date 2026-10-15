@@ -11,3 +11,8 @@ target_link_libraries(FrameTrail.Core.Tests PRIVATE FrameTrail.Core nlohmann_jso
 target_compile_features(FrameTrail.Core.Tests PRIVATE cxx_std_20)
 target_compile_definitions(FrameTrail.Core.Tests PRIVATE FRAMETRAIL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 add_test(NAME FrameTrail.Core.Tests COMMAND FrameTrail.Core.Tests)
+add_executable(FrameTrail.Effects.Tests effects_tests.cpp)
+target_link_libraries(FrameTrail.Effects.Tests PRIVATE FrameTrail.Core nlohmann_json::nlohmann_json)
+target_compile_features(FrameTrail.Effects.Tests PRIVATE cxx_std_20)
+target_compile_definitions(FrameTrail.Effects.Tests PRIVATE FRAMETRAIL_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+add_test(NAME FrameTrail.Effects.Tests COMMAND FrameTrail.Effects.Tests)

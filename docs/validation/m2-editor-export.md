@@ -2,6 +2,8 @@
 
 日期：2026-10-15。范围：0006–0008。实现闭环已接通；任务保持“待验收”，保留人工与硬件矩阵，不替代 M1 验收。
 
+当日后续更新：预览帧槽调度修复后，1080p WinUI 短测约 60 FPS；M1 摄像头连续 checkpoint 已有独立本机短测。下方早期帧率 / 摄像头限制为历史结果，当前证据见 [连续性与性能记录](capture-continuity-performance.md)。导出仍使用 CPU 回读，硬件 / 长时矩阵继续保留。
+
 ## 实现
 
 - `FrameTrail.Media` 原生 DLL：MF/NV12 解码、D3D11 色彩转换、Direct2D 分层合成，预览和导出共用 `Renderer::render`。媒体像素不跨 C ABI。

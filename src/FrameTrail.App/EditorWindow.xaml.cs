@@ -30,7 +30,7 @@ public sealed partial class EditorWindow : Window
     private bool ready, working, playing, rendering, allowClose, closing;
     private string? validationDirectory;
     private int renderedFrames;
-    private long lastPlaybackFrame;
+    private readonly PlaybackFrameGate playbackFrames = new();
     private bool fittedTimeline, showingExport;
 
     internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null)
@@ -40,12 +40,13 @@ public sealed partial class EditorWindow : Window
         ProjectTitle.Text = Path.GetFileNameWithoutExtension(workspace.DirectoryPath);
         PreviewMount.Children.Add(preview); TimelineMount.Children.Add(timeline);
         InitializeChrome();
+        InitializeVisuals();
         var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
         AppWindow.Resize(new Windows.Graphics.SizeInt32(Math.Min(1500, area.Width), Math.Min(980, area.Height)));
         if (AppWindow.Presenter is OverlappedPresenter presenter) { double scale = RecorderWindowChrome.Scale(this); presenter.PreferredMinimumWidth = (int)Math.Round(840 * scale); presenter.PreferredMinimumHeight = (int)Math.Round(600 * scale); }
         editor.Changed += (_, _) => DispatcherQueue.TryEnqueue(UpdateState);
         timeline.Seek += async ticks => { if (!working && !editor.IsExporting) await SafeAsync(() => SeekAsync(ticks)); };
-        timeline.SelectClip += id => { selected = id; LoadInspector(); RefreshTimeline(); };
+        timeline.SelectClip += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); RefreshTimeline(); }); };
         timeline.BeginEdit += () => { if (working || editor.IsExporting) return; Pause(); editor.BeginTransaction(); };
         timeline.PreviewEdit += command => {
             if (working || editor.IsExporting) return;
@@ -65,7 +66,10 @@ public sealed partial class EditorWindow : Window
         Root.Loaded += async (_, _) => {
             if (ready) return; ready = true;
             await SafeAsync(ReloadAsync);
-            if (this.validationDirectory is not null) await RunValidationAsync(this.validationDirectory);
+            if (this.validationDirectory is not null) {
+                if (Environment.GetCommandLineArgs().Contains("--m3-self-test")) await RunM3ValidationAsync(this.validationDirectory);
+                else await RunValidationAsync(this.validationDirectory);
+            }
         };
         AppWindow.Closing += async (_, args) => {
             if (allowClose) return; args.Cancel = true;
@@ -77,6 +81,7 @@ public sealed partial class EditorWindow : Window
         if (allowClose || closing || flushingPictureInputs) return;
         if (showingExport) return;
         if (working || editor.IsExporting) { ShowNotice("正在完成操作", "请等待操作完成，或先取消导出。"); return; }
+        await FlushVisualChangesAsync();
         await FlushPictureInputsAsync();
         closing = true;
         try { Pause(); timeline.CancelDrag(); ValidationTrace("closing: flush"); await editor.FlushAsync(); ValidationTrace("closing: assets"); assetsCancellation.Cancel(); await assetWorker; ValidationTrace("closing: preview"); await preview.DisposeAsync(); mapper.Dispose(); settingsWindow?.Close(); ValidationTrace("closing: complete"); allowClose = true; Close(); }
@@ -90,6 +95,8 @@ public sealed partial class EditorWindow : Window
     }
     private async Task PerformAsync(Func<Task> action)
     {
+        if (working || editor.IsExporting) return;
+        await FlushVisualChangesAsync();
         if (working || editor.IsExporting) return; working = true; Pause(); timeline.EditingEnabled = false;
         try { await action(); await ReloadAsync(); }
         catch (Exception error) { ShowNotice("编辑未完成", error.Message, InfoBarSeverity.Warning); RefreshTimeline(); }
@@ -108,28 +115,27 @@ public sealed partial class EditorWindow : Window
         if (!fittedTimeline && TimelineMount.ActualWidth > 0) { FitTimeline_Click(this, new RoutedEventArgs()); fittedTimeline = true; }
         var snapshot = editor.Snapshot; var queue = thumbnails; var token = assetsCancellation.Token;
         assetWorker = Task.Run(() => BuildAssetsAsync(snapshot, queue, token));
-        if (snapshot.Effects.Count > 0) ShowNotice("包含后续阶段的视觉效果", "当前 M2 预览只显示基础图层；带高级效果的工程会阻止导出，避免遗漏效果。", InfoBarSeverity.Warning);
     }
     private void RequestThumbnail(long ticks)
     {
         if (thumbnails is null || !pendingThumbnails.Add(ticks)) return;
         if (!thumbnails.Writer.TryWrite(ticks)) pendingThumbnails.Remove(ticks);
     }
-    private async Task BuildAssetsAsync(ProjectSnapshot snapshot, Channel<long> requests, CancellationToken token)
+    private async Task BuildAssetsAsync(ProjectSnapshot snapshot, Channel<long> requests, CancellationToken token, bool prepareAudio = true)
     {
         var cache = Path.Combine(editor.DirectoryPath, "cache"); Directory.CreateDirectory(cache);
         var prefix = "editor-" + snapshot.Revision + "-";
         try {
             // Bound only our rebuildable files; never delete source media or other caches.
-            var old = new DirectoryInfo(cache).EnumerateFiles("editor-*").Where(f => !f.Name.StartsWith(prefix, StringComparison.Ordinal)).OrderByDescending(f => f.LastWriteTimeUtc).Skip(160);
+            var old = new DirectoryInfo(cache).EnumerateFiles("editor-*").Where(f => !f.Name.StartsWith(prefix, StringComparison.Ordinal) && !string.Equals(f.FullName, preparedAudio, StringComparison.OrdinalIgnoreCase)).OrderByDescending(f => f.LastWriteTimeUtc).Skip(160);
             foreach (var file in old) { token.ThrowIfCancellationRequested(); try { file.Delete(); } catch (IOException) { } }
             using var media = new MediaSession(snapshot, editor.DirectoryPath); using var registration = token.Register(media.Cancel);
             var hasAudio = snapshot.Media.Any(m => m.Kind is MediaKind.SystemAudio or MediaKind.Microphone);
-            if (hasAudio) {
+            if (hasAudio && prepareAudio) {
                 var wav = Path.Combine(cache, prefix + "mix.wav"); media.PrepareAudio(wav); token.ThrowIfCancellationRequested();
                 var peaks = await ReadWaveformAsync(wav, token);
                 DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { preparedAudio = wav; timeline.SetWaveform(peaks); UpdateState(); } });
-            } else DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) timeline.SetWaveform(Array.Empty<float>()); });
+            } else if (!hasAudio) DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) timeline.SetWaveform(Array.Empty<float>()); });
             var files = new Queue<string>();
             while (await requests.Reader.WaitToReadAsync(token)) while (requests.Reader.TryRead(out var ticks)) {
                 token.ThrowIfCancellationRequested(); var path = Path.Combine(cache, prefix + ticks + ".png");
@@ -161,7 +167,7 @@ public sealed partial class EditorWindow : Window
         UndoButton.IsEnabled = !working && !editor.IsExporting && editor.CanUndo; RedoButton.IsEnabled = !working && !editor.IsExporting && editor.CanRedo;
         PlayButton.IsEnabled = !working && !editor.IsExporting;
         InspectorMode.IsEnabled = InspectorScroll.IsHitTestVisible = !working && !editor.IsExporting;
-        timeline.EditingEnabled = !working && !editor.IsExporting;
+        timeline.EditingEnabled = !working && !editor.IsExporting && !visualTransaction && !visualPending && !committingVisuals;
         ExportLabel.Text = editor.IsExporting ? "取消导出" : "导出";
         if (editor.SaveError is not null) ShowNotice("自动保存失败", editor.SaveError + "。编辑已保留，可点击重试保存。", InfoBarSeverity.Error);
     }
@@ -187,6 +193,7 @@ public sealed partial class EditorWindow : Window
         RatioHudLabel.Text = (AspectRatio.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "比例";
         UpdateBackgroundChoice();
         } finally { loadingInspector = false; }
+        RefreshVisualInspector();
     }
     private void ShowNotice(string title, string message, InfoBarSeverity severity = InfoBarSeverity.Informational) { Notice.Title = title; Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true; }
     private static string Format(long ticks) => TimeSpan.FromTicks(ticks).ToString(ticks >= TimeSpan.TicksPerHour ? @"h\:mm\:ss\.ff" : @"mm\:ss\.ff");
@@ -203,7 +210,7 @@ public sealed partial class EditorWindow : Window
             if (preparedAudio is null) { ShowNotice("正在准备声音", "混音缓存完成后即可播放带声音的预览。"); return; }
             await Task.Run(() => preview.Session.PlayAudio(preparedAudio, position));
         }
-        playbackStart = position; playbackClock.Restart(); lastPlaybackFrame = -TimeSpan.TicksPerSecond; playing = true; PlayGlyph.Kind = "Pause";
+        playbackStart = position; playbackClock.Restart(); playbackFrames.Reset(); playing = true; PlayGlyph.Kind = "Pause";
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += PlaybackRendering;
     }
@@ -226,7 +233,8 @@ public sealed partial class EditorWindow : Window
     }
     private async void PlaybackRendering(object? sender, object args)
     {
-        var time = playbackClock.Elapsed.Ticks; if (time - lastPlaybackFrame < TimeSpan.TicksPerSecond / 60) return; lastPlaybackFrame = time; await TickAsync();
+        if (!playing || rendering || !playbackFrames.TryAdvance(playbackClock.Elapsed.Ticks)) return;
+        await TickAsync();
     }
     private async void Play_Click(object sender, RoutedEventArgs e) => await SafeAsync(async () => { if (playing) Pause(); else await StartPlaybackAsync(); });
     private async void PreviousFrame_Click(object sender, RoutedEventArgs e) => await SafeAsync(() => SeekAsync(position - TimeSpan.TicksPerSecond / editor.Snapshot.Export.Fps.Numerator));
@@ -271,9 +279,17 @@ public sealed partial class EditorWindow : Window
         settings = settings with { SystemGain = SystemGain.Value / 100, MicrophoneGain = MicGain.Value / 100, SystemMuted = SystemMute.IsChecked == true, MicrophoneMuted = MicMute.IsChecked == true, ClipAudio = levels };
         await EditAsync(new { op = "settings", editor = settings });
     }
-    private async void Background_Click(object sender, RoutedEventArgs e) { if ((sender as Button)?.Tag is string hex) { background = new SdrColor { R = Convert.ToInt32(hex.Substring(1, 2), 16) / 255.0, G = Convert.ToInt32(hex.Substring(3, 2), 16) / 255.0, B = Convert.ToInt32(hex.Substring(5, 2), 16) / 255.0, A = 1 }; await CommitPictureAsync(); } }
+    private async void Background_Click(object sender, RoutedEventArgs e) {
+        if ((sender as Button)?.Tag is not string hex) return;
+        await ApplyBackgroundColorAsync(hex);
+    }
+    private async Task ApplyBackgroundColorAsync(string hex) {
+        background = new SdrColor { R = Convert.ToInt32(hex.Substring(1, 2), 16) / 255.0, G = Convert.ToInt32(hex.Substring(3, 2), 16) / 255.0, B = Convert.ToInt32(hex.Substring(5, 2), 16) / 255.0, A = 1 };
+        var prior = editor.Snapshot.Editor ?? new();
+        await EditAsync(new { op = "settings", canvas = editor.Snapshot.Canvas with { Background = background }, editor = prior with { Backdrop = prior.Backdrop?.Kind == "gradient" ? prior.Backdrop : new BackdropSettings() } });
+    }
     private void CopyPicture_Click(object sender, RoutedEventArgs e) { copiedPicture = (editor.Snapshot.Canvas, editor.Snapshot.Editor ?? new()); ShowNotice("画面设置已复制", "可粘贴到当前工程，并通过撤销恢复。"); }
-    private async void PastePicture_Click(object sender, RoutedEventArgs e) { if (copiedPicture is not { } copied) return; var current = editor.Snapshot.Editor ?? new(); var settings = current with { CornerRadius = copied.Editor.CornerRadius, Shadow = copied.Editor.Shadow, CursorScale = copied.Editor.CursorScale, Crop = copied.Editor.Crop }; await EditAsync(new { op = "settings", canvas = copied.Canvas, editor = settings }); }
+    private async void PastePicture_Click(object sender, RoutedEventArgs e) { if (copiedPicture is not { } copied) return; var current = editor.Snapshot.Editor ?? new(); var settings = current with { CornerRadius = copied.Editor.CornerRadius, Shadow = copied.Editor.Shadow, CursorScale = copied.Editor.CursorScale, CursorSmoothing = copied.Editor.CursorSmoothing, Crop = copied.Editor.Crop, Backdrop = copied.Editor.Backdrop, FrameStyle = copied.Editor.FrameStyle, CameraShape = copied.Editor.CameraShape }; await EditAsync(new { op = "settings", canvas = copied.Canvas, editor = settings }); }
     private void InspectorMode_SelectionChanged(object sender, SelectionChangedEventArgs e) { if (PictureSettings is null || InspectorTabs is null) return; ShowInspector(InspectorMode.SelectedIndex switch { 1 => 5, 2 => 6, _ => 0 }); }
     private void PictureTab_Click(object sender, RoutedEventArgs e) => ShowInspector(0);
     private void AudioTab_Click(object sender, RoutedEventArgs e) => ShowInspector(5);
@@ -289,7 +305,7 @@ public sealed partial class EditorWindow : Window
     {
         if (editor.IsExporting) { exportCancellation.Cancel(); return; }
         if (working || showingExport || flushingPictureInputs) return;
-        await FlushPictureInputsAsync(); Pause(); showingExport = true;
+        await FlushVisualChangesAsync(); await FlushPictureInputsAsync(); Pause(); showingExport = true;
         await SafeAsync(async () => {
             var coverPath = Path.Combine(editor.DirectoryPath, "cache", $"editor-{editor.Snapshot.Revision}-export-{position}.png");
             Directory.CreateDirectory(Path.GetDirectoryName(coverPath)!); await preview.RenderAsync(position, true, coverPath);
@@ -321,10 +337,14 @@ public sealed partial class EditorWindow : Window
     }
     private async void Root_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.OriginalSource is TextBox or NumberBox or Slider or ToggleButton || working || editor.IsExporting || showingExport) return;
+        var source = e.OriginalSource as DependencyObject;
+        if (InputAncestor<TextBox>(source) is not null || InputAncestor<NumberBox>(source) is not null || InputAncestor<Slider>(source) is not null || InputAncestor<ToggleButton>(source) is not null || InputAncestor<ComboBox>(source) is not null || working || editor.IsExporting || showingExport) return;
         bool control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
         if (control && e.Key == VirtualKey.Z) { e.Handled = true; await PerformAsync(editor.UndoAsync); }
         else if (control && e.Key == VirtualKey.Y) { e.Handled = true; await PerformAsync(editor.RedoAsync); }
+        else if (inspectorTab == 2 && control && e.Key == VirtualKey.C) { copiedEffect = CurrentEffect; e.Handled = true; }
+        else if (inspectorTab == 2 && control && e.Key == VirtualKey.V && copiedEffect is not null) { e.Handled = true; await PerformAsync(PasteCopiedVisualAsync); }
+        else if (inspectorTab == 2 && e.Key == VirtualKey.Delete && selectedEffect is not null) { e.Handled = true; await PerformAsync(() => editor.DeleteEffectAsync(selectedEffect)); }
         else if (e.Key == VirtualKey.Space) { e.Handled = true; await SafeAsync(async () => { if (playing) Pause(); else await StartPlaybackAsync(); }); }
         else if (e.Key == VirtualKey.Left || e.Key == VirtualKey.Right) { e.Handled = true; await SafeAsync(() => SeekAsync(position + (e.Key == VirtualKey.Left ? -1 : 1) * TimeSpan.TicksPerSecond / editor.Snapshot.Export.Fps.Numerator)); }
         else if (e.Key == VirtualKey.Escape) { e.Handled = true; timeline.CancelDrag(); editor.CancelTransaction(); RefreshTimeline(); }

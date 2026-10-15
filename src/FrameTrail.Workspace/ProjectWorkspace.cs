@@ -202,6 +202,11 @@ public sealed class ProjectWorkspace : IAsyncDisposable
     }
     private async Task CheckMediaAsync(ProjectSnapshot value)
     {
+        foreach (var asset in VisualResources.Paths(value).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            await using var file = new FileStream(Resolve(asset), FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (file.Length == 0) throw new IOException($"Empty visual asset: {asset}");
+        }
         foreach (var media in value.Media)
         {
             await using var stream = new FileStream(Resolve(media.Path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);

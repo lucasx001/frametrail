@@ -151,7 +151,9 @@ public sealed class EngineSession : IDisposable
 public sealed record MappedTimelineTime(string SegmentId, long Ticks);
 public sealed record ResolvedClip(string Id, long SourceStart, long SourceDuration, long OutputStart, long OutputDuration, int Numerator, int Denominator);
 public sealed record ResolvedMarker(string Id, long Ticks, string Label);
-public sealed record ResolvedTimeline(long Duration, IReadOnlyList<ResolvedClip> Clips, IReadOnlyList<ResolvedMarker> Markers);
+public sealed record ResolvedEffect(string Id, string Kind, long OutputStart, long OutputDuration);
+public sealed record ResolvedTimeline(long Duration, IReadOnlyList<ResolvedClip> Clips, IReadOnlyList<ResolvedMarker> Markers)
+{ public IReadOnlyList<ResolvedEffect> Effects { get; init; } = Array.Empty<ResolvedEffect>(); }
 public sealed record OutputRect(double X, double Y, double Width, double Height);
 public sealed record EvaluatedMediaFrame(string MediaId, long LocalTicks, OutputRect OutputRect, bool Mirror);
 public sealed record EvaluatedFrameScene(long Revision, long OutputTicks, long SourceTicks, string SegmentId,
