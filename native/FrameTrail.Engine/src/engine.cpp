@@ -1,5 +1,6 @@
 #include "frametrail/engine.h"
 #include "frametrail/core/scene.hpp"
+#include "frametrail/core/editor.hpp"
 #include <atomic>
 #include <cstring>
 #include <exception>
@@ -116,6 +117,21 @@ ft_result FT_CALL ft_project_validate(const char* utf8, uint32_t length) {
         if (!utf8 || length == 0 || length > 16u * 1024u * 1024u) return fail(FT_E_INVALID_ARGUMENT, "Invalid project byte buffer");
         (void)frametrail::core::parse_project(std::string_view(utf8, length));
         return FT_OK;
+    });
+}
+ft_result FT_CALL ft_project_edit(const char* utf8, uint32_t length, const char* command, uint32_t command_length, char* output, uint32_t capacity, uint32_t* required) {
+    return protect([&]() -> ft_result {
+        if (!utf8 || !command || !length || length > 16u * 1024u * 1024u || !command_length || command_length > 16u * 1024u * 1024u) return fail(FT_E_INVALID_ARGUMENT, "Invalid command buffer");
+        const auto p = frametrail::core::parse_project(std::string_view(utf8, length));
+        const auto result = frametrail::core::serialize_project(frametrail::core::edit_project(p, std::string_view(command, command_length)));
+        return copy_string(result.c_str(), output, capacity, required);
+    });
+}
+ft_result FT_CALL ft_project_timeline(const char* utf8, uint32_t length, char* output, uint32_t capacity, uint32_t* required) {
+    return protect([&]() -> ft_result {
+        if (!utf8 || !length || length > 16u * 1024u * 1024u) return fail(FT_E_INVALID_ARGUMENT, "Invalid project buffer");
+        const auto result = frametrail::core::timeline_json(frametrail::core::parse_project(std::string_view(utf8, length)));
+        return copy_string(result.c_str(), output, capacity, required);
     });
 }
 ft_result FT_CALL ft_session_load_project(ft_session_handle handle, const char* utf8, uint32_t length) {

@@ -108,6 +108,28 @@ public sealed record ProjectSnapshot
     [JsonRequired] public IReadOnlyList<SourceEffect> Effects { get; init; } = Array.Empty<SourceEffect>();
     public IReadOnlyList<RecordingMarker> Markers { get; init; } = Array.Empty<RecordingMarker>();
     [JsonRequired, JsonPropertyName("export")] public ExportSettings Export { get; init; } = new();
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public EditorSettings? Editor { get; init; }
+}
+
+public sealed record AudioLevel
+{
+    public double SystemGain { get; init; } = 1;
+    public double MicrophoneGain { get; init; } = 1;
+    public bool SystemMuted { get; init; }
+    public bool MicrophoneMuted { get; init; }
+}
+
+public sealed record EditorSettings
+{
+    public double SystemGain { get; init; } = 1;
+    public double MicrophoneGain { get; init; } = 1;
+    public bool SystemMuted { get; init; }
+    public bool MicrophoneMuted { get; init; }
+    public IReadOnlyDictionary<string, AudioLevel> ClipAudio { get; init; } = new Dictionary<string, AudioLevel>();
+    public double CornerRadius { get; init; } = 16;
+    public double Shadow { get; init; } = 0.35;
+    public double CursorScale { get; init; } = 1;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NormalizedRect? Crop { get; init; }
 }
 
 public sealed record RecordingMarker

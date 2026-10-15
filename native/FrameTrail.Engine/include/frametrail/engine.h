@@ -51,6 +51,8 @@ FT_API ft_result FT_CALL ft_session_is_cancelled(ft_session_handle session, uint
  * Validation is stateless and MUST precede committing/persisting a candidate.
  * Load accepts strictly increasing revisions for one project per session. */
 FT_API ft_result FT_CALL ft_project_validate(const char* utf8, uint32_t length);
+FT_API ft_result FT_CALL ft_project_edit(const char* utf8, uint32_t length, const char* command, uint32_t command_length, char* output, uint32_t capacity, uint32_t* required);
+FT_API ft_result FT_CALL ft_project_timeline(const char* utf8, uint32_t length, char* output, uint32_t capacity, uint32_t* required);
 FT_API ft_result FT_CALL ft_session_load_project(ft_session_handle session, const char* utf8, uint32_t length);
 FT_API ft_result FT_CALL ft_session_output_duration(ft_session_handle session, int64_t* ticks);
 

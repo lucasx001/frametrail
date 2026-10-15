@@ -1,0 +1,168 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:FrameTrail.App">
+    <!-- Geometry and colours follow DogSC's RecorderSetupSurface / RecorderSurfaceStyle.
+         See THIRD-PARTY-NOTICES.md for the original MIT notice. Dimensions are DIPs. -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="RecorderBase" Color="#FDFDFE" />
+            <SolidColorBrush x:Key="RecorderInk" Color="#1A1A1A" />
+            <SolidColorBrush x:Key="RecorderMuted" Color="#5C5C5C" />
+            <SolidColorBrush x:Key="RecorderFaint" Color="#808080" />
+            <SolidColorBrush x:Key="RecorderWell" Color="#14000000" />
+            <SolidColorBrush x:Key="RecorderSilver" Color="#0F000000" />
+            <SolidColorBrush x:Key="RecorderLine" Color="#17000000" />
+            <SolidColorBrush x:Key="RecorderPrimary" Color="#1F1F1F" />
+            <SolidColorBrush x:Key="RecorderOnPrimary" Color="White" />
+            <SolidColorBrush x:Key="RecorderEdge" Color="#1A000000" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="RecorderBase" Color="#101113" />
+            <SolidColorBrush x:Key="RecorderInk" Color="#F5FFFFFF" />
+            <SolidColorBrush x:Key="RecorderMuted" Color="#8FFFFFFF" />
+            <SolidColorBrush x:Key="RecorderFaint" Color="#52FFFFFF" />
+            <SolidColorBrush x:Key="RecorderWell" Color="#14FFFFFF" />
+            <SolidColorBrush x:Key="RecorderSilver" Color="#0FFFFFFF" />
+            <SolidColorBrush x:Key="RecorderLine" Color="#17FFFFFF" />
+            <SolidColorBrush x:Key="RecorderPrimary" Color="#F5FFFFFF" />
+            <SolidColorBrush x:Key="RecorderOnPrimary" Color="#141414" />
+            <SolidColorBrush x:Key="RecorderEdge" Color="#2BFFFFFF" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="RecorderBase" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RecorderInk" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RecorderMuted" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RecorderFaint" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RecorderWell" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="RecorderSilver" Color="{ThemeResource SystemColorButtonFaceColor}" />
+            <SolidColorBrush x:Key="RecorderLine" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RecorderPrimary" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RecorderOnPrimary" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="RecorderEdge" Color="{ThemeResource SystemColorWindowTextColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+    <SolidColorBrush x:Key="RecorderRed" Color="#FF453B" />
+    <SolidColorBrush x:Key="RecorderMint" Color="#4DD98C" />
+    <SolidColorBrush x:Key="RecorderAmber" Color="#F29E33" />
+    <FontFamily x:Key="RecorderFont">ms-appx:///Assets/Fonts/AlibabaPuHuiTi-3-55-Regular.otf#Alibaba PuHuiTi 3.0</FontFamily>
+    <FontFamily x:Key="RecorderSemiboldFont">ms-appx:///Assets/Fonts/AlibabaPuHuiTi-3-75-SemiBold.otf#Alibaba PuHuiTi 3.0</FontFamily>
+    <!-- Shared shadcn/ui-inspired switch. Transform/opacity transitions avoid layout jumps. -->
+    <ControlTemplate x:Key="ControlSwitchTemplate" TargetType="ToggleButton">
+        <Grid x:Name="SwitchRoot" Background="Transparent" Padding="{TemplateBinding Padding}" MinHeight="32">
+            <VisualStateManager.VisualStateGroups>
+                <VisualStateGroup x:Name="SwitchStates">
+                    <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.16"><VisualTransition.GeneratedEasingFunction><CubicEase EasingMode="EaseOut"/></VisualTransition.GeneratedEasingFunction></VisualTransition></VisualStateGroup.Transitions>
+                    <VisualState x:Name="SwitchOff"/>
+                    <VisualState x:Name="SwitchOn"><VisualState.Setters><Setter Target="SwitchOnTrack.Opacity" Value="1"/><Setter Target="SwitchKnobTranslation.X" Value="12"/></VisualState.Setters></VisualState>
+                </VisualStateGroup>
+                <VisualStateGroup x:Name="SwitchFeedback">
+                    <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.15"/></VisualStateGroup.Transitions>
+                    <VisualState x:Name="SwitchQuiet"/>
+                    <VisualState x:Name="SwitchHighlighted"><VisualState.Setters><Setter Target="SwitchRing.Opacity" Value="0.3"/></VisualState.Setters></VisualState>
+                </VisualStateGroup>
+                <VisualStateGroup x:Name="SwitchAvailability"><VisualState x:Name="SwitchEnabled"/><VisualState x:Name="SwitchDisabled"><VisualState.Setters><Setter Target="SwitchRoot.Opacity" Value="0.5"/></VisualState.Setters></VisualState></VisualStateGroup>
+            </VisualStateManager.VisualStateGroups>
+            <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{ThemeResource RecorderInk}" VerticalAlignment="Center" Margin="0,0,48,0"/>
+            <Grid Width="32" Height="20" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="4,0">
+                <Border x:Name="SwitchRing" BorderBrush="{TemplateBinding Foreground}" BorderThickness="3" Margin="-4" CornerRadius="14" Opacity="0"/>
+                <Border Background="{TemplateBinding Background}" CornerRadius="10"/>
+                <Border x:Name="SwitchOnTrack" Background="{TemplateBinding Foreground}" CornerRadius="10" Opacity="0"/>
+                <Border x:Name="SwitchKnob" Width="16" Height="16" CornerRadius="8" Background="White" HorizontalAlignment="Left" Margin="2,0">
+                    <Border.RenderTransform><TranslateTransform x:Name="SwitchKnobTranslation"/></Border.RenderTransform>
+                </Border>
+            </Grid>
+        </Grid>
+    </ControlTemplate>
+    <Style TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{ThemeResource RecorderInk}" />
+    </Style>
+
+    <Style x:Key="RecorderIconButton" TargetType="Button">
+        <Setter Property="Width" Value="44" /><Setter Property="Height" Value="44" />
+        <Setter Property="Padding" Value="0" /><Setter Property="CornerRadius" Value="22" />
+        <Setter Property="Background" Value="Transparent" /><Setter Property="Foreground" Value="{ThemeResource RecorderInk}" />
+        <Setter Property="BorderThickness" Value="0" /><Setter Property="UseSystemFocusVisuals" Value="True" />
+        <Setter Property="FocusVisualPrimaryThickness" Value="1" /><Setter Property="FocusVisualSecondaryThickness" Value="0" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+            <Grid x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+                <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" />
+                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Background" Value="{ThemeResource RecorderWell}" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Presenter.Opacity" Value="0.55" /><Setter Target="Root.Background" Value="{ThemeResource RecorderWell}" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.35" /></VisualState.Setters></VisualState>
+                </VisualStateGroup></VisualStateManager.VisualStateGroups>
+                <ContentPresenter x:Name="Presenter" HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" />
+            </Grid>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="RecorderPillButton" TargetType="Button" BasedOn="{StaticResource RecorderIconButton}">
+        <Setter Property="Width" Value="Auto" /><Setter Property="MinWidth" Value="72" />
+        <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}" /><Setter Property="FontSize" Value="13" />
+        <Setter Property="Background" Value="{ThemeResource RecorderWell}" /><Setter Property="Padding" Value="18,0" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+            <Grid x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="22" Padding="{TemplateBinding Padding}">
+                <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" /><VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.85" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.65" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.35" /></VisualState.Setters></VisualState>
+                </VisualStateGroup></VisualStateManager.VisualStateGroups>
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" />
+            </Grid>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="RecorderMenuButton" TargetType="Button" BasedOn="{StaticResource RecorderPillButton}">
+        <Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Height" Value="36" /><Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Background" Value="Transparent" /><Setter Property="Padding" Value="10,0" />
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+            <Grid x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
+                <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal" /><VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Background" Value="{ThemeResource RecorderWell}" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.6" /></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.35" /></VisualState.Setters></VisualState>
+                </VisualStateGroup></VisualStateManager.VisualStateGroups>
+                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" />
+            </Grid>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="RecorderInputToggle" TargetType="ToggleButton">
+        <Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="Height" Value="40" />
+        <Setter Property="Background" Value="{ThemeResource RecorderWell}" /><Setter Property="BorderThickness" Value="0" /><Setter Property="Padding" Value="10,0" />
+        <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}" /><Setter Property="FontSize" Value="15" />
+        <Setter Property="Foreground" Value="{StaticResource RecorderMint}" /><Setter Property="UseSystemFocusVisuals" Value="False" />
+        <Setter Property="local:SwitchMotion.Enabled" Value="True"/><Setter Property="Template" Value="{StaticResource ControlSwitchTemplate}"/>
+    </Style>
+    <Style x:Key="RecorderSettingToggle" TargetType="ToggleButton" BasedOn="{StaticResource RecorderInputToggle}">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}" /><Setter Property="FontSize" Value="13" />
+        <Setter Property="Height" Value="36" />
+    </Style>
+    <Style x:Key="RecorderChoice" TargetType="RadioButton">
+        <Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="MinHeight" Value="36" />
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}" /><Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{ThemeResource RecorderMuted}" /><Setter Property="UseSystemFocusVisuals" Value="True" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+            <Grid x:Name="Root" Background="Transparent" CornerRadius="10" Padding="10,8" ColumnSpacing="10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="16" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates"><VisualState x:Name="Normal" /><VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Background" Value="{ThemeResource RecorderWell}" /></VisualState.Setters></VisualState><VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.35" /></VisualState.Setters></VisualState></VisualStateGroup>
+                    <VisualStateGroup x:Name="CheckStates"><VisualState x:Name="Unchecked" /><VisualState x:Name="Checked"><VisualState.Setters><Setter Target="Dot.Visibility" Value="Visible" /><Setter Target="Outer.Stroke" Value="{ThemeResource RecorderInk}" /><Setter Target="Presenter.Foreground" Value="{ThemeResource RecorderInk}" /></VisualState.Setters></VisualState></VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+                <Ellipse x:Name="Outer" Width="15" Height="15" Stroke="{ThemeResource RecorderFaint}" StrokeThickness="1.5" VerticalAlignment="Center" />
+                <Ellipse x:Name="Dot" Width="7" Height="7" Fill="{ThemeResource RecorderInk}" Visibility="Collapsed" VerticalAlignment="Center" />
+                <ContentPresenter x:Name="Presenter" Grid.Column="1" VerticalAlignment="Center" Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}" />
+            </Grid>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="RecorderFlyout" TargetType="FlyoutPresenter">
+        <Setter Property="Background" Value="{ThemeResource RecorderBase}" /><Setter Property="Foreground" Value="{ThemeResource RecorderInk}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource RecorderEdge}" /><Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="18" /><Setter Property="Padding" Value="10" />
+        <Setter Property="MinWidth" Value="290" /><Setter Property="MaxWidth" Value="300" /><Setter Property="MaxHeight" Value="680" />
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}" /><Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style x:Key="RecorderCaption" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}" /><Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{ThemeResource RecorderMuted}" /><Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+</ResourceDictionary>

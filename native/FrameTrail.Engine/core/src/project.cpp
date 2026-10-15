@@ -137,8 +137,9 @@ Project parse_project(std::string_view text) {
             return true;
         };
         const auto root = Json::parse(text, callback);
-        object(root, "$", {"schemaVersion", "projectId", "revision", "sourceDuration", "media", "segments", "canvas", "effects", "markers", "export"});
+        object(root, "$", {"schemaVersion", "projectId", "revision", "sourceDuration", "media", "segments", "canvas", "effects", "markers", "export", "editor"});
         Project result;
+        if (root.contains("editor")) result.editor_json = root["editor"].dump();
         result.schema_version = static_cast<std::uint32_t>(integer(required(root, "schemaVersion", "$"), "schemaVersion", 1, 1));
         result.project_id = string_value(required(root, "projectId", "$"), "projectId", 128);
         result.revision = integer(required(root, "revision", "$"), "revision", 0, (std::numeric_limits<std::int64_t>::max)());
@@ -219,6 +220,24 @@ Project parse_project(std::string_view text) {
 }
 
 void validate_project(const Project& project) {
+    const auto editor = Json::parse(project.editor_json);
+    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop"});
+    for (const auto* key : {"systemGain", "microphoneGain", "cornerRadius", "shadow", "cursorScale"}) if (editor.contains(key)) {
+        const auto v = number(editor[key], std::string("editor.") + key);
+        const double max = std::string_view(key) == "cornerRadius" ? 200 : (std::string_view(key) == "shadow" ? 1 : 4);
+        if (v < 0 || v > max) invalid("editor", "setting outside allowed range");
+    }
+    for (const auto* key : {"systemMuted", "microphoneMuted"}) if (editor.contains(key)) (void)boolean(editor[key], key);
+    if (editor.contains("crop")) validate_rect(read_rect(editor["crop"], "editor.crop"), "editor.crop");
+    if (editor.contains("clipAudio")) {
+        if (!editor["clipAudio"].is_object() || editor["clipAudio"].size() > 100000) invalid("editor.clipAudio", "invalid clip audio map");
+        for (auto it = editor["clipAudio"].begin(); it != editor["clipAudio"].end(); ++it) {
+            if (!valid_id(it.key())) invalid("editor.clipAudio", "invalid clip ID");
+            object(it.value(), "editor.clipAudio[]", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted"});
+            for (const auto* key : {"systemGain", "microphoneGain"}) if (it.value().contains(key)) { auto v = number(it.value()[key], key); if (v < 0 || v > 4) invalid(key, "gain must be 0..4"); }
+            for (const auto* key : {"systemMuted", "microphoneMuted"}) if (it.value().contains(key)) (void)boolean(it.value()[key], key);
+        }
+    }
     if (project.schema_version != 1) invalid("schemaVersion", "only schema 1 is supported");
     if (!valid_id(project.project_id)) invalid("projectId", "invalid ID");
     if (project.revision < 0) invalid("revision", "must be non-negative");
@@ -321,6 +340,7 @@ std::string serialize_project(const Project& project) {
     const auto& output = project.export_settings;
     result["export"] = {{"width", output.width}, {"height", output.height}, {"fps", ratio_json(output.fps)},
         {"videoCodec", output.video_codec}, {"audioCodec", output.audio_codec}, {"container", output.container}};
+    if (project.editor_json != "{}") result["editor"] = Json::parse(project.editor_json);
     auto text = result.dump(2);
     if (text.size() > 16 * 1024 * 1024) invalid("$", "serialized JSON exceeds 16 MiB");
     return text;

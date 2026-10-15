@@ -27,5 +27,6 @@ public:
 private:
     Project project_;
     TimelineMap timeline_;
+    double crop_width_{1}, crop_height_{1};
 };
 } // namespace frametrail::core

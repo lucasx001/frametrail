@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using FrameTrail.Domain;
+using System.Text.Json;
 
 namespace FrameTrail.Interop;
 
@@ -63,6 +64,26 @@ public sealed class EngineSession : IDisposable
     {
         var bytes = Encoding.UTF8.GetBytes(ProjectJson.Serialize(project));
         ThrowIfFailed(EngineNative.ft_project_validate(bytes, checked((uint)bytes.Length)));
+    }
+
+    public static ProjectSnapshot Edit(ProjectSnapshot project, object command)
+    {
+        var bytes = Encoding.UTF8.GetBytes(ProjectJson.Serialize(project));
+        var edit = JsonSerializer.SerializeToUtf8Bytes(command, EditorJson);
+        ThrowIfFailed(EngineNative.ft_project_edit(bytes, (uint)bytes.Length, edit, (uint)edit.Length, null, 0, out var required));
+        var output = new byte[required];
+        ThrowIfFailed(EngineNative.ft_project_edit(bytes, (uint)bytes.Length, edit, (uint)edit.Length, output, required, out _));
+        return ProjectJson.Deserialize(Encoding.UTF8.GetString(output, 0, output.Length - 1));
+    }
+
+    private static readonly JsonSerializerOptions EditorJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+    public static ResolvedTimeline ResolveTimeline(ProjectSnapshot project)
+    {
+        var bytes = Encoding.UTF8.GetBytes(ProjectJson.Serialize(project));
+        ThrowIfFailed(EngineNative.ft_project_timeline(bytes, (uint)bytes.Length, null, 0, out var required));
+        var output = new byte[required];
+        ThrowIfFailed(EngineNative.ft_project_timeline(bytes, (uint)bytes.Length, output, required, out _));
+        return JsonSerializer.Deserialize<ResolvedTimeline>(output.AsSpan(0, output.Length - 1), EditorJson)!;
     }
 
     /// <summary>Atomically replaces the engine snapshot. Revisions must increase and project identity is fixed.</summary>
@@ -128,6 +149,9 @@ public sealed class EngineSession : IDisposable
 }
 
 public sealed record MappedTimelineTime(string SegmentId, long Ticks);
+public sealed record ResolvedClip(string Id, long SourceStart, long SourceDuration, long OutputStart, long OutputDuration, int Numerator, int Denominator);
+public sealed record ResolvedMarker(string Id, long Ticks, string Label);
+public sealed record ResolvedTimeline(long Duration, IReadOnlyList<ResolvedClip> Clips, IReadOnlyList<ResolvedMarker> Markers);
 public sealed record OutputRect(double X, double Y, double Width, double Height);
 public sealed record EvaluatedMediaFrame(string MediaId, long LocalTicks, OutputRect OutputRect, bool Mirror);
 public sealed record EvaluatedFrameScene(long Revision, long OutputTicks, long SourceTicks, string SegmentId,

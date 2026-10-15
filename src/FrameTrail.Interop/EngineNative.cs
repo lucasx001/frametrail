@@ -20,6 +20,10 @@ internal static class EngineNative
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int ft_project_validate(byte[] utf8, uint length);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int ft_project_edit(byte[] utf8, uint length, byte[] command, uint commandLength, [Out] byte[]? output, uint capacity, out uint required);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int ft_project_timeline(byte[] utf8, uint length, [Out] byte[]? output, uint capacity, out uint required);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int ft_session_load_project(EngineSafeHandle session, byte[] utf8, uint length);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int ft_session_output_duration(EngineSafeHandle session, out long ticks);

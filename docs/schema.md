@@ -103,6 +103,19 @@ Export 必需字段为 `width/height/fps/videoCodec/audioCodec/container`。当�
 
 ## 参考与验证边界
 
+Android USB 来源属于后续 [0012](0012-android-usb-recording.md)。当前 schema 1 没有 Android 来源元数据或手机内部音轨类型；该任务必须设计版本升级、旧工程迁移和双端校验，不得直接追加未知字段，也不得用 `systemAudio` 代替手机内部音轨。此处仅记录后续要求，不表示当前解析器已支持。
+
 已静态阅读相邻 DogSC 的 `Sources/RecorderCore/TimelineMap.swift`，参照其数组顺序决定输出顺序、禁止源重用、半开区间、按剪辑保留光标组与位置 seed 行为。FrameTrail 加入整数时间、有理速率、明确量化和路径协议约束。
 
 `mapping-vectors.json` 是人工计算结果：源 6–10s 以 4 倍速 → 输出 0–1s；源 0–2s 以 0.25 倍速 → 输出 1–9s；源 4–6s 正常速率 → 输出 9–11s。C++ 直接执行映射，C# 通过真实 C ABI 执行同一组数据。没有 Mac 环境，未运行 Swift 对照程序，此项保持未验收。
+
+## M2 编辑设置扩展（2026-10-15）
+
+Schema 1 增加可选 `editor` 对象；旧录制没有此字段时使用中性音量、16px 圆角、0.35 阴影和 1 倍光标。旧版二进制依照严格未知字段规则拒绝含该对象的新工程，不能用旧版本重写以免丢失编辑设置。Android 仍不借用此对象，按 0012 单独升级 schema。
+
+- `systemGain/microphoneGain`：0–4；`systemMuted/microphoneMuted`：布尔。
+- `clipAudio`：片段 ID 到相同音量/静音设置的字典。全局与片段音量相乘、静音取或；分割继承原片段设置，撤销恢复整个快照。删除片段的未引用设置保留，以支持恢复操作。
+- `cornerRadius`：0–200 输出画布像素；`shadow`：0–1；`cursorScale`：0–4，0 为隐藏。
+- `crop`：可省略的归一化源画面矩形，采用与已有 Rect 相同的边界规则。源裁切后重新等比例 fit；实际解码图层和光标使用同一裁切。
+
+新 C ABI `ft_project_edit` 执行 split/trim/trimOutput/delete/move/rate/restore/settings/batch；结果经 Core 全量校验并增加 revision。`ft_project_timeline` 返回解析后的输出范围与标记，C# 不另写映射。拖动预览不写持久化，提交只入一次历史；撤销/重做恢复内容并赋予新的 revision。效果包络仍锚定源时间，不因剪辑重写其时间。

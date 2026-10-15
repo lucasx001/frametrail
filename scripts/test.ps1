@@ -19,7 +19,7 @@ $originalPath = $env:PATH
 try {
     $env:PATH = (Get-NativeBinaryDirectory $NativeBuildDirectory $Configuration) + [IO.Path]::PathSeparator + $originalPath
     foreach ($testProject in Get-ChildItem (Join-Path $ProjectRoot 'tests') -Filter '*.Tests.csproj' -Recurse) {
-        $arguments = @('test', $testProject.FullName, '-c', $Configuration, '--logger', ('trx;LogFileName=' + $testProject.BaseName + '.trx'), '--results-directory', (Join-Path $ProjectRoot 'artifacts\test-results'))
+        $arguments = @('test', $testProject.FullName, '-c', $Configuration, "-p:NativeBuildDirectory=$NativeBuildDirectory", '--logger', ('trx;LogFileName=' + $testProject.BaseName + '.trx'), '--results-directory', (Join-Path $ProjectRoot 'artifacts\test-results'))
         if (!$IncludeHardware) { $arguments += @('--filter', 'Category!=Hardware') }
         if ($LockedRestore) { $arguments += '-p:RestoreLockedMode=true' }
         Invoke-Checked $dotnet $arguments

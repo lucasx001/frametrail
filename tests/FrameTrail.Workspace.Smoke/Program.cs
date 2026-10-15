@@ -3,6 +3,8 @@ using FrameTrail.Domain;
 using FrameTrail.Interop;
 using FrameTrail.Workspace;
 
+if (args.Length >= 3 && args[0] == "--m2") return await M2Validation.RunAsync(args[1], args[2], args.Contains("--matrix"));
+
 if (args.Length < 1) { Console.Error.WriteLine("Usage: FrameTrail.Workspace.Smoke <new.frametrailproject> [--camera] [--checkpoint] | <existing.frametrailproject> --recover"); return 2; }
 var path = Path.GetFullPath(args[0]); string output = path + ".result.json";
 try

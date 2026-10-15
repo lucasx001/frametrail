@@ -81,6 +81,8 @@ struct Project {
     std::vector<Effect> effects;
     std::vector<RecordingMarker> markers;
     ExportSettings export_settings;
+    // Optional schema-1 editor envelope. Old recordings default to neutral settings.
+    std::string editor_json{"{}"};
 };
 
 Project parse_project(std::string_view json);

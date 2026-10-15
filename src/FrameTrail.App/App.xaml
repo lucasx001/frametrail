@@ -3,5 +3,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries>
       <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+      <ResourceDictionary Source="RecorderStyles.xaml" />
+      <ResourceDictionary Source="EditorStyles.xaml" />
     </ResourceDictionary.MergedDictionaries></ResourceDictionary></Application.Resources>
 </Application>

@@ -1,0 +1,111 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:FrameTrail.App">
+    <!-- DogSC EditorDesignTokens.swift / EditorInspectorPalette.swift, MIT. All sizes are DIPs. -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="EditorStage" Color="#ECEDEF"/>
+            <SolidColorBrush x:Key="EditorPanel" Color="#FDFDFE"/>
+            <SolidColorBrush x:Key="EditorRaised" Color="#F4F4F6"/>
+            <SolidColorBrush x:Key="EditorInk" Color="#1A1A1A"/>
+            <SolidColorBrush x:Key="EditorSecondary" Color="#5C5C5C"/>
+            <SolidColorBrush x:Key="EditorTertiary" Color="#858585"/>
+            <SolidColorBrush x:Key="EditorLine" Color="#0F000000"/>
+            <SolidColorBrush x:Key="EditorWell" Color="#0B000000"/>
+            <SolidColorBrush x:Key="EditorHover" Color="#12000000"/>
+            <SolidColorBrush x:Key="EditorDot" Color="#14000000"/>
+            <SolidColorBrush x:Key="EditorClip" Color="#EAF4FF"/>
+            <SolidColorBrush x:Key="EditorThumb" Color="White"/>
+            <SolidColorBrush x:Key="EditorControlTrack" Color="#E4E4E7"/>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="EditorStage" Color="#070708"/>
+            <SolidColorBrush x:Key="EditorPanel" Color="#101113"/>
+            <SolidColorBrush x:Key="EditorRaised" Color="#191A1C"/>
+            <SolidColorBrush x:Key="EditorInk" Color="#F5F5F5"/>
+            <SolidColorBrush x:Key="EditorSecondary" Color="#A8A8A8"/>
+            <SolidColorBrush x:Key="EditorTertiary" Color="#757575"/>
+            <SolidColorBrush x:Key="EditorLine" Color="#0FFFFFFF"/>
+            <SolidColorBrush x:Key="EditorWell" Color="#0BFFFFFF"/>
+            <SolidColorBrush x:Key="EditorHover" Color="#12FFFFFF"/>
+            <SolidColorBrush x:Key="EditorDot" Color="#15FFFFFF"/>
+            <SolidColorBrush x:Key="EditorClip" Color="#162A3E"/>
+            <SolidColorBrush x:Key="EditorThumb" Color="#333438"/>
+            <SolidColorBrush x:Key="EditorControlTrack" Color="#343438"/>
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="EditorStage" Color="{ThemeResource SystemColorWindowColor}"/>
+            <SolidColorBrush x:Key="EditorPanel" Color="{ThemeResource SystemColorWindowColor}"/>
+            <SolidColorBrush x:Key="EditorRaised" Color="{ThemeResource SystemColorButtonFaceColor}"/>
+            <SolidColorBrush x:Key="EditorInk" Color="{ThemeResource SystemColorWindowTextColor}"/>
+            <SolidColorBrush x:Key="EditorSecondary" Color="{ThemeResource SystemColorWindowTextColor}"/>
+            <SolidColorBrush x:Key="EditorTertiary" Color="{ThemeResource SystemColorWindowTextColor}"/>
+            <SolidColorBrush x:Key="EditorLine" Color="{ThemeResource SystemColorWindowTextColor}"/>
+            <SolidColorBrush x:Key="EditorWell" Color="{ThemeResource SystemColorButtonFaceColor}"/>
+            <SolidColorBrush x:Key="EditorHover" Color="{ThemeResource SystemColorHighlightColor}"/>
+            <SolidColorBrush x:Key="EditorDot" Color="{ThemeResource SystemColorWindowTextColor}"/>
+            <SolidColorBrush x:Key="EditorClip" Color="{ThemeResource SystemColorButtonFaceColor}"/>
+            <SolidColorBrush x:Key="EditorThumb" Color="{ThemeResource SystemColorHighlightColor}"/>
+            <SolidColorBrush x:Key="EditorControlTrack" Color="{ThemeResource SystemColorButtonFaceColor}"/>
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+    <SolidColorBrush x:Key="EditorBlue" Color="#5AAEFF"/>
+    <SolidColorBrush x:Key="EditorBlueInk" Color="#062B57"/>
+    <SolidColorBrush x:Key="EditorOrange" Color="#FF8550"/>
+    <SolidColorBrush x:Key="EditorYellow" Color="#FFB830"/>
+    <SolidColorBrush x:Key="EditorLime" Color="#B5E655"/>
+    <SolidColorBrush x:Key="EditorPink" Color="#FF6B92"/>
+    <SolidColorBrush x:Key="EditorMint" Color="#3DDBB0"/>
+    <Style TargetType="local:EditorGlyph"><Setter Property="Foreground" Value="{ThemeResource EditorSecondary}"/></Style>
+    <Style x:Key="EditorText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{ThemeResource EditorInk}"/>
+    </Style>
+    <Style x:Key="EditorCaption" TargetType="TextBlock" BasedOn="{StaticResource EditorText}">
+        <Setter Property="FontSize" Value="11"/><Setter Property="Foreground" Value="{ThemeResource EditorTertiary}"/>
+    </Style>
+    <Style x:Key="EditorButton" TargetType="Button">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{ThemeResource EditorSecondary}"/><Setter Property="Background" Value="Transparent"/>
+        <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="15"/>
+        <Setter Property="Height" Value="30"/><Setter Property="MinWidth" Value="30"/><Setter Property="Padding" Value="10,0"/>
+        <Setter Property="HorizontalContentAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="UseSystemFocusVisuals" Value="True"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+            <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+                <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal"/><VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Hover.Opacity" Value="1"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Presenter.Opacity" Value="0.65"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Surface.Opacity" Value="0.35"/></VisualState.Setters></VisualState>
+                </VisualStateGroup></VisualStateManager.VisualStateGroups>
+                <Grid><Border x:Name="Hover" Background="{ThemeResource EditorHover}" CornerRadius="{TemplateBinding CornerRadius}" Opacity="0" IsHitTestVisible="False"/><ContentPresenter x:Name="Presenter" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{TemplateBinding Foreground}" Padding="{TemplateBinding Padding}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/></Grid>
+            </Border>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="EditorIconButton" TargetType="Button" BasedOn="{StaticResource EditorButton}"><Setter Property="Width" Value="30"/><Setter Property="Padding" Value="0"/></Style>
+    <Style x:Key="EditorSegmentButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
+        <Setter Property="HorizontalAlignment" Value="Stretch"/><Setter Property="Height" Value="32"/><Setter Property="Padding" Value="8,0"/><Setter Property="CornerRadius" Value="16"/>
+    </Style>
+    <Style x:Key="EditorPrimaryButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
+        <Setter Property="Background" Value="{StaticResource EditorBlue}"/><Setter Property="Foreground" Value="{StaticResource EditorBlueInk}"/>
+        <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}"/><Setter Property="Padding" Value="14,0"/>
+    </Style>
+    <Style x:Key="EditorTile" TargetType="Border"><Setter Property="Background" Value="{ThemeResource EditorWell}"/><Setter Property="CornerRadius" Value="18"/><Setter Property="Padding" Value="14"/></Style>
+    <Style x:Key="EditorSwitch" TargetType="CheckBox">
+        <Setter Property="Foreground" Value="{StaticResource EditorBlue}"/><Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
+        <Setter Property="MinHeight" Value="32"/><Setter Property="Padding" Value="0"/><Setter Property="Background" Value="{ThemeResource EditorControlTrack}"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/><Setter Property="UseSystemFocusVisuals" Value="False"/>
+        <Setter Property="local:SwitchMotion.Enabled" Value="True"/><Setter Property="Template" Value="{StaticResource ControlSwitchTemplate}"/>
+    </Style>
+    <Style x:Key="EditorInput" TargetType="NumberBox">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
+        <Setter Property="MinHeight" Value="30"/><Setter Property="Background" Value="{ThemeResource EditorPanel}"/>
+        <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="SpinButtonPlacementMode" Value="Inline"/>
+    </Style>
+    <Style x:Key="EditorCombo" TargetType="ComboBox">
+        <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
+        <Setter Property="MinHeight" Value="30"/><Setter Property="Background" Value="{ThemeResource EditorPanel}"/>
+        <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="15"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+    </Style>
+</ResourceDictionary>

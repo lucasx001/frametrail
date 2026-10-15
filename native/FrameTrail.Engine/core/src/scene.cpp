@@ -1,6 +1,7 @@
 #include "frametrail/core/scene.hpp"
 #include <algorithm>
 #include <utility>
+#include <nlohmann/json.hpp>
 
 namespace frametrail::core {
 namespace {
@@ -26,6 +27,8 @@ const Media* media_at(const Project& project, MediaKind kind, std::int64_t ticks
 FrameSceneEvaluator::FrameSceneEvaluator(Project project)
     : project_(std::move(project)), timeline_(project_.source_duration, project_.segments) {
     validate_project(project_);
+    const auto settings = nlohmann::json::parse(project_.editor_json);
+    const auto crop = settings.value("crop", nlohmann::json::object()); crop_width_ = crop.value("width", 1.0); crop_height_ = crop.value("height", 1.0);
 }
 
 std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_ticks) const {
@@ -38,7 +41,7 @@ std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_tick
     const auto padding = canvas.padding * (std::min)(canvas.width, canvas.height);
     region.x += padding; region.y += padding; region.width -= 2 * padding; region.height -= 2 * padding;
     FrameScene scene{project_.revision, output_ticks, mapped->ticks, mapped->segment_id, canvas.width, canvas.height, canvas.background,
-        {screen->id, mapped->ticks - normalized_ticks(screen->start_offset), fit(region, screen->width, screen->height), false}, std::nullopt};
+        {screen->id, mapped->ticks - normalized_ticks(screen->start_offset), fit(region, screen->width * crop_width_, screen->height * crop_height_), false}, std::nullopt};
     if (canvas.camera.enabled) {
         if (const auto* camera = media_at(project_, MediaKind::camera, mapped->ticks)) {
             scene.camera = MediaFrame{camera->id, mapped->ticks - normalized_ticks(camera->start_offset),

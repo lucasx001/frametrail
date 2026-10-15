@@ -75,7 +75,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -Confi
 
 可在报错的终端中运行 `Get-ExecutionPolicy -List` 检查各作用域。策略作用域与优先级见 [Microsoft 执行策略说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1)。
 
-WinUI应用采用unpackaged + WindowsAppSDKSelfContained，构建时复制FrameTrail.Engine/Capture/Audio/Recording DLL到应用目录。原生模块静态链接 CRT，避免缺少 Debug CRT 或加载过旧宿主运行库；所有跨 ABI 的缓冲由调用方提供，对象由创建它的 DLL 销毁，不跨 CRT 释放内存。媒体像素留在原生引擎，C#仅持有句柄及状态。当前是开发目录启动；MSIX签名、安装更新和发布留到0011。
+WinUI应用采用unpackaged + WindowsAppSDKSelfContained，构建时复制FrameTrail.Engine/Capture/Audio/Recording/Media DLL到应用目录。原生模块静态链接 CRT，避免缺少 Debug CRT 或加载过旧宿主运行库；所有跨 ABI 的缓冲由调用方提供，对象由创建它的 DLL 销毁，不跨 CRT 释放内存。媒体像素留在原生引擎，C#仅持有句柄及状态。当前是开发目录启动；MSIX签名、安装更新和发布留到0011。
 
 ## ABI与生命周期
 
@@ -103,3 +103,9 @@ CPU测试验证ABI、取消、1000次生命周期、重复销毁与并发。WinU
 - [Per-Monitor DPI awareness](https://learn.microsoft.com/en-us/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process)。
 
 具体构建、测试与UI运行结果见`docs/validation/0001-*.md`，未执行检查不视为完成。
+
+## M2 媒体验证
+
+`validate-m2.cmd -Matrix` 在全新 artifacts 子目录生成合成素材，运行原生解码/合成、剪辑、MP4/M4A/素材副本及六组输出能力验证，再用独立 Python 脚本核查图像、烧录帧号、音调和样本数。额外使用本机 ffmpeg、ffprobe 与 Python 标准库，只是开发验证依赖；产品不调用 FFmpeg。结果见 [M2 记录](validation/m2-editor-export.md)。
+
+`run.cmd -Configuration Release -ProjectPath <工程目录或project.json>` 可直接打开编辑器。普通运行入口会给当前进程设置项目 portable .NET 的 DOTNET_ROOT，不修改系统环境。

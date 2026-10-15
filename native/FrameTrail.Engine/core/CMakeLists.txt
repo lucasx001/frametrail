@@ -9,7 +9,7 @@ FetchContent_Declare(nlohmann_json
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
-add_library(FrameTrail.Core STATIC src/project.cpp src/timeline.cpp src/scene.cpp)
+add_library(FrameTrail.Core STATIC src/project.cpp src/timeline.cpp src/scene.cpp src/editor.cpp)
 target_include_directories(FrameTrail.Core PUBLIC include)
 target_compile_features(FrameTrail.Core PUBLIC cxx_std_20)
 target_link_libraries(FrameTrail.Core PRIVATE nlohmann_json::nlohmann_json)

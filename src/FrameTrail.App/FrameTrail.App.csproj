@@ -13,6 +13,9 @@
     <NativeBuildDirectory Condition="'$(NativeBuildDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\native</NativeBuildDirectory>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4948" />
     <ProjectReference Include="..\FrameTrail.Interop\FrameTrail.Interop.csproj" />
