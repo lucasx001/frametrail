@@ -149,7 +149,17 @@ public sealed class ProjectWorkspace : IAsyncDisposable
             {
                 CheckAncestors(path);
                 var manifest = await ReadManifestAsync(path);
-                if (manifest.Status == "complete") continue;
+                if (manifest.Status == "complete") {
+                    var projectFile = Path.Combine(path, "project.json"); CheckAncestors(projectFile);
+                    try {
+                        if (new FileInfo(projectFile).Length > ProjectJson.MaximumJsonBytes) throw new ProjectFormatException("Oversized project snapshot.");
+                        _ = ProjectJson.Deserialize(await File.ReadAllTextAsync(projectFile));
+                        continue;
+                    } catch (Exception error) when (error is IOException or ProjectFormatException) {
+                        results.Add(new(path, "snapshot-unreadable", -1, new[] { "Saved project is unreadable; recovery will check compatible snapshots." }));
+                        continue;
+                    }
+                }
                 var warnings = manifest.Warnings.ToList();
                 foreach (var pending in manifest.PendingFiles) warnings.Add($"Unfinished segment excluded: {pending}");
                 var revision = manifest.CheckpointJson is null ? -1 : ProjectJson.Deserialize(manifest.CheckpointJson).Revision;
@@ -166,28 +176,43 @@ public sealed class ProjectWorkspace : IAsyncDisposable
         path = NormalizeRoot(path); var result = Acquire(path, validator, mediaProbe);
         try
         {
-            var manifest = await ReadManifestAsync(path);
-            if (manifest.SchemaVersion != 1) throw new ProjectFormatException("Unsupported recovery schema.");
-            var warnings = manifest.Warnings.ToList();
+            RecoveryManifest? manifest = null;
+            var warnings = new List<string>();
+            try { manifest = await ReadManifestAsync(path); }
+            catch (Exception error) when (error is not UnsupportedProjectVersionException && error is IOException or JsonException or ProjectFormatException)
+            { warnings.Add("Recovery manifest unavailable; checking saved snapshots."); }
+            if (manifest is not null) warnings.AddRange(manifest.Warnings);
+            // Compatibility errors must escape: recovery must never downgrade a newer project.
+            var primary = result.Resolve("project.json");
+            if (File.Exists(primary) && new FileInfo(primary).Length <= ProjectJson.MaximumJsonBytes) {
+                var primaryJson = await File.ReadAllTextAsync(primary);
+                bool wellFormed = false;
+                try { using var document = JsonDocument.Parse(primaryJson); wellFormed = true; } catch (JsonException) { }
+                try { _ = ProjectJson.Deserialize(primaryJson); }
+                // A valid JSON document with unmapped members or incompatible types may
+                // contain data from a newer app. Preserve it instead of silently dropping it.
+                catch (ProjectFormatException error) when (error is not UnsupportedProjectVersionException && !(wellFormed && error.InnerException is JsonException)) { }
+            }
+            manifest ??= new RecoveryManifest();
             foreach (var pending in manifest.PendingFiles) { _ = result.Resolve(pending); warnings.Add($"Unfinished segment excluded: {pending}"); }
             var candidates = new List<ProjectSnapshot>();
             if (manifest.CheckpointJson is not null)
                 try { candidates.Add(ProjectJson.Deserialize(manifest.CheckpointJson)); }
-                catch (ProjectFormatException error) { warnings.Add("Manifest checkpoint: " + error.Message); }
+                catch (ProjectFormatException error) when (error is not UnsupportedProjectVersionException) { warnings.Add("Manifest checkpoint: " + error.Message); }
             foreach (var filename in new[] { "project.json", "project.previous.json" })
                 try { candidates.Add(await result.ReadSnapshotAsync(filename)); }
-                catch (Exception error) when (error is IOException or ProjectFormatException or EngineException or COMException) { warnings.Add($"{filename}: {error.Message}"); }
+                catch (Exception error) when (error is not UnsupportedProjectVersionException && error is IOException or ProjectFormatException or EngineException or COMException) { warnings.Add($"{filename}: {error.Message}"); }
             ProjectSnapshot? good = null;
             foreach (var candidate in candidates.OrderByDescending(p => p.Revision))
             {
-                if (candidate.ProjectId != manifest.ProjectId) { warnings.Add("Skipped checkpoint with mismatched project identity."); continue; }
+                if (manifest.ProjectId.Length > 0 && candidate.ProjectId != manifest.ProjectId) { warnings.Add("Skipped checkpoint with mismatched project identity."); continue; }
                 try { result.validate(candidate); await result.CheckMediaAsync(candidate); good = candidate; break; }
                 catch (Exception error) when (error is IOException or ProjectFormatException or EngineException or COMException) { warnings.Add($"Checkpoint {candidate.Revision} rejected: {error.Message}"); }
             }
             if (good is null) throw new ProjectFormatException("No readable completed segment exists. Unfinished media was preserved for inspection.");
             result.projectId = good.ProjectId;
             await result.SaveAsync(good, result.SessionEpoch);
-            await result.WriteManifestAsync(manifest with { Status = "recovered", CheckpointJson = ProjectJson.Serialize(good), PendingFiles = Array.Empty<string>(), Warnings = warnings });
+            await result.WriteManifestAsync(manifest with { ProjectId = good.ProjectId, Status = "recovered", CheckpointJson = ProjectJson.Serialize(good), PendingFiles = Array.Empty<string>(), Warnings = warnings });
             return (result, warnings);
         }
         catch { await result.DisposeAsync(); throw; }
@@ -260,7 +285,8 @@ public sealed class ProjectWorkspace : IAsyncDisposable
         var file = Path.Combine(path, "recovery", "manifest.json"); CheckAncestors(file);
         if (new FileInfo(file).Length > ProjectJson.MaximumJsonBytes * 2L) throw new ProjectFormatException("Recovery manifest exceeds limit.");
         var manifest = JsonSerializer.Deserialize<RecoveryManifest>(await File.ReadAllTextAsync(file), ManifestJson) ?? throw new ProjectFormatException("Missing recovery manifest.");
-        if (manifest.SchemaVersion != 1 || manifest.PendingFiles is null || manifest.Warnings is null) throw new ProjectFormatException("Invalid recovery schema.");
+        if (manifest.SchemaVersion != 1) throw new UnsupportedProjectVersionException(manifest.SchemaVersion);
+        if (string.IsNullOrEmpty(manifest.ProjectId) || manifest.PendingFiles is null || manifest.Warnings is null) throw new ProjectFormatException("Invalid recovery schema.");
         return manifest;
     }
 

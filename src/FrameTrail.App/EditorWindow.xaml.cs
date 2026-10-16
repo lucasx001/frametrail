@@ -67,7 +67,8 @@ public sealed partial class EditorWindow : Window
             if (ready) return; ready = true;
             await SafeAsync(ReloadAsync);
             if (this.validationDirectory is not null) {
-                if (Environment.GetCommandLineArgs().Contains("--m3-self-test")) await RunM3ValidationAsync(this.validationDirectory);
+                if (Environment.GetCommandLineArgs().Contains("--m4-self-test")) await RunM4ValidationAsync(this.validationDirectory);
+                else if (Environment.GetCommandLineArgs().Contains("--m3-self-test")) await RunM3ValidationAsync(this.validationDirectory);
                 else await RunValidationAsync(this.validationDirectory);
             }
         };

@@ -10,9 +10,9 @@ int main() {
     try {
         require(ft_engine_abi_version() == 1, "ABI version");
         uint32_t required = 0;
-        require(ft_engine_version(nullptr, 0, &required) == FT_OK && required == 6, "version size");
+        require(ft_engine_version(nullptr, 0, &required) == FT_OK && required == sizeof(FRAMETRAIL_VERSION), "version size");
         char text[256]{};
-        require(ft_engine_version(text, sizeof(text), &required) == FT_OK && std::string(text) == "0.1.0", "version");
+        require(ft_engine_version(text, sizeof(text), &required) == FT_OK && std::string(text) == FRAMETRAIL_VERSION, "version");
         require(ft_engine_version(text, 1, &required) == FT_E_BUFFER_TOO_SMALL, "small buffer");
         ft_session_handle handle = 99;
         require(ft_session_create(99, &handle) == FT_E_ABI_MISMATCH && handle == 0, "ABI mismatch");

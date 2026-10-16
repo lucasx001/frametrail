@@ -6,7 +6,7 @@ namespace FrameTrail.App.Tests;
 public sealed class EngineInteropTests
 {
     [Fact]
-    public void EngineReportsRealVersion() => Assert.Equal("0.1.0", EngineSession.Version);
+    public void EngineReportsRealVersion() => Assert.Equal(typeof(EngineSession).Assembly.GetName().Version!.ToString(3), EngineSession.Version);
 
     [Fact]
     public void SessionsCanBeCancelledAndDisposedRepeatedly()

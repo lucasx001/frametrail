@@ -40,3 +40,9 @@ function Get-NativeBinaryDirectory([string] $BuildDirectory, [string] $Configura
     if (Test-Path (Join-Path $configured 'FrameTrail.Engine.dll')) { return $configured }
     return Join-Path $BuildDirectory 'bin'
 }
+
+function Get-FrameTrailSha256([string] $Path) {
+    $hash = [Security.Cryptography.SHA256]::Create(); $inputFile = [IO.File]::OpenRead($Path)
+    try { return [BitConverter]::ToString($hash.ComputeHash($inputFile)).Replace('-','').ToLowerInvariant() }
+    finally { $inputFile.Dispose(); $hash.Dispose() }
+}
