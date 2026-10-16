@@ -20,7 +20,7 @@ LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM w, LPARAM l) {
 int wmain(int argc, wchar_t** argv) {
     if (argc != 3) { std::wcerr << L"Usage: FrameTrail.Capture.Benchmark SECONDS NEW_OUTPUT.mp4 | --surface SECONDS\n"; return 2; }
     bool surface_only = std::wstring_view(argv[1]) == L"--surface";
-    int seconds = _wtoi(argv[surface_only ? 2 : 1]); if (seconds < 2 || seconds > 120) return 2;
+    int seconds = _wtoi(argv[surface_only ? 2 : 1]); if (seconds < 2 || seconds > 3600) return 2;
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     HWND window{};
     std::thread capture;

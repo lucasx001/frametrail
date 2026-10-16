@@ -16,6 +16,10 @@
     <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\user-guide.md" Link="Docs\user-guide.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\privacy.md" Link="Docs\privacy.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\release-notes.md" Link="Docs\release-notes.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\licenses\dogsc-MIT.txt" Link="Licenses\dogsc-MIT.txt" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4948" />
     <ProjectReference Include="..\FrameTrail.Interop\FrameTrail.Interop.csproj" />
@@ -28,5 +32,14 @@
     </ItemGroup>
     <Error Condition="!Exists('$(NativeBuildDirectory)\bin\$(Configuration)\FrameTrail.Engine.dll') And !Exists('$(NativeBuildDirectory)\bin\FrameTrail.Engine.dll')" Text="Build the native engine first using scripts/build.ps1." />
     <Copy SourceFiles="@(NativeEngineDll)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishNativeEngine" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedXamlResource Include="$(TargetDir)*.xbf" />
+      <PublishedXamlResource Include="$(TargetDir)FrameTrail.App.pri" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(TargetDir)MainWindow.xbf') Or !Exists('$(TargetDir)FrameTrail.App.pri')" Text="WinUI compiled resources are missing from build output." />
+    <Copy SourceFiles="@(NativeEngineDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishedXamlResource)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
   </Target>
 </Project>

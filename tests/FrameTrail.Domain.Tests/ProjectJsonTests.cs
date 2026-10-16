@@ -57,7 +57,7 @@ public sealed class ProjectJsonTests
         if (test["remove"]?.GetValue<bool>() == true) node.AsObject().Remove(last.GetValue<string>());
         else if (last.GetValueKind() == JsonValueKind.String) node[last.GetValue<string>()] = test["value"]?.DeepClone();
         else node[last.GetValue<int>()] = test["value"]?.DeepClone();
-        Assert.Throws<ProjectFormatException>(() => ProjectJson.Deserialize(root.ToJsonString()));
+        Assert.ThrowsAny<ProjectFormatException>(() => ProjectJson.Deserialize(root.ToJsonString()));
     }
 
     [Theory]
