@@ -90,6 +90,16 @@ public sealed partial class EditorWindow
         position = range.OutputStart + range.OutputDuration / 2;
         timeline.Position(position); UpdateClock();
     }
+    private async Task UpdateVisualPreviewAsync(ProjectSnapshot snapshot)
+    {
+        try {
+            if (mockupEditing) await preview.UpdateProjectAsync(snapshot, position);
+            else await preview.UpdateEffectsAsync(snapshot, position);
+        }
+        // New input invalidates the frame in flight. Keep draining queued
+        // drafts so rapid typing/dragging cannot strand a pending preview.
+        catch (OperationCanceledException) { }
+    }
     private async Task RenderVisualDraftsAsync()
     {
         try {
@@ -98,7 +108,7 @@ public sealed partial class EditorWindow
                 var candidate = StageVisualDraft();
                 if (candidate is not null) {
                     LocateVisualPreview(candidate);
-                    await preview.UpdateEffectsAsync(candidate, position);
+                    await UpdateVisualPreviewAsync(candidate);
                     visualPreviewCount++;
                     timeline.Set(EngineSession.ResolveTimeline(candidate), selected, position);
                 }
@@ -126,7 +136,7 @@ public sealed partial class EditorWindow
             var revision = editor.Snapshot.Revision;
             await editor.CommitTransactionAsync(); visualTransaction = false;
             // Keep the same surface and controls: committing must not steal input focus.
-            await preview.UpdateEffectsAsync(editor.Snapshot, position);
+            await UpdateVisualPreviewAsync(editor.Snapshot);
             mapper.Dispose(); mapper = new EngineSession(); mapper.LoadProject(editor.Snapshot);
             RefreshTimeline();
             if (effectPicker.ItemsSource is IEnumerable<EffectEntry> entries) foreach (var entry in entries) {
@@ -154,7 +164,7 @@ public sealed partial class EditorWindow
         try {
             await visualPreviewWork;
             if (visualTransaction) { editor.CancelTransaction(); visualTransaction = false; }
-            await preview.UpdateEffectsAsync(editor.Snapshot, position);
+            await UpdateVisualPreviewAsync(editor.Snapshot);
             mockupEditing = false; loadingVisuals = true; try { RefreshMockupInspector(forceText: true); } finally { loadingVisuals = false; }
             LoadSelectedVisual(); RefreshTimeline();
         }

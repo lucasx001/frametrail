@@ -53,6 +53,11 @@ internal static class M3Validation
                 {
                     var snapshot = initial with { Effects = effects, Editor = initial.Editor! with { CameraShape = "circle", FrameStyle = name.StartsWith("combined") ? "browser" : "none", CursorScale = name == "combined-no-cursor" ? 0 : 1 } };
                     using var media = new MediaSession(snapshot, path); media.Render(10_000_000, png: Path.Combine(output, name + "-preview.png")); media.Export(Path.Combine(output, name + ".mp4"));
+                    if (name == "zoom") {
+                        var phases = Path.Combine(output, "zoom-phases"); Directory.CreateDirectory(phases);
+                        foreach (int frame in new[] { 3, 7, 78, 82 })
+                            media.Render((long)Math.Round(frame * 10_000_000d / 30), png: Path.Combine(phases, frame + ".png"));
+                    }
                     checks.Add(name + ": preview and finalized export produced");
                 }
                 foreach (var frame in new[] { "window", "browser", "device" })

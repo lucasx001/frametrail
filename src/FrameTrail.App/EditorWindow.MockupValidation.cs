@@ -33,6 +33,7 @@ public sealed partial class EditorWindow
                 renders.Add(new { style, preview = png, video });
             }
             checks.Add("Six styles select, conditionally arrange metadata and knobs, persist and render/export through the native pipeline.");
+            await ValidateMockupLivePixelsAsync(directory, checks);
             await SelectMockupAsync("windowLight");
             var before = ProjectJson.Serialize(editor.Snapshot with { Revision = 0 }); long revision = editor.Snapshot.Revision; var chain = preview.Session!.AcquireSwapChain();
             try {
@@ -83,5 +84,64 @@ public sealed partial class EditorWindow
             await File.WriteAllTextAsync(Path.Combine(directory, "mockup-validation.json"), JsonSerializer.Serialize(new { success, checks, renders, failure }, new JsonSerializerOptions { WriteIndented = true }));
             Environment.ExitCode = success ? 0 : 1; working = false; closing = false; await RequestCloseAsync();
         }
+    }
+
+    private async Task ValidateMockupLivePixelsAsync(string directory, List<string> checks)
+    {
+        // Inspect the attached preview session, not just saved JSON or a fresh
+        // renderer: effects-only updates used to silently omit these settings.
+        position = 0;
+        await SelectMockupAsync("browserLight", true);
+        var session = preview.Session!; var chain = session.AcquireSwapChain();
+        try {
+            async Task WaitForDraftAsync()
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(10);
+                do { await Task.Delay(20); } while ((visualPending || !visualPreviewWork.IsCompleted) && DateTime.UtcNow < deadline);
+                if (visualPending || !visualTransaction) throw new IOException("Mockup draft did not reach live preview.");
+            }
+            async Task<byte[]> PixelsAsync(ProjectSnapshot snapshot, string name)
+            {
+                string actual = Path.Combine(directory, name + "-live.png"), expected = Path.Combine(directory, name + "-expected.png");
+                await preview.RenderAsync(position, true, actual);
+                await Task.Run(() => { using var media = new MediaSession(snapshot, editor.DirectoryPath); media.Render(position, png: expected); });
+                var pixels = await File.ReadAllBytesAsync(actual);
+                if (!pixels.SequenceEqual(await File.ReadAllBytesAsync(expected))) throw new IOException("Attached preview differs from authored settings: " + name);
+                if (!ReferenceEquals(session, preview.Session)) throw new IOException("Mockup edit replaced the media session.");
+                var current = session.AcquireSwapChain(); try { if (current != chain) throw new IOException("Mockup edit replaced the swap chain."); } finally { Marshal.Release(current); }
+                return pixels;
+            }
+            var original = editor.Snapshot;
+            var baseline = await PixelsAsync(original, "live-baseline");
+            frameAddress.Focus(FocusState.Programmatic);
+            for (int i = 0; i < 12; i++) { frameAddress.Text = "https://frametrail.test/typing/" + i; await Task.Delay(8); }
+            frameAddress.Text = "https://frametrail.test/实时预览";
+            await WaitForDraftAsync();
+            var address = await PixelsAsync(editor.Preview!, "live-address-draft");
+            if (baseline.SequenceEqual(address) || editor.Snapshot.Revision != original.Revision) throw new IOException("Focused address did not change preview before committing.");
+            await FlushVisualChangesAsync();
+            if (!address.SequenceEqual(await PixelsAsync(editor.Snapshot, "live-address-committed"))) throw new IOException("Address changed pixels on commit.");
+            frameAddress.Text = "https://frametrail.test/cancelled"; await WaitForDraftAsync();
+            await PixelsAsync(editor.Preview!, "live-address-cancel-draft");
+            await CancelVisualChangesAsync();
+            if (!address.SequenceEqual(await PixelsAsync(editor.Snapshot, "live-address-cancelled")) || frameAddress.Text != editor.Snapshot.Editor!.FrameBrowserAddress) throw new IOException("Cancel did not restore accepted metadata pixels.");
+            frameScale.Focus(FocusState.Programmatic);
+            foreach (var (knob, value, name) in new[] { (frameScale, 1.5, "scale"), (frameToolbar, 1.5, "toolbar"), (frameRadius, 120d, "radius") }) {
+                var before = editor.Snapshot; var priorPixels = await PixelsAsync(before, "live-" + name + "-before");
+                knob.Value = value; await WaitForDraftAsync();
+                var draftPixels = await PixelsAsync(editor.Preview!, "live-" + name + "-draft");
+                if (priorPixels.SequenceEqual(draftPixels)) throw new IOException("Knob did not change live pixels: " + name);
+                await FlushVisualChangesAsync();
+                if (editor.Snapshot.Revision != before.Revision + 1 || !draftPixels.SequenceEqual(await PixelsAsync(editor.Snapshot, "live-" + name + "-committed"))) throw new IOException("Knob commit differs from draft: " + name);
+                await PerformAsync(editor.UndoAsync);
+                if (!priorPixels.SequenceEqual(await PixelsAsync(editor.Snapshot, "live-" + name + "-undo"))) throw new IOException("Undo did not restore knob pixels: " + name);
+                await PerformAsync(editor.RedoAsync);
+                if (!draftPixels.SequenceEqual(await PixelsAsync(editor.Snapshot, "live-" + name + "-redo"))) throw new IOException("Redo did not restore knob pixels: " + name);
+            }
+            await PerformAsync(editor.UndoAsync); await PerformAsync(editor.UndoAsync); await PerformAsync(editor.UndoAsync); await PerformAsync(editor.UndoAsync);
+            if (ProjectJson.Serialize(editor.Snapshot with { Revision = 0 }) != ProjectJson.Serialize(original with { Revision = 0 })) throw new IOException("Live mockup edits did not undo exactly.");
+            await PixelsAsync(editor.Snapshot, "live-all-undone");
+            checks.Add("Attached preview pixels match fresh native renders for focused URL edits, each knob, commit, cancellation and undo/redo; session and swap chain stay attached.");
+        } finally { Marshal.Release(chain); }
     }
 }

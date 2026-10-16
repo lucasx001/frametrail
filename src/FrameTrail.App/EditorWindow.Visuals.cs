@@ -146,7 +146,7 @@ public sealed partial class EditorWindow
             effectAngleX.Value = NumberValue(p, "angleX", 0); effectAngleY.Value = NumberValue(p, "angleY", 0); effectMode.SelectedIndex = Array.IndexOf(new[] { "solid", "pixelate", "blur" }, StringValue(p, "mode", "solid"));
             effectEasing.SelectedIndex = Array.IndexOf(new[] { "cubic", "spring", "linear" }, StringValue(p, "easing", "cubic")); effectAttachment.SelectedIndex = StringValue(p, "attachment", "screen") == "canvas" ? 1 : 0; effectTarget.SelectedIndex = StringValue(p, "target", "screen") == "camera" ? 1 : 0;
             effectEnter.Value = NumberValue(p, "enter", effect.Kind is "zoom" or "tilt" or "intro" ? 0.7 : 0); effectExit.Value = NumberValue(p, "exit", effect.Kind is "zoom" or "tilt" ? 0.7 : 0);
-            springFrequency.Value = NumberValue(p, "springFrequency", 3); springDamping.Value = NumberValue(p, "damping", 0.85);
+            springFrequency.Value = NumberValue(p, "springFrequency", MotionDefaults.SpringFrequency); springDamping.Value = NumberValue(p, "damping", MotionDefaults.SpringDamping);
             stickerRotation.Value = NumberValue(p, "rotation", 0);
             stickerText.Text = StringValue(p, "text", "重点"); visualAssetPath = StringValue(p, "path", ""); visualAssetLabel.Text = string.IsNullOrEmpty(visualAssetPath) ? "可使用文字或导入图片" : Path.GetFileName(visualAssetPath);
         }

@@ -34,7 +34,7 @@ VisualEffect parse_visual_effect(const Effect& effect) {
     v.enter = number(p,"enter",motion || effect.kind=="intro" ? 0.7 : 0,0,5); v.exit = number(p,"exit",motion ? 0.7 : 0,0,5);
     v.strength = number(p,"strength",16,1,64); v.opacity = number(p,"opacity",1,0,1);
     v.angle_x = number(p,"angleX",0,-35,35); v.angle_y = number(p,"angleY",0,-35,35); v.rotation = number(p,"rotation",0,-180,180);
-    v.frequency = number(p,"springFrequency",3,1,12); v.damping = number(p,"damping",0.85,0.2,2);
+    v.frequency = number(p,"springFrequency",default_spring_frequency,1,12); v.damping = number(p,"damping",default_spring_damping,0.2,2);
     v.easing = choice(p,"easing","cubic",{"linear","cubic","spring"});
     v.attachment = choice(p,"attachment","screen",{"screen","canvas"}); v.target = choice(p,"target","screen",{"screen","camera"});
     if (effect.kind == "mask") v.mode = choice(p,"mode","solid",{"solid","pixelate","blur"});
@@ -62,20 +62,41 @@ VisualEffect parse_visual_effect(const Effect& effect) {
 void validate_visual_parameters(const Effect& effect) { (void)parse_visual_effect(effect); }
 double motion_curve(double t, std::string_view easing, double frequency, double damping) {
     t = std::clamp(t,0.0,1.0); if (t == 0 || t == 1 || easing == "linear") return t;
-    if (easing != "spring") return t * t * (3 - 2 * t);
-    // Closed form, normalized at the endpoint. No frame-by-frame integration.
+    if (easing != "spring") {
+        // DogSC ZoomBezierCurve.cubic: solve X before sampling Y (0.65,0,0.35,1).
+        auto x = [](double u) { double v=1-u; return 3*v*v*u*0.65+3*v*u*u*0.35+u*u*u; };
+        auto y = [](double u) { return u*u*(3-2*u); };
+        double u=t;
+        for(int i=0;i<7;++i) {
+            double error=x(u)-t; if(std::abs(error)<0.00001)return y(u);
+            double v=1-u,derivative=3*v*v*0.65+6*v*u*(0.35-0.65)+3*u*u*(1-0.35);
+            if(std::abs(derivative)<0.00001)break;
+            double next=u-error/derivative; if(next<0 || next>1)break; u=next;
+        }
+        double lower=0,upper=1;u=t;
+        for(int i=0;i<18;++i) { double value=x(u);if(std::abs(value-t)<0.00001)return y(u);if(value<t)lower=u;else upper=u;u=(lower+upper)/2; }
+        return y(u);
+    }
+    // DogSC ZoomInterpolator.springProgress samples 0.72 seconds of its
+    // physical spring, then normalizes to exact endpoints without overshoot.
+    const double w=2*std::numbers::pi*frequency, zeta=std::min(damping,0.9999);
+    const double wd=w*std::sqrt(1-zeta*zeta);
     auto response = [&](double x) {
-        const double w = 2 * std::numbers::pi * frequency;
-        if (damping < 0.999) { double d = std::sqrt(1 - damping*damping), phase = w*d*x; return 1 - std::exp(-damping*w*x)*(std::cos(phase)+damping/d*std::sin(phase)); }
-        if (damping <= 1.001) return 1 - (1+w*x)*std::exp(-w*x);
-        double d=std::sqrt(damping*damping-1), a=-w*(damping-d), b=-w*(damping+d);
-        return 1 - (b*std::exp(a*x)-a*std::exp(b*x))/(b-a);
+        return 1-std::exp(-zeta*w*x)*(std::cos(wd*x)+zeta*w/wd*std::sin(wd*x));
     };
-    return std::clamp(response(t)/std::max(0.0001,response(1)),0.0,1.2);
+    return std::clamp(response(t*0.72)/response(0.72),0.0,1.0);
 }
 double effect_envelope(const VisualEffect& e, int64_t source_ticks) {
     if (source_ticks < e.start || source_ticks >= e.start + e.duration) return 0;
     double elapsed=(source_ticks-e.start)/double(time_scale), duration=e.duration/double(time_scale);
+    if(e.kind=="zoom") {
+        // Stored ranges include the return phase. DogSC holds the target until
+        // the return starts, then samples 1-ease(elapsed), not ease(remaining).
+        double exit=std::min(e.exit,duration), hold_end=duration-exit, enter=std::min(e.enter,hold_end);
+        if(enter>0 && elapsed<enter)return motion_curve(elapsed/enter,e.easing,e.frequency,e.damping);
+        if(elapsed<=hold_end)return 1;
+        return exit>0 ? 1-motion_curve((elapsed-hold_end)/exit,e.easing,e.frequency,e.damping) : 1;
+    }
     double enter=std::min(e.enter,duration/2), exit=std::min(e.exit,duration/2);
     double in = enter > 0 ? motion_curve(elapsed/enter,e.easing,e.frequency,e.damping) : 1;
     double out = exit > 0 ? motion_curve((duration-elapsed)/exit,e.easing,e.frequency,e.damping) : 1;

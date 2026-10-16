@@ -38,6 +38,24 @@ int main(){try{
     for(int i=0;i<300;++i)(void)evaluator.evaluate(i*166'667);auto high=evaluator.evaluate(50'000'000)->visual.screen;
     expect(reference.scale==low.scale && low.scale==high.scale && low.focus_x==high.focus_x,"preview history must not change trajectory");
     for(auto easing:{"linear","cubic","spring"}){expect(motion_curve(0,easing)==0 && motion_curve(1,easing)==1,"curve endpoints must be exact");for(int i=0;i<=100;++i)expect(std::isfinite(motion_curve(i/100.0,easing,6,0.3)),"spring produced nonfinite motion");}
+    // Golden samples from DogSC ZoomInterpolator.springProgress with
+    // MotionStyle(mass:2.4, stiffness:210, damping:42), normalized over 0.72s.
+    const std::array<std::array<double,2>,6> dogsc{{{0.1,0.1503683906240969},{0.2,0.4046790524244621},{0.25,0.5225369497098733},{0.5,0.8805944634127069},{0.75,0.9809439492960286},{0.9,0.996208694702683}}};
+    for(auto [time,value]:dogsc)expect(std::abs(motion_curve(time,"spring")-value)<1e-12,"spring differs from DogSC reference trajectory");
+    expect(motion_curve(0.25,"cubic")<0.08 && motion_curve(0.75,"cubic")>0.92,"cubic must solve DogSC Bezier time, not use smoothstep");
+    auto dogsc_zoom=parse_visual_effect(effect("reference-zoom","zoom",{{"scale",1.6},{"enter",0.7},{"exit",0.7},{"easing","spring"}}));
+    expect(std::abs(dogsc_zoom.frequency-default_spring_frequency)<1e-12 && std::abs(dogsc_zoom.damping-default_spring_damping)<1e-12,"stored automatic effects without spring parameters must use DogSC defaults");
+    for(auto [time,value]:dogsc) {
+        auto entry=static_cast<int64_t>(std::llround(time*0.7*time_scale));
+        auto returning=static_cast<int64_t>(std::llround((2.3+time*0.7)*time_scale));
+        expect(std::abs(effect_envelope(dogsc_zoom,entry)-value)<1e-6,"zoom entry differs from reference timing");
+        expect(std::abs(effect_envelope(dogsc_zoom,returning)-(1-value))<1e-6,"zoom return must ease forward from held scale");
+    }
+    expect(effect_envelope(dogsc_zoom,20'000'000)==1,"zoom must keep its held scale before returning");
+    auto short_zoom=dogsc_zoom;short_zoom.duration=8'000'000;short_zoom.exit=0.1;
+    expect(std::abs(effect_envelope(short_zoom,3'500'000)-motion_curve(0.5,"spring"))<1e-12,"short zoom must retain full entry window until hold ends");
+    auto authored=parse_visual_effect(effect("custom-spring","zoom",{{"springFrequency",4.0},{"damping",0.6}}));
+    expect(authored.frequency==4 && authored.damping==0.6,"explicitly authored spring tuning must be preserved");
     expect(evaluator.evaluate(0)->visual.screen.scale==1,"zoom must start neutral");
     auto empty=p;empty.effects.clear();auto stable=FrameSceneEvaluator(empty).evaluate(10'000'000);expect(stable->visual.screen.scale==1 && stable->visual.screen.opacity==1,"legacy projects must retain neutral motion");
     std::vector<FocusPoint> points{{0,0.2,0.2},{1'000'000,0.8,0.8}};auto smoothed=smooth_pointer(points,1'000'000,0.1);expect(smoothed[0]>0.2 && smoothed[0]<0.8,"cursor smoothing must preserve causal weighted position");

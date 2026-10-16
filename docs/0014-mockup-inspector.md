@@ -16,3 +16,5 @@
 - [ ] 构建、领域 / 原生协议、实际 WinUI 明暗与交互、独立媒体验证。
 
 验证结果写入 `docs/validation/mockup-inspector.md`。不将源码对照宣称为已在 Windows 上运行 macOS DogSC 的逐像素对比。
+
+2026-10-16 补充：修复网址 / 三个旋钮的草稿、提交和取消误走 effects-only 更新的问题。附着预览逐字节像素、单次撤销 / 重做、原生会话复用、六样式与独立成片验证已通过，见 [验证记录](validation/mockup-inspector.md)。转盘完整物理手势与跨 DPI 手感仍保留待验收。

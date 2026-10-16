@@ -75,8 +75,11 @@ bounds = (min(i % 640 for i in changed), min(i // 640 for i in changed), max(i %
 f32 = lambda v: struct.unpack("f", struct.pack("f", v))[0]
 weights = [math.exp(-(1-i*.05)/.08) for i in range(14, 21)]
 cursor_x = sum(f32(.75+i/600)*w for i, w in zip(range(14, 21), weights))/sum(weights)
-pan_x, pan_y = 320-(51.2+.7*537.6)*2, 180-(28.8+.4*302.4)*2
-x, y = (51.2+cursor_x*537.6)*2+pan_x-320, (28.8+f32(.38)*302.4)*2+pan_y-180
+# The combined fixture has browser chrome. Fit the 16:9 recording into the
+# padded region after its 46-point (at a 1080-point short edge) title bar.
+content_height = 360 * (1 - 2 * .08) - 46 * 360 / 1080
+content_width = content_height * 16 / 9
+x, y = (cursor_x-.7)*content_width*2, (f32(.38)-.4)*content_height*2
 ax, ay = math.radians(18), math.radians(-24)
 z, yy = y*math.sin(ax), y*math.cos(ax)
 xx, z = x*math.cos(ay)+z*math.sin(ay), -x*math.sin(ay)+z*math.cos(ay)
@@ -86,5 +89,11 @@ assert abs(bounds[0]-tip[0]) < 6 and abs(bounds[1]-tip[1]) < 6 and bounds[2]-bou
 report = {"success": True, "comparisons": results, "effectDifferences": changes, "checks": ["Full MP4 decode, duration, frame count and BT.709", "Same-time preview/export pixels", "Solid privacy mask", "Focus center and exterior", "Canvas mask covers camera", "Premultiplied sticker alpha", "Preview-rate determinism", "Portable visual assets"]}
 report["previewExportTrajectory"] = trajectory
 report["projectedPointer"] = {"differenceBounds": bounds, "expectedTip": tip}
+phases = {}
+for frame in (3, 7, 78, 82):
+    result = metrics(rgb(root/"zoom-phases"/f"{frame}.png"), rgb(root/"zoom.mp4", frame))
+    assert result["mae"] < 3.5 and result["psnr"] > 27, ("Zoom transition preview/export differs", frame, result)
+    phases[frame] = result
+report["zoomTransitionFrames"] = phases
 (root/"independent-media-verification.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 print(json.dumps({"success": True, "comparisons": len(results), "worstMae": max(v["mae"] for v in results.values()), "minimumPsnr": min(v["psnr"] for v in results.values())}))
