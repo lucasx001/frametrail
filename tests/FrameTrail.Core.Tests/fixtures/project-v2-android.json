@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 2,
+  "projectId": "fixture-project",
+  "revision": 7,
+  "sourceDuration": {
+    "ticks": 100,
+    "timescale": 10
+  },
+  "media": [
+    {
+      "id": "screen-1",
+      "kind": "screen",
+      "path": "media/screen-1.mp4",
+      "duration": {
+        "ticks": 6,
+        "timescale": 1
+      },
+      "startOffset": {
+        "ticks": 0,
+        "timescale": 1
+      },
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "id": "screen-2",
+      "kind": "screen",
+      "path": "media/screen-2.mp4",
+      "duration": {
+        "ticks": 4,
+        "timescale": 1
+      },
+      "startOffset": {
+        "ticks": 6,
+        "timescale": 1
+      },
+      "width": 1920,
+      "height": 1080
+    },
+    {
+      "id": "camera-1",
+      "kind": "camera",
+      "path": "media/camera-1.mp4",
+      "duration": {
+        "ticks": 8,
+        "timescale": 1
+      },
+      "startOffset": {
+        "ticks": 2,
+        "timescale": 1
+      },
+      "width": 640,
+      "height": 480
+    },
+    {
+      "id": "audio-1",
+      "kind": "androidAudio",
+      "path": "media/phone.wav",
+      "duration": {
+        "ticks": 10,
+        "timescale": 1
+      },
+      "startOffset": {
+        "ticks": 0,
+        "timescale": 1
+      },
+      "sampleRate": 48000,
+      "channels": 2
+    }
+  ],
+  "segments": [
+    {
+      "id": "later-fast",
+      "sourceStart": {
+        "ticks": 6,
+        "timescale": 1
+      },
+      "sourceDuration": {
+        "ticks": 4,
+        "timescale": 1
+      },
+      "rate": {
+        "numerator": 4,
+        "denominator": 1
+      }
+    },
+    {
+      "id": "earlier-slow",
+      "sourceStart": {
+        "ticks": 0,
+        "timescale": 1
+      },
+      "sourceDuration": {
+        "ticks": 2,
+        "timescale": 1
+      },
+      "rate": {
+        "numerator": 1,
+        "denominator": 4
+      }
+    },
+    {
+      "id": "middle-normal",
+      "sourceStart": {
+        "ticks": 4,
+        "timescale": 1
+      },
+      "sourceDuration": {
+        "ticks": 2,
+        "timescale": 1
+      },
+      "rate": {
+        "numerator": 1,
+        "denominator": 1
+      }
+    }
+  ],
+  "canvas": {
+    "width": 1920,
+    "height": 1080,
+    "padding": 0.05,
+    "background": {
+      "r": 0.08,
+      "g": 0.08,
+      "b": 0.1,
+      "a": 1
+    },
+    "screen": {
+      "x": 0,
+      "y": 0,
+      "width": 1,
+      "height": 1
+    },
+    "camera": {
+      "enabled": true,
+      "x": 0.72,
+      "y": 0.68,
+      "width": 0.25,
+      "height": 0.28,
+      "mirror": true
+    }
+  },
+  "effects": [
+    {
+      "id": "effect-1",
+      "kind": "zoom",
+      "sourceStart": {
+        "ticks": 4,
+        "timescale": 1
+      },
+      "sourceDuration": {
+        "ticks": 1,
+        "timescale": 1
+      },
+      "parameters": {
+        "scale": 1.5,
+        "futureEditableData": {
+          "preserve": true
+        }
+      }
+    }
+  ],
+  "markers": [
+    {
+      "id": "marker-1",
+      "time": {
+        "ticks": 5,
+        "timescale": 1
+      },
+      "label": "婕旂ず閲嶇偣"
+    }
+  ],
+  "export": {
+    "width": 1920,
+    "height": 1080,
+    "fps": {
+      "numerator": 60,
+      "denominator": 1
+    },
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "container": "mp4"
+  },
+  "primarySource": {
+    "kind": "androidUsb",
+    "width": 1920,
+    "height": 1080,
+    "orientation": "locked"
+  }
+}

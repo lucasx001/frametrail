@@ -1,6 +1,6 @@
 # FrameTrail 产品实现规格
 
-状态：M0 已实现并通过本地验证；M1 录制原型与 M2 最小编辑闭环已实现，扩展硬件、长时同步及人工交互/听测验收待完成。规格更新日期：2026-10-15。
+状态：M0–M3 已实现；M5 Android USB 的实现与本地自动验证已完成，USB 真机、长时同步、扩展硬件及发布矩阵待验收。规格更新日期：2026-10-16。
 
 ## 1. 产品定位与范围
 
@@ -38,8 +38,8 @@ FrameTrail 是面向 Windows 11 的原生录屏与轻量剪辑工具，用于制
 - 每 60 秒建立可恢复分段。重叠启动下一段，以其首帧 QPC 裁定上一段的逻辑尾部；物理源文件可保留不被工程引用的多余尾帧。摄像头分段共用持续采集源和独立文件编码器，延续边界前最近画面；自动 checkpoint 不重开设备，暂停则释放设备。启动下一段失败时当前录制继续。
 - 录屏硬件编码器支持 D3D11 时通过有界 GPU NV12 样本池交给 MF writer，保留 CPU 回读兼容路径及阶段计时。受控 1080p 动画窗口 30 秒实测约 59.23 FPS、队列丢帧 0；先前 44.14 FPS 的 10 分钟负载环境不同，尚未完成同条件长测。详见 [连续性与性能记录](validation/capture-continuity-performance.md)。
 - M2：共享 D3D11/Direct2D 合成、MF 解码、SwapChainPanel 预览、非破坏性剪辑/撤销、自动保存、保持音调的 WSOLA 混音，以及 MP4/M4A/源素材副本导出已接通。录制源 MP4 仍与原始音轨分开，成片由编辑器导出。验证范围见 [M2 记录](validation/m2-editor-export.md)。
-- M3–M5 仍为后续规格。高级运镜/效果、发行矩阵与 Android USB 尚未实现；包含高级效果的工程会明确阻止成片导出，避免静默遗漏效果。
-- 编辑器使用 DogSC 的 46 DIP 顶栏、点阵预览区、44 DIP 悬浮播放胶囊、340 DIP 右侧检查器与通栏时间线；按用户后续调整，六项导航及参数控件统一使用蓝色强调。背景素材子页签等宽铺满容器，文字居中。导出为 820 DIP 双栏面板，设置为 560 DIP 导航胶囊与页面岛。暂未支持的样机、场景预设、背景媒体与运镜保持不可用提示，不展示虚假结果；验证边界见 [整体 UI 记录](validation/dogsc-editor-ui.md)。
+- M3 高级运镜/效果已接入共享预览导出；M5 Android USB 已实现并通过模拟端的真实编码样本验证。M4 发行矩阵与 M5 USB 真机验收仍未完成，详见对应验证记录。
+- 编辑器使用 DogSC 的 46 DIP 顶栏、点阵预览区、44 DIP 悬浮播放胶囊、340 DIP 右侧检查器与通栏时间线；按用户后续调整，六项导航及参数控件统一使用蓝色强调。背景素材子页签等宽铺满容器，文字居中。导出为 820 DIP 双栏面板，设置为 560 DIP 导航胶囊与页面岛。M3 已启用样机、场景预设、背景媒体与运镜；验证边界见 [整体 UI 记录](validation/dogsc-editor-ui.md)。
 - 当前导出在 GPU 完成合成和 BT.709/NV12 转换，再使用有界 CPU readback 交给 MF writer；不能宣称整条编码链零拷贝或始终硬件编码。预览混音缓存使用 PCM WAV，超过 RIFF 4 GiB 会提示缩短工程，长项目缓存格式留待后续扩展。
 - M0/M1 固定 .NET 8 验证基线；正式发行前升级受支持的 LTS，并重新验收。开发构建内置 Windows App SDK，仍需要 .NET 运行时，不能把单个 exe 视作完整发行包。
 
@@ -106,7 +106,7 @@ M3（2026-10-15）已实现上述自动/手动运镜、纯时间曲线与平滑�
 - 导出固定项目修订快照，开始前确认待保存数据与素材可用；任务中禁止修改该工程，其他 UI 保持响应。
 - 导出超时监测基于实际工作进展，不能用单一总时长阈值误杀长视频。
 
-### 3.5 Android 手机 USB 录屏（M5，未实现）
+### 3.5 Android 手机 USB 录屏（M5，待真机验收）
 
 - 连接方式限定支持数据传输的 USB 数据线；引导用户开启开发者选项与 USB 调试，并在手机端接受本机调试授权。Windows 缺少对应 ADB 驱动时提供官方安装指引，不自动安装驱动。
 - 列出通过 USB 连接的物理手机，区分未连接、未授权、离线、可用与不兼容状态；多设备时必须明确选择，不自动选中模拟器或无线设备。每次仅一台手机作为主画面来源，不同时合成 Windows 桌面和手机两个主视频源。
@@ -118,11 +118,11 @@ M3（2026-10-15）已实现上述自动/手动运镜、纯时间曲线与平滑�
 - 仅录屏，不默认启用手机远程控制、剪贴板同步或手机麦克风。Windows 光标不叠加到手机内容；不能把电脑鼠标事件当成手机真实触摸事件，也不承诺自动点击运镜。
 - 受保护内容可能无法采集，不绕过系统或应用保护。成功录制的素材必须复制进工程，重开和导出无需连接原手机；设备完整序列号不得写入普通诊断日志。
 
-### 3.6 Android 接入方案约束（计划）
+### 3.6 Android 接入方案约束
 
 采用 ADB 负责 USB 发现、授权状态、设备服务启动与隧道；复用 scrcpy 的 Android 原生采集服务，并由 FrameTrail C++ 适配器接收带配置、关键帧与时间戳的媒体包。Windows 侧继续使用 WinUI 3、C++、Media Foundation 和 D3D11，手机画面直接进入原生媒体链路。
 
-实现前固定 ADB、scrcpy server 与协议解析器的配套版本、来源和校验值。scrcpy 协议属于内部协议，不承诺跨版本兼容；不能按一个版本的说明解析另一个版本。原型可用官方工具验证设备，正式接入须直接消费媒体流，不能把录制外部投屏窗口作为交付方案。具体任务、时钟、schema 升级与验收见 [0012](0012-android-usb-recording.md)。
+M5 固定 ADB 36.0.0 / 1.0.41（构建 13206524）、scrcpy server / 协议解析器 3.3.4，并校验官方归档及实际运行文件。scrcpy 协议属于内部协议，不承诺跨版本兼容；不能按一个版本的说明解析另一个版本。原型可用官方工具验证设备，正式接入须直接消费媒体流，不能把录制外部投屏窗口作为交付方案。C++ 使用 Media Foundation 解码预览与 H.264 直封 MP4，D3D11 承载画面；手机音频选择 48kHz 双声道 PCM，按设备 PTS 对齐并独立保存 WAV。WinUI 的手机声音控制沿用主声音增益，标签明确为手机内部音频；首轮不同时采集 Windows loopback。具体任务、时钟、schema 升级与验收见 [0012](0012-android-usb-recording.md)。
 
 ## 4. 技术栈与职责
 
@@ -131,7 +131,7 @@ M3（2026-10-15）已实现上述自动/手动运镜、纯时间曲线与平滑�
 | App | WinUI 3、C#、XAML、稳定版 .NET/Windows App SDK | 窗口、MVVM、命令、项目工作区、保存调度 |
 | Engine/Core | C++20 | 项目校验、TimelineMap、AutoZoomPlanner、FrameScene 求值 |
 | Engine/Capture | C++/WinRT、WGC、WASAPI、Media Foundation | 视频/音频/光标采集与时钟 |
-| Engine/AndroidCapture（M5 计划） | C++ USB 来源适配器、ADB、配套版本 scrcpy server | 手机发现/授权、设备媒体流、时间戳映射与断线处理 |
+| Engine/AndroidCapture（M5） | C++ USB 来源适配器、ADB、配套版本 scrcpy server | 手机发现/授权、设备媒体流、时间戳映射与断线处理 |
 | Engine/Render | D3D11、HLSL、Direct2D、DirectWrite | 共同的 GPU 渲染与素材栅格化 |
 | Engine/Media | Media Foundation、必要的经评估音频处理组件 | 解码、音频混合/重采样/时间伸缩、编码与封装 |
 | Bridge | C ABI + P/Invoke、SafeHandle | 生命周期、命令、状态、取消；禁止跨边界传视频像素数组 |
@@ -152,7 +152,7 @@ WinUI App / ProjectWorkspace / EditorCommands
 C ABI Bridge ── EngineSession
                  ├── Core: TimelineMap → FrameSceneEvaluator
                  ├── Capture: WGC / WASAPI / Camera / Pointer
-                 ├── AndroidCapture (M5 planned): ADB USB tunnel / scrcpy server
+                 ├── AndroidCapture (M5): ADB USB tunnel / scrcpy server
                  ├── Media: Decode / AudioMix / Encode
                  └── Render: shared D3D11 compositor
                               ├── preview swap chain
@@ -196,7 +196,7 @@ Example.frametrailproject/
 ```
 
 - 独立 schema 从 1 开始，不使用 DogSC 的版本号暗示直接兼容。
-- Android 来源信息与手机独立音轨需要在 0012 设计 schema 升级、迁移和往返测试。当前 schema 1 保持不变，不向严格模型注入未知字段或复用 `systemAudio` 假装手机音轨。
+- Android 录制使用 schema 2，增加 `primarySource` 和独立 `androidAudio`；旧桌面工程继续按 schema 1 严格读写，提供显式无损升级。手机音轨不复用 `systemAudio`，Android 工程拒绝 Windows 光标与 loopback 轨；见 [schema.md](schema.md)。
 - project.json 包含 source manifest、轨道偏移、剪辑序列、效果、导出设置及 revision；所有路径为工程内相对路径。
 - 通过 session epoch 和 revision 的串行保存实现去抖自动保存、最终 flush、上一版快照和同卷替换。
 - 拒绝路径逃逸和未知未来版本，缺素材提供恢复/定位提示；不能静默删除不认识的字段后覆盖工程。
@@ -238,3 +238,9 @@ Example.frametrailproject/
 - [scrcpy 服务与内部协议](https://github.com/Genymobile/scrcpy/blob/master/doc/develop.md)
 
 以上依据用于技术选型；每个任务实现前仍需核对所选稳定 SDK 的能力和最低版本。
+
+### 2026-10-16 M5 实现边界
+
+按用户要求，在 M4 扩展验收之前推进 M5。本地已接通 USB 类型枚举、授权引导、原生媒体流、预览、分段/恢复、schema 2 与编辑导出；固定方向使用 scrcpy 的 `capture_orientation=@`，编码配置变化时结束本轮录制并要求重新连接。
+
+自动验证使用真实编码样本与模拟 scrcpy 对端，覆盖竖屏、协议故障、暂停/继续、进程终止恢复和离线编辑导出。当前没有连接手机；Android 版本/ROM、OEM 驱动、受保护内容、30 分钟手机音视频与电脑麦克风偏差、干净机器及安装更新均未验收。PTS 与 QPC 的首帧映射及到达偏移只用于时序基准/诊断，未宣称消除了 USB 固定延迟或证明跨设备同步达到 50ms。详细证据见 [M5 验证](validation/0012-android-usb-validation.md)。

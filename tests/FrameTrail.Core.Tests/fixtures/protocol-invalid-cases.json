@@ -1,5 +1,5 @@
 [
-  { "name": "future schema", "path": ["schemaVersion"], "value": 2 },
+  { "name": "future schema", "path": ["schemaVersion"], "value": 3 },
   { "name": "unknown root field", "path": ["silentlyLost"], "value": true },
   { "name": "unknown nested field", "path": ["canvas", "silentlyLost"], "value": true },
   { "name": "parent traversal", "path": ["media", 0, "path"], "value": "../secret.mp4" },

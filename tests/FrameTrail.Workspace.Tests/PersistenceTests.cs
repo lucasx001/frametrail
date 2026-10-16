@@ -70,6 +70,15 @@ public sealed class PersistenceTests : IAsyncLifetime
         await Assert.ThrowsAsync<ProjectFormatException>(() => workspace.SaveAsync(Snapshot() with { ProjectId = "other" }, workspace.SessionEpoch));
         Assert.True(await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch));
     }
+    [Fact] public async Task TransientReaderLockRetriesAtomicReplaceWithoutLosingPreviousRevision()
+    {
+        await using var workspace = await CreateAsync(); await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch);
+        using var reader = new FileStream(Path.Combine(Project, "project.json"), FileMode.Open, FileAccess.Read, FileShare.Read);
+        var save = workspace.SaveAsync(Snapshot(2), workspace.SessionEpoch);
+        await Task.Delay(125); reader.Dispose(); Assert.True(await save);
+        Assert.Equal(2, ProjectJson.Deserialize(await File.ReadAllTextAsync(Path.Combine(Project, "project.json"))).Revision);
+        Assert.Equal(1, ProjectJson.Deserialize(await File.ReadAllTextAsync(Path.Combine(Project, "project.previous.json"))).Revision);
+    }
     [Fact] public async Task OnlyOneWritableSessionCanOpenProject()
     {
         await using var workspace = await CreateAsync(); await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch);

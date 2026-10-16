@@ -18,7 +18,7 @@ public sealed record Rational
     [JsonRequired] public int Denominator { get; init; } = 1;
 }
 
-public enum MediaKind { Screen, Camera, SystemAudio, Microphone, PointerEvents }
+public enum MediaKind { Screen, Camera, SystemAudio, Microphone, PointerEvents, AndroidAudio }
 
 public sealed record MediaAsset
 {
@@ -96,8 +96,17 @@ public sealed record ExportSettings
     [JsonRequired] public string Container { get; init; } = "mp4";
 }
 
+public sealed record PrimarySource
+{
+    [JsonRequired] public string Kind { get; init; } = "desktop";
+    [JsonRequired] public uint Width { get; init; }
+    [JsonRequired] public uint Height { get; init; }
+    [JsonRequired] public string Orientation { get; init; } = "locked";
+}
+
 public sealed record ProjectSnapshot
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public PrimarySource? PrimarySource { get; init; }
     [JsonRequired] public int SchemaVersion { get; init; } = 1;
     [JsonRequired] public string ProjectId { get; init; } = "";
     [JsonRequired] public long Revision { get; init; }

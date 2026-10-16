@@ -4,7 +4,7 @@
 
 项目以 DogSC 的产品能力和领域模型为参考，在 Windows 上独立实现采集、编辑、预览和导出。当前已实现 M0 工程基础与 M1 录制原型：屏幕、独立音轨、光标、标记、分段保存和工程恢复。M2 已接入原生预览、非破坏性时间线编辑与 MP4/M4A 导出；扩展实机验收仍待完成，见 [M2 验证记录](docs/validation/m2-editor-export.md)。
 
-移动设备录屏方向为 [通过 USB 数据线连接 Android 手机](docs/0012-android-usb-recording.md)，规划在首版后的 M5，尚未实现。
+移动设备录屏方向为 [通过 USB 数据线连接 Android 手机](docs/0012-android-usb-recording.md)，M5 的本地实现与自动媒体验证已完成；USB 真机、长时同步与安装矩阵待验收，见 [M5 验证记录](docs/validation/0012-android-usb-validation.md)。
 
 录屏界面已参照 DogSC 重做为悬浮胶囊与输入配置面板，包含来源选择遮罩、区域拖框、录制条、完成卡片和备忘录。实现与验证边界见 [录屏 UI 记录](docs/validation/0005-recorder-ui.md)。
 
@@ -61,3 +61,31 @@ M3 效果回归（先按相同原生目录构建 Release，同样需要 ffmpeg/f
 在编辑器「运镜」页添加或按录制点击生成效果，选择片段后调整参数即可实时预览，无需点击应用。滑块拖动过程中预览，松手后自动保存并合并为一次撤销；数字/文字输入短暂停顿后保存，输入焦点保持。当前播放头不在效果有效区间时，会定位到该效果的可见时刻。时间线可选择效果，再拖动片段或两端裁边；Ctrl+C / Ctrl+V 复制到播放头，Delete 删除当前效果，Ctrl+Z / Ctrl+Y 撤销重做。效果按源时间保存，剪辑和变速通过统一映射同步处理。
 
 「画面」支持工程内图片、循环视频和渐变背景，「样机」选择窗口/浏览器/设备边框；「开场」设置屏幕或摄像头的动画，「摄像头」选择形状，「光标」调整平滑。场景预设菜单可应用内置预设，或保存/恢复当前工程预设。素材复制进工程后重开无需原始导入路径；视觉预设保留当前声音设置。
+
+## Android USB 录屏（M5）
+
+首次准备运行组件，然后重新构建并启动：
+
+```powershell
+.\scripts\setup-android.cmd
+.\scripts\build.cmd -Configuration Release -NativeBuildDirectory "$PWD\artifacts\native-release" -LockedRestore
+.\scripts\run.cmd -Configuration Release
+```
+
+在来源轮盘选择「手机」，或从更多菜单打开「Android USB 录屏」。手机通过数据线连接后，开启开发者选项和 USB 调试、解锁并允许本机授权，选择设备并连接预览，再开始录制。电脑麦克风在录制条上选择；手机内部音频在手机连接面板单独设置。预览默认静音。Android 11+ 才能尝试内部音频，不可用时可明确选择继续无声视频或取消。应用不会自动安装 USB 驱动或改动手机设置。
+
+手机原始画面通过版本固定的 scrcpy server 直接传入 C++，以 H.264 保存；声音保存为独立 WAV。录制期间方向固定，暂停时继续排空 USB 流，恢复/分段等待下一个关键帧。断线后可使用已完成分段；断开手机后工程仍可编辑、预览和导出。首轮不支持无线连接、手机遥控、动态旋转连续录制、Windows loopback 与手机音频同时采集。手机不会产生 Windows 光标或虚构触摸事件。
+
+无需手机的自动验证（真实 H.264/PCM、协议模拟端、恢复与独立解码）：
+
+```powershell
+.\scripts\validate-m5.cmd
+```
+
+生成带 .NET/Windows App SDK、固定 Android 组件及许可的本地便携测试包：
+
+```powershell
+.\scripts\package-android.cmd
+```
+
+以上是本地开发/测试交付，不代表干净机器、真实手机、30 分钟音画同步、安装更新或 M4 发布验收通过。

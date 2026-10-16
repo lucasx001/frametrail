@@ -10,6 +10,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
+      - name: Prepare pinned Android runtime and notices
+        shell: pwsh
+        run: ./scripts/setup-android.ps1
       - name: Build native engine, WinUI app, and run CPU tests
         shell: pwsh
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore

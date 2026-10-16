@@ -13,6 +13,7 @@
     <NativeBuildDirectory Condition="'$(NativeBuildDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\native</NativeBuildDirectory>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="..\..\artifacts\android-runtime\**\*" Link="android-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
@@ -28,5 +29,15 @@
     </ItemGroup>
     <Error Condition="!Exists('$(NativeBuildDirectory)\bin\$(Configuration)\FrameTrail.Engine.dll') And !Exists('$(NativeBuildDirectory)\bin\FrameTrail.Engine.dll')" Text="Build the native engine first using scripts/build.ps1." />
     <Copy SourceFiles="@(NativeEngineDll)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="PublishNativeEngine" AfterTargets="Publish">
+    <ItemGroup>
+      <PublishedNativeEngine Include="$(NativeBuildDirectory)\bin\$(Configuration)\FrameTrail.*.dll" />
+      <PublishedNativeEngine Include="$(NativeBuildDirectory)\bin\FrameTrail.*.dll" />
+      <PublishedXamlResource Include="$(TargetDir)**\*.xbf" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PublishedNativeEngine)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(TargetDir)$(AssemblyName).pri" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PublishedXamlResource)" DestinationFiles="@(PublishedXamlResource->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 </Project>

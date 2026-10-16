@@ -10,7 +10,7 @@ namespace frametrail::core {
 
 inline constexpr std::int64_t time_scale = 10'000'000;
 inline constexpr std::int64_t maximum_source_ticks = 7 * 24 * 60 * 60 * time_scale;
-inline constexpr std::uint32_t schema_version = 1;
+inline constexpr std::uint32_t schema_version = 2;
 
 class ValidationError final : public std::runtime_error {
 public:
@@ -34,7 +34,7 @@ bool is_project_relative_path(std::string_view path);
 struct Rational { std::int32_t numerator{1}; std::int32_t denominator{1}; };
 struct Rect { double x{}, y{}, width{1}, height{1}; };
 struct Color { double r{0.08}, g{0.08}, b{0.10}, a{1}; };
-enum class MediaKind { screen, camera, system_audio, microphone, pointer_events };
+enum class MediaKind { screen, camera, system_audio, microphone, pointer_events, android_audio };
 struct Media {
     std::string id;
     MediaKind kind{MediaKind::screen};
@@ -83,6 +83,7 @@ struct Project {
     ExportSettings export_settings;
     // Optional schema-1 editor envelope. Old recordings default to neutral settings.
     std::string editor_json{"{}"};
+    std::string primary_source_json;
 };
 
 Project parse_project(std::string_view json);

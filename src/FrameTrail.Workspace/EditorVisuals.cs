@@ -53,6 +53,7 @@ public sealed partial class EditorSession
     }
     public async Task AutoZoomAsync(double scale = 1.6)
     {
+        if (Snapshot.PrimarySource?.Kind == "androidUsb") return;
         var events = new List<object>();
         foreach (var media in Snapshot.Media.Where(m => m.Kind == MediaKind.PointerEvents))
         {

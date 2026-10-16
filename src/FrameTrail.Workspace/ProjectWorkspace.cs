@@ -217,7 +217,7 @@ public sealed class ProjectWorkspace : IAsyncDisposable
                 if (!await HasMp4MoovAsync(stream)) throw new IOException($"Unfinalized or unreadable MP4: {media.Path}");
                 await Task.Run(() => probe(Resolve(media.Path), true));
             }
-            if (media.Kind is MediaKind.Microphone or MediaKind.SystemAudio)
+            if (media.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio)
             {
                 var header = new byte[12]; if (await stream.ReadAsync(header) != 12 || Encoding.ASCII.GetString(header, 0, 4) != "RIFF" || Encoding.ASCII.GetString(header, 8, 4) != "WAVE")
                     throw new IOException($"Unreadable WAV: {media.Path}");
@@ -274,9 +274,20 @@ public sealed class ProjectWorkspace : IAsyncDisposable
         {
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous | FileOptions.WriteThrough))
             { await stream.WriteAsync(Encoding.UTF8.GetBytes(json)); await stream.FlushAsync(); stream.Flush(true); }
-            CheckAncestors(path);
-            if (File.Exists(path)) File.Replace(temporary, path, previous);
-            else File.Move(temporary, path);
+            for (int attempt = 0; ; attempt++) {
+                CheckAncestors(path);
+                try {
+                    if (File.Exists(path)) File.Replace(temporary, path, previous);
+                    else File.Move(temporary, path);
+                    break;
+                }
+                // Windows readers/scanners may briefly deny delete-sharing while
+                // a checkpoint is being reopened. Keep the same flushed temporary
+                // file and atomic replace; never fall back to truncating the target.
+                catch (IOException error) when (attempt < 5 && (error.HResult & 0xffff) is 32 or 33 or 1175 && File.Exists(temporary) && File.Exists(path)) {
+                    await Task.Delay(50 * (attempt + 1));
+                }
+            }
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
