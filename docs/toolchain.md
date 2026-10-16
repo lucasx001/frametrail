@@ -27,10 +27,10 @@ Windows App SDK 1.8 本身支持更早系统；本项目有意缩小为 Windows 
 
 标准环境：Visual Studio 2022 Build Tools，包含 C++ desktop workload、MSVC v143、Windows11 SDK26100与CMake；另安装.NET SDK8.0.426。WinUI C#项目可由dotnet build调用包内XAML编译器，不依赖IDE模板。
 
-本机也支持用户目录 portable 工具链。脚本默认探测：
+本机也支持 portable 工具链。优先使用工程内的 `.tools\toolchain`，其布局如下；也兼容用户目录 `%LOCALAPPDATA%\FrameTrail\Toolchain`：
 
 ```text
-%USERPROFILE%\AppData\Local\FrameTrail\Toolchain\
+.tools\toolchain\
   dotnet\dotnet.exe
   msvc\setup_x64.bat
   python-packages\cmake\data\bin\cmake.exe
@@ -39,6 +39,15 @@ Windows App SDK 1.8 本身支持更早系统；本项目有意缩小为 Windows 
 ```
 
 使用`-ToolchainRoot`可覆盖；脚本只把该工具链导入当前PowerShell进程，不修改系统PATH。Portable MSVC必须来自微软签名的官方组件，下载工具本身不算项目依赖。
+
+默认目录依次从工程内 `.tools\toolchain`、`LOCALAPPDATA`、Windows 的 LocalApplicationData 用户目录、`USERPROFILE\AppData\Local` 中选择存在的工具链目录。工程内工具链避免构建依赖某个终端无法访问的 AppData 目录；`.tools` 已加入 Git 忽略规则，工具链文件不提交到仓库。显式传入不存在或无法访问的 `-ToolchainRoot` 会直接报错。
+
+如果构建提示 `Required tool 'cmake' was not found`，先运行 `.\scripts\doctor.cmd`。输出会列出工程路径、用户目录、实际选择的工具链目录及关键文件是否存在；如果 CMake、Ninja、cl 和 portable .NET 同时缺失，应先检查整套工具链目录是否可访问。可显式指定已安装位置验证（按实际路径替换）：
+
+```powershell
+.\scripts\doctor.cmd -ToolchainRoot ".\.tools\toolchain"
+.\scripts\build.cmd -Configuration Release -ToolchainRoot ".\.tools\toolchain"
+```
 
 ## 从干净checkout构建
 
