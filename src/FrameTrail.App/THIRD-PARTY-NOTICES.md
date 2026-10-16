@@ -84,3 +84,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+## Android USB components
+
+The optional Android runtime includes scrcpy server 3.3.4 (Genymobile and
+contributors, Apache-2.0) and the ADB files from Google Android Platform-Tools
+36.0.0. Their complete applicable licenses and component notices are installed
+alongside the application as `android-runtime/scrcpy-LICENSE.txt` and
+`android-runtime/ADB-NOTICE.txt`. No scrcpy desktop client or FFmpeg runtime is
+included. The server and ADB have separate notices; neither replaces the other.

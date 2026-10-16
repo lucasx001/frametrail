@@ -98,8 +98,8 @@ void Session::mix_audio(const std::filesystem::path& target) {
         auto fetch = [&](int64_t first, int count) {
             check_cancel(); std::vector<float> mixed(static_cast<size_t>(count) * channels, 0);
             for (auto& m : project.media) {
-                if (m.kind != MediaKind::system_audio && m.kind != MediaKind::microphone) continue;
-                const bool system = m.kind == MediaKind::system_audio; const char* gain_key = system ? "systemGain" : "microphoneGain", *mute_key = system ? "systemMuted" : "microphoneMuted";
+                if (m.kind != MediaKind::system_audio && m.kind != MediaKind::microphone && m.kind != MediaKind::android_audio) continue;
+                const bool system = m.kind == MediaKind::system_audio || m.kind == MediaKind::android_audio; const char* gain_key = system ? "systemGain" : "microphoneGain", *mute_key = system ? "systemMuted" : "microphoneMuted";
                 if (settings.value(mute_key, false) || clip_settings.value(mute_key, false)) continue;
                 const auto gain = settings.value(gain_key, 1.0) * clip_settings.value(gain_key, 1.0);
                 const auto offset = ticks_samples(normalized_ticks(m.start_offset)), duration = ticks_samples(normalized_ticks(m.duration));

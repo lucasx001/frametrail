@@ -9,9 +9,10 @@ public enum RecordingWorkspaceState { Setup, Preparing, Recording, Pausing, Paus
 public sealed record AudioSelection(AudioCaptureKind Kind, string? DeviceId = null, uint ProcessId = 0);
 public sealed record RecordingPlan(string ProjectPath, CaptureSource Source, CaptureRegion? Region = null,
     uint Fps = 30, bool AllowSoftware = false, IReadOnlyList<AudioSelection>? Audio = null,
-    CameraDevice? Camera = null, CameraFormat? CameraFormat = null, bool RecordPointer = true, int CheckpointSeconds = 60);
+    CameraDevice? Camera = null, CameraFormat? CameraFormat = null, bool RecordPointer = true, int CheckpointSeconds = 60,
+    AndroidSelection? Android = null, AndroidConnection? PreparedAndroid = null);
 public sealed record SegmentPaths(string Screen, string Pointer, string Shapes, string Camera,
-    IReadOnlyList<string> Audio, string Diagnostics);
+    IReadOnlyList<string> Audio, string Diagnostics, string? PhoneAudio = null);
 public sealed record SegmentStart(long EpochQpc, long QpcFrequency, uint Width, uint Height);
 public sealed record CompletedTrack(MediaKind Kind, string Path, long DurationTicks, long OffsetTicks = 0,
     uint Width = 0, uint Height = 0, uint SampleRate = 0, uint Channels = 0);
@@ -27,6 +28,7 @@ public interface IRecordingDriver
 {
     Task<IRecordingSegment> StartAsync(RecordingPlan plan, SegmentPaths paths, CancellationToken cancellationToken);
 }
+public interface IRecordingRunDriver { Task EndRunAsync(); }
 public sealed record RecordingWorkspaceStatus(Guid RunId, RecordingWorkspaceState State, TimeSpan Duration,
     string? ProjectPath, IReadOnlyList<string> Warnings, double MicrophonePeak);
 
@@ -73,6 +75,8 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             if (state is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("A recording is already active.");
             if (requested.CheckpointSeconds < 5 || requested.CheckpointSeconds > 300) throw new ArgumentOutOfRangeException(nameof(requested.CheckpointSeconds));
             if (requested.Camera is not null && requested.CameraFormat is null) throw new ArgumentException("Choose a camera format.");
+            if (requested.Android is not null && (requested.RecordPointer || requested.Camera is not null || requested.Audio?.Any(a => a.Kind != AudioCaptureKind.Microphone) == true))
+                throw new ArgumentException("Android recording uses phone audio and optional computer microphone; disable Windows pointer, camera and system audio.");
             if (requested.Audio?.GroupBy(a => a.Kind == AudioCaptureKind.Microphone).Any(g => g.Count() > 1) == true) throw new ArgumentException("Only one microphone and one system/process audio track are supported.");
             if (workspace is not null) { await workspace.DisposeAsync(); workspace = null; }
             runId = Guid.NewGuid(); plan = requested with { Audio = requested.Audio?.ToArray() ?? Array.Empty<AudioSelection>(), ProjectPath = Path.GetFullPath(requested.ProjectPath) };
@@ -92,7 +96,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             AddWarning("Recording startup rolled back: " + error.Message);
             try { if (active is not null) { await active.DisposeAsync(); active = null; } if (workspace is not null) await WriteManifestAsync("failed"); }
             catch (Exception cleanup) { AddWarning("Startup cleanup: " + cleanup.Message); }
-            finally { SetState(RecordingWorkspaceState.Setup); }
+            finally { if (driver is IRecordingRunDriver run) await run.EndRunAsync(); SetState(RecordingWorkspaceState.Setup); }
             throw;
         }
         finally { transition.Release(); }
@@ -134,11 +138,11 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             SetState(RecordingWorkspaceState.Finalizing); monitorCancellation?.Cancel();
             if (active is not null) await CompleteSegmentAsync(Stopwatch.GetTimestamp());
             await WriteManifestAsync(media.Any(m => m.Kind == MediaKind.Screen) ? "complete" : "failed");
-            await workspace!.BarrierAsync(); SetState(RecordingWorkspaceState.RecordingComplete);
+            await workspace!.BarrierAsync(); if (driver is IRecordingRunDriver run) await run.EndRunAsync(); SetState(RecordingWorkspaceState.RecordingComplete);
             return workspace.Snapshot;
         }
         catch (Exception error) { AddWarning("Finalization failed; completed checkpoints remain recoverable: " + error.Message); SetState(RecordingWorkspaceState.RecordingComplete); throw; }
-        finally { transition.Release(); }
+        finally { try { if (driver is IRecordingRunDriver run) await run.EndRunAsync(); } finally { transition.Release(); } }
     }
     public async Task AddMarkerAsync(string label = "")
     {
@@ -161,12 +165,15 @@ public sealed class RecordingCoordinator : IAsyncDisposable
         var index = ++segmentIndex; var prefix = $"media/segment-{index:D4}";
         var shapes = $"events/pointer-{index:D4}-shapes"; Directory.CreateDirectory(workspace!.Resolve(shapes));
         var paths = new SegmentPaths(prefix + "-screen.mp4", $"events/pointer-{index:D4}.jsonl", shapes, prefix + "-camera.mp4",
-            plan!.Audio!.Select((a, i) => prefix + (a.Kind == AudioCaptureKind.Microphone ? "-microphone.wav" : "-system.wav")).ToArray(), $"recovery/segment-{index:D4}-audio.jsonl");
+            plan!.Audio!.Select((a, i) => prefix + (a.Kind == AudioCaptureKind.Microphone ? "-microphone.wav" : "-system.wav")).ToArray(), $"recovery/segment-{index:D4}-audio.jsonl",
+            plan.Android?.InternalAudio == true ? prefix + "-phone.wav" : null);
         var pending = new List<string> { paths.Screen };
         if (plan.RecordPointer) pending.Add(paths.Pointer); if (plan.Camera is not null) pending.Add(paths.Camera); pending.AddRange(paths.Audio);
+        if (paths.PhoneAudio is not null) pending.Add(paths.PhoneAudio);
         await WriteManifestAsync("recording", activePending.Concat(abandonedPending).Concat(pending).ToArray());
         var absolute = paths with { Screen = workspace.Resolve(paths.Screen), Pointer = workspace.Resolve(paths.Pointer), Shapes = workspace.Resolve(paths.Shapes),
-            Camera = workspace.Resolve(paths.Camera), Audio = paths.Audio.Select(workspace.Resolve).ToArray(), Diagnostics = workspace.Resolve(paths.Diagnostics) };
+            Camera = workspace.Resolve(paths.Camera), Audio = paths.Audio.Select(workspace.Resolve).ToArray(), Diagnostics = workspace.Resolve(paths.Diagnostics),
+            PhoneAudio = paths.PhoneAudio is null ? null : workspace.Resolve(paths.PhoneAudio) };
         try { active = await driver.StartAsync(plan, absolute, token); activePending = pending; }
         catch { abandonedPending.AddRange(pending); await WriteManifestAsync("recording"); throw; }
         if (lastBoundary != 0 && !overlapping && state != RecordingWorkspaceState.Resuming)
@@ -205,7 +212,9 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     private ProjectSnapshot MakeSnapshot()
     {
         var main = media.First(m => m.Kind == MediaKind.Screen);
-        return new() { ProjectId = workspace!.Snapshot?.ProjectId ?? projectIdentity(), Revision = ++revision,
+        return new() { SchemaVersion = plan!.Android is null ? 1 : 2,
+            PrimarySource = plan.Android is null ? null : new() { Kind = "androidUsb", Width = main.Width, Height = main.Height },
+            ProjectId = workspace!.Snapshot?.ProjectId ?? projectIdentity(), Revision = ++revision,
             SourceDuration = MediaTime.FromTicks(sourceTicks), Media = media.ToArray(), Segments = segments.ToArray(),
             Markers = markers.Where(m => m.Time.Ticks <= sourceTicks).ToArray(),
             Canvas = new() { Width = main.Width, Height = main.Height, Camera = new() { Enabled = plan!.Camera is not null } },
@@ -237,7 +246,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
                     {
                         AddWarning(health.MainError ?? "Screen source ended."); SetState(RecordingWorkspaceState.Finalizing);
                         await CompleteSegmentAsync(Stopwatch.GetTimestamp()); await WriteManifestAsync("complete");
-                        SetState(RecordingWorkspaceState.RecordingComplete); break;
+                        if (driver is IRecordingRunDriver run) await run.EndRunAsync(); SetState(RecordingWorkspaceState.RecordingComplete); break;
                     }
                     if (!checkpointDisabled && CurrentTicks() - sourceTicks >= TimeSpan.FromSeconds(plan!.CheckpointSeconds).Ticks)
                     {
@@ -256,7 +265,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
         catch (Exception error)
         {
             await transition.WaitAsync();
-            try { AddWarning("Recording monitor ended: " + error.Message); if (active is not null) { await active.DisposeAsync(); active = null; } await WriteManifestAsync("failed"); SetState(RecordingWorkspaceState.RecordingComplete); }
+            try { AddWarning("Recording monitor ended: " + error.Message); if (active is not null) { await active.DisposeAsync(); active = null; } await WriteManifestAsync("failed"); if (driver is IRecordingRunDriver run) await run.EndRunAsync(); SetState(RecordingWorkspaceState.RecordingComplete); }
             finally { transition.Release(); }
         }
     }

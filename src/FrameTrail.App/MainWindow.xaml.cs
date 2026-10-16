@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private RecordingCompletionWindow? completion;
     private EditorWindow? editorWindow;
     private EditorSettingsWindow? settingsWindow;
+    private AndroidDeviceWindow? androidWindow;
     private CaptureSelectionController? selection;
     private IReadOnlyList<CaptureSource> sources = Array.Empty<CaptureSource>();
     private IReadOnlyList<AudioDevice> microphones = Array.Empty<AudioDevice>(), outputs = Array.Empty<AudioDevice>();
@@ -74,6 +75,7 @@ public sealed partial class MainWindow : Window
             try
             {
                 selection?.Dispose(); selection = null;
+                if (androidWindow is { } activeAndroid) await activeAndroid.ShutdownAsync();
                 HideFlyouts();
                 await coordinator.DisposeAsync();
                 if (opened is not null) await opened.DisposeAsync();
@@ -105,6 +107,13 @@ public sealed partial class MainWindow : Window
                 }); return;
             }
             await InitializeRecorderAsync();
+            var androidUiIndex = Array.IndexOf(args, "--android-ui-self-test");
+            if (androidUiIndex >= 0 && args.Length > androidUiIndex + 1) {
+                try { OpenAndroid(); await androidWindow!.ValidateUiAsync(Path.GetFullPath(args[androidUiIndex + 1])); }
+                finally { allowClose = true; closing = true; UnregisterHotkeys(); await coordinator.DisposeAsync(); session?.Dispose(); Close(); }
+                return;
+            }
+            if (args.Contains("--android")) OpenAndroid();
             var chromeIndex = Array.IndexOf(args, "--chrome-self-test");
             if (chromeIndex >= 0 && args.Length > chromeIndex + 1) { await RunChromeValidationAsync(args[chromeIndex + 1]); return; }
             AppWindow.Show();
@@ -135,7 +144,7 @@ public sealed partial class MainWindow : Window
     private void HideFlyouts() { foreach (var flyout in flyouts) flyout.Hide(); }
     private void Microphone_Click(object sender, RoutedEventArgs e) => ToggleFlyout(MicrophoneFlyout, MicrophoneButton);
     private void Camera_Click(object sender, RoutedEventArgs e) => ToggleFlyout(CameraFlyout, CameraButton);
-    private void System_Click(object sender, RoutedEventArgs e) => ToggleFlyout(SystemFlyout, SystemButton);
+    private void System_Click(object sender, RoutedEventArgs e) { if (sourceMode == 3) OpenAndroid(); else ToggleFlyout(SystemFlyout, SystemButton); }
     private void More_Click(object sender, RoutedEventArgs e)
     {
         if (NoticeBadge.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(Feedback.Text))
@@ -170,12 +179,13 @@ public sealed partial class MainWindow : Window
     private void RollSource(int step)
     {
         if (busy || coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) return;
-        HideFlyouts(); sourceMode = (sourceMode + step + 3) % 3;
-        SourceGlyph.Kind = new[] { "Display", "Window", "Region" }[sourceMode];
-        SourceModeLabel.Text = new[] { "显示器", "窗口", "区域" }[sourceMode];
+        HideFlyouts(); sourceMode = (sourceMode + step + 4) % 4;
+        SourceGlyph.Kind = new[] { "Display", "Window", "Region", "Phone" }[sourceMode];
+        SourceModeLabel.Text = new[] { "显示器", "窗口", "区域", "手机" }[sourceMode];
         AutomationProperties.SetName(SourceWheel, "录制来源：" + SourceModeLabel.Text);
         ProcessAudio.IsEnabled = sourceMode == 1;
         if (sourceMode != 1) AllSystemAudio.IsChecked = true;
+        ApplyIcons(); ApplyInteraction();
     }
     private async Task RefreshDevicesAsync()
     {
@@ -244,7 +254,9 @@ public sealed partial class MainWindow : Window
     private void ApplyIcons()
     {
         if (!viewReady) return;
-        MicrophoneGlyph.IsOn = MicEnabled.IsChecked == true; CameraGlyph.IsOn = CameraEnabled.IsChecked == true; SystemGlyph.IsOn = SystemEnabled.IsChecked == true;
+        MicrophoneGlyph.IsOn = MicEnabled.IsChecked == true; CameraGlyph.IsOn = sourceMode != 3 && CameraEnabled.IsChecked == true; SystemGlyph.IsOn = sourceMode != 3 && SystemEnabled.IsChecked == true;
+        CameraButton.IsEnabled = sourceMode != 3; PointerEnabled.IsEnabled = sourceMode != 3;
+        ToolTipService.SetToolTip(SystemButton, sourceMode == 3 ? "在手机连接面板设置内部音频" : "系统声音");
         AutomationProperties.SetName(MicrophoneButton, "麦克风：" + (MicrophoneGlyph.IsOn ? "开启" : "关闭"));
         AutomationProperties.SetName(CameraButton, "摄像头：" + (CameraGlyph.IsOn ? "开启" : "关闭"));
         AutomationProperties.SetName(SystemButton, "系统声音：" + (SystemGlyph.IsOn ? "开启" : "关闭"));
@@ -273,6 +285,7 @@ public sealed partial class MainWindow : Window
     {
         if (busy || session is null || selection is not null) return;
         HideFlyouts();
+        if (sourceMode == 3) { OpenAndroid(); return; }
         try
         {
             selection = new CaptureSelectionController(this, sourceMode, sources, async (source, region) =>
@@ -284,11 +297,11 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception error) { selection?.Dispose(); selection = null; AppWindow.Show(); ShowFeedback("无法选择录制来源", error.Message); }
     }
-    private async Task BeginRecordingAsync(CaptureSource source, CaptureRegion? region)
+    private async Task BeginRecordingAsync(CaptureSource source, CaptureRegion? region, AndroidSelection? android = null, AndroidConnection? prepared = null, CancellationToken cancellationToken = default)
     {
         if (opened is not null) { await opened.DisposeAsync(); opened = null; }
         var audio = new List<AudioSelection>();
-        if (SystemEnabled.IsChecked == true)
+        if (android is null && SystemEnabled.IsChecked == true)
         {
             if (ProcessAudio.IsChecked == true)
             { if (source.Kind != CaptureSourceKind.Window) throw new InvalidOperationException("App 声音需要选择窗口。"); audio.Add(new(AudioCaptureKind.ProcessTree, ProcessId: AudioCaptureSession.ProcessIdFromWindow(source.Handle))); }
@@ -304,9 +317,24 @@ public sealed partial class MainWindow : Window
         var path = Path.Combine(projects, title + ".frametrailproject");
         markerCount = 0; MarkerCount.Text = ""; lastWarning = ""; NoticeBadge.Visibility = Visibility.Collapsed;
         chosenSource = source; chosenRegion = region;
-        await coordinator.StartAsync(new(path, source, region, FpsPicker.SelectedIndex == 1 ? 60u : 30u,
-            SoftwareAllowed.IsChecked == true, audio, CameraEnabled.IsChecked == true ? camera : null,
-            CameraEnabled.IsChecked == true ? CameraFormatPicker.SelectedItem as CameraFormat : null, PointerEnabled.IsChecked == true));
+        await coordinator.StartAsync(new(path, source, region, prepared?.Capture.Status.FpsLimit ?? (FpsPicker.SelectedIndex == 1 ? 60u : 30u),
+            SoftwareAllowed.IsChecked == true, audio, android is null && CameraEnabled.IsChecked == true ? camera : null,
+            android is null && CameraEnabled.IsChecked == true ? CameraFormatPicker.SelectedItem as CameraFormat : null, android is null && PointerEnabled.IsChecked == true,
+            Android: android, PreparedAndroid: prepared), cancellationToken);
+    }
+    private void Android_Click(object sender, RoutedEventArgs e) { HideFlyouts(); OpenAndroid(); }
+    private void OpenAndroid() {
+        if (androidWindow is not null) { androidWindow.Activate(); return; }
+        if (sourceMode != 3) RollSource(3 - sourceMode);
+        androidWindow = new(FpsPicker.SelectedIndex == 1 ? 60u : 30u, async (chosen, connection, token) => {
+            if (busy || coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("请先结束当前录制。");
+            var info = connection.Capture.Status;
+            busy = true; ApplyInteraction();
+            try { await BeginRecordingAsync(new(CaptureSourceKind.Monitor, 0, chosen.Device.Model + " · Android USB", 0, 0, (int)info.Width, (int)info.Height, 96, 0), null, chosen, connection, token); }
+            finally { busy = false; ApplyInteraction(); }
+        });
+        androidWindow.Closed += (_, _) => androidWindow = null;
+        androidWindow.Activate();
     }
     private async void Pause_Click(object sender, RoutedEventArgs e)
     {
@@ -343,7 +371,7 @@ public sealed partial class MainWindow : Window
     {
         bool idle = coordinator.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete;
         SetPanelEnabled(SetupPanel, idle && !busy);
-        StartButton.IsEnabled = session is not null && sources.Count > 0 && !busy;
+        StartButton.IsEnabled = session is not null && (sources.Count > 0 || sourceMode == 3) && !busy;
         PauseButton.IsEnabled = !busy && coordinator.State is RecordingWorkspaceState.Recording or RecordingWorkspaceState.Paused;
         StopButton.IsEnabled = PauseButton.IsEnabled;
         MarkerButton.IsEnabled = !busy && coordinator.State == RecordingWorkspaceState.Recording;

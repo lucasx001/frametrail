@@ -47,6 +47,7 @@
       <ToggleButton x:Name="PointerEnabled" Content="记录光标与点击" IsChecked="True" Style="{StaticResource RecorderSettingToggle}" />
       <ToggleButton x:Name="ExcludeControl" Content="排除录制条与备忘录" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" Style="{StaticResource RecorderSettingToggle}" />
       <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
+      <Button Style="{StaticResource RecorderMenuButton}" Click="Android_Click" Content="Android USB 录屏…" />
       <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="打开项目…" />
       <Button x:Name="RecoverButton" Style="{StaticResource RecorderMenuButton}" Click="Recovery_Click" Content="恢复中断录制" />
       <Button x:Name="MemoMenuButton" Style="{StaticResource RecorderMenuButton}" Click="Memo_Click" Content="打开备忘录" />

@@ -1,6 +1,6 @@
-# FrameTrail project schema 1
+# FrameTrail project schemas 1 / 2
 
-状态：M0 领域模型与 M2/M3 编辑扩展已实现。更新日期：2026-10-15。
+状态：M0 领域模型与 M2/M3 编辑扩展已实现。更新日期：2026-10-16。
 
 权威实现是 `native/FrameTrail.Engine/core`；C# 的 `FrameTrail.Domain` 仅负责快照 DTO 与传输格式校验。App 必须调用 `EngineSession.ValidateProject(snapshot)` 通过原生完整语义校验后，才可提交候选修订或保存。领域测试共用 `tests/FrameTrail.Core.Tests/fixtures/project-v1.json`。
 
@@ -10,7 +10,7 @@
 
 | 字段 | 类型 | 语义 |
 |---|---|---|
-| `schemaVersion` | 整数 | 必须为 1；不使用 DogSC schema 号 |
+| `schemaVersion` | 整数 | 支持 1、2；不使用 DogSC schema 号 |
 | `projectId` | 字符串 | 稳定工程身份 |
 | `revision` | 非负 int64 | App 单调递增修订；Engine 同一 session 只接受同项目严格更新的修订 |
 | `sourceDuration` | Time | 拼接后的原始录制全时长，正值，最多 7 天 |
@@ -147,3 +147,24 @@ mask/focus/sticker 的 attachment 为 screen/canvas。screen 坐标相对裁切�
 参数实时预览通过 `ft_media_update_effects` 传递 `{revision,effects}` 编辑候选及请求代际，不允许修改媒体、时间线、声音或画布。它在现有媒体会话内校验并原子替换场景，保持 swap chain 与解码器；请求代际控制预览回退/重做，修订可回到已接受快照，不能用该入口绕过工作区的持久化修订规则。像素渲染仍在原生层执行，参数仅在编辑时更新，不作为逐帧 IPC。
 
 导入图片限 32 MB、8192 单边且最多 1600 万像素，背景视频限 2 GB、8192 单边；复制后以原生解码器探测，失败删除本次新建文件。素材存在性参与保存和重开检查；缺素材不会被静默丢弃，显式恢复流程可选择上一份可读快照。工程内预设保存到 assets/presets/saved.json，应用时保留声音设置；源素材导出同时携带视觉素材与预设。
+
+## M5 schema 2：Android 来源
+
+schema 1 的允许字段、枚举和桌面序列化保持兼容；不能在 schema 1 中写入 `primarySource` 或 `androidAudio`。schema 2 必须包含：
+
+```json
+"primarySource": {
+  "kind": "androidUsb",
+  "width": 1080,
+  "height": 2400,
+  "orientation": "locked"
+}
+```
+
+`kind` 严格为 `desktop` 或 `androidUsb`，`orientation` 严格为 `locked`，尺寸为 1–32768。Android 录制的全部主画面素材尺寸必须一致，并匹配此来源；原生实时接收进一步限制到 8192，产品协商最大边 1920。
+
+手机视频仍是逻辑主画面的 `screen` 媒体；以 `primarySource.kind` 区分其来源，不把它当作 Windows 显示器。`androidAudio` 是新增独立声音类型，与 `systemAudio`、`microphone` 分开；当前写入 48kHz / 双声道 / PCM16 WAV，持有自己的 duration 和 startOffset。Android 工程拒绝 Windows pointerEvents 与 systemAudio，避免把鼠标/loopback 冒充手机输入。Windows 麦克风可以独立存在。
+
+当前每段手机/麦克风录制共享首个关键帧的逻辑零点；手机音频按相对 PTS 裁去负时间样本，并对有界的正偏移补静音。检查点可有少量物理重叠，manifest 的有效 duration 限定逻辑边界。暂停期间不写入任何 writer，恢复时建立新的关键帧分段。恢复 manifest 自己的格式号仍为 1，其内嵌工程快照可以是 schema 2；二者不是同一个协议。
+
+`ProjectJson.UpgradeToCurrent` 可显式将旧桌面快照升级为 schema 2，保留媒体、剪辑、效果、标记、声音设置和 revision，并填充 `primarySource.kind=desktop`。打开旧工程不会强制改写格式。C# DTO 与 C++ Core 对新字段实行严格校验，原生命令序列化必须保留来源信息；共用 `project-v2-android.json` 验证往返与旧格式拒绝策略。

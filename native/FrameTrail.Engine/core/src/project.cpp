@@ -75,6 +75,7 @@ MediaKind read_kind(const std::string& value) {
     if (value == "camera") return MediaKind::camera;
     if (value == "systemAudio") return MediaKind::system_audio;
     if (value == "microphone") return MediaKind::microphone;
+    if (value == "androidAudio") return MediaKind::android_audio;
     if (value == "pointerEvents") return MediaKind::pointer_events;
     invalid("media.kind", "unsupported media kind");
 }
@@ -85,6 +86,7 @@ std::string kind_string(MediaKind value) {
     case MediaKind::system_audio: return "systemAudio";
     case MediaKind::microphone: return "microphone";
     case MediaKind::pointer_events: return "pointerEvents";
+    case MediaKind::android_audio: return "androidAudio";
     }
     invalid("media.kind", "unsupported media kind");
 }
@@ -138,10 +140,11 @@ Project parse_project(std::string_view text) {
             return true;
         };
         const auto root = Json::parse(text, callback);
-        object(root, "$", {"schemaVersion", "projectId", "revision", "sourceDuration", "media", "segments", "canvas", "effects", "markers", "export", "editor"});
+        object(root, "$", {"schemaVersion", "projectId", "revision", "sourceDuration", "media", "segments", "canvas", "effects", "markers", "export", "editor", "primarySource"});
         Project result;
         if (root.contains("editor")) result.editor_json = root["editor"].dump();
-        result.schema_version = static_cast<std::uint32_t>(integer(required(root, "schemaVersion", "$"), "schemaVersion", 1, 1));
+        result.schema_version = static_cast<std::uint32_t>(integer(required(root, "schemaVersion", "$"), "schemaVersion", 1, 2));
+        if (root.contains("primarySource")) result.primary_source_json = root["primarySource"].dump();
         result.project_id = string_value(required(root, "projectId", "$"), "projectId", 128);
         result.revision = integer(required(root, "revision", "$"), "revision", 0, (std::numeric_limits<std::int64_t>::max)());
         result.source_duration = read_time(required(root, "sourceDuration", "$"), "sourceDuration");
@@ -249,7 +252,20 @@ void validate_project(const Project& project) {
             for (const auto* key : {"systemMuted", "microphoneMuted"}) if (it.value().contains(key)) (void)boolean(it.value()[key], key);
         }
     }
-    if (project.schema_version != 1) invalid("schemaVersion", "only schema 1 is supported");
+    if (project.schema_version != 1 && project.schema_version != 2) invalid("schemaVersion", "only schemas 1 and 2 are supported");
+    bool android = false;
+    if (project.schema_version == 1 && !project.primary_source_json.empty()) invalid("primarySource", "requires schema 2");
+    if (project.schema_version == 2) {
+        if (project.primary_source_json.empty()) invalid("primarySource", "required for schema 2");
+        auto source = Json::parse(project.primary_source_json);
+        object(source,"primarySource",{"kind","width","height","orientation"});
+        auto kind=string_value(required(source,"kind","primarySource"),"primarySource.kind");
+        if (kind!="desktop" && kind!="androidUsb") invalid("primarySource.kind","unsupported source");
+        android=kind=="androidUsb";
+        integer(required(source,"width","primarySource"),"primarySource.width",1,32768);
+        integer(required(source,"height","primarySource"),"primarySource.height",1,32768);
+        if (string_value(required(source,"orientation","primarySource"),"primarySource.orientation")!="locked") invalid("primarySource.orientation","unsupported orientation");
+    }
     if (!valid_id(project.project_id)) invalid("projectId", "invalid ID");
     if (project.revision < 0) invalid("revision", "must be non-negative");
     const auto duration = normalized_ticks(project.source_duration);
@@ -259,9 +275,15 @@ void validate_project(const Project& project) {
     auto unique_id = [&](const std::string& id) {
         if (!valid_id(id) || !ids.insert(id).second) invalid("id", "invalid or duplicate global item ID");
     };
-    std::array<std::vector<std::pair<std::int64_t, std::int64_t>>, 5> track_ranges;
+    std::array<std::vector<std::pair<std::int64_t, std::int64_t>>, 6> track_ranges;
     for (const auto& media : project.media) {
         unique_id(media.id);
+        if (media.kind == MediaKind::android_audio && !android) invalid("media.kind","phone audio requires schema 2 Android source");
+        if (android) {
+            if (media.kind == MediaKind::pointer_events || media.kind == MediaKind::system_audio) invalid("media.kind","Android source cannot have Windows pointer or loopback tracks");
+            auto source=Json::parse(project.primary_source_json);
+            if (media.kind == MediaKind::screen && (media.width!=source["width"].get<uint32_t>() || media.height!=source["height"].get<uint32_t>())) invalid("media","Android dimensions must remain fixed");
+        }
         if (!is_project_relative_path(media.path)) invalid("media.path", "expected safe project-relative Windows path with forward slashes");
         const auto length = normalized_ticks(media.duration);
         const auto start = normalized_ticks(media.start_offset);
@@ -273,7 +295,7 @@ void validate_project(const Project& project) {
         if (media.kind == MediaKind::screen || media.kind == MediaKind::camera) {
             if (media.width == 0 || media.height == 0 || media.width > 32768 || media.height > 32768)
                 invalid("media", "video needs dimensions in 1..32768");
-        } else if (media.kind == MediaKind::system_audio || media.kind == MediaKind::microphone) {
+        } else if (media.kind == MediaKind::system_audio || media.kind == MediaKind::microphone || media.kind == MediaKind::android_audio) {
             if (media.sample_rate < 8000 || media.sample_rate > 384000 || media.channels == 0 || media.channels > 32)
                 invalid("media", "audio needs valid sample rate and channel count");
         }
@@ -362,6 +384,7 @@ std::string serialize_project(const Project& project) {
     const auto& output = project.export_settings;
     result["export"] = {{"width", output.width}, {"height", output.height}, {"fps", ratio_json(output.fps)},
         {"videoCodec", output.video_codec}, {"audioCodec", output.audio_codec}, {"container", output.container}};
+    if (!project.primary_source_json.empty()) result["primarySource"] = Json::parse(project.primary_source_json);
     if (project.editor_json != "{}") result["editor"] = Json::parse(project.editor_json);
     auto text = result.dump(2);
     if (text.size() > 16 * 1024 * 1024) invalid("$", "serialized JSON exceeds 16 MiB");

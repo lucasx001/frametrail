@@ -53,7 +53,9 @@ public sealed partial class MainWindow
             RecorderRoot.RequestedTheme = ElementTheme.Light;
             RollSource(1); if (SourceModeLabel.Text != "窗口") throw new InvalidOperationException("Source wheel did not advance to window.");
             RollSource(1); if (SourceModeLabel.Text != "区域") throw new InvalidOperationException("Source wheel did not advance to region.");
-            RollSource(1); checks.Add("Source wheel cycles display, window and region.");
+            RollSource(1); if (SourceModeLabel.Text != "手机") throw new InvalidOperationException("Source wheel did not advance to Android.");
+            RollSource(1); if (SourceModeLabel.Text != "显示器") throw new InvalidOperationException("Source wheel did not return to display.");
+            checks.Add("Source wheel cycles display, window, region and Android.");
             MicrophoneFlyout.ShowAt(MicrophoneButton); await Task.Delay(200);
             if (microphones.Count > 0)
             {
@@ -130,7 +132,7 @@ public sealed partial class MainWindow
         }
         finally { border.Child = null; host.Close(); flyout.Content = content; Activate(); }
     }
-    private static async Task SaveUiFrameAsync(FrameworkElement element, string path)
+    internal static async Task SaveUiFrameAsync(FrameworkElement element, string path)
     {
         element.UpdateLayout(); var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(element);
         if (bitmap.PixelWidth == 0 || bitmap.PixelHeight == 0) throw new InvalidOperationException("WinUI returned an empty validation frame.");

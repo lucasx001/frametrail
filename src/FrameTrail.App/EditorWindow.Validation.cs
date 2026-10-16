@@ -57,7 +57,7 @@ public sealed partial class EditorWindow
             if (preview.Session!.Status.RenderedTicks != last) throw new InvalidOperationException("Stale seek overwrote current seek.");
             checks.Add("Native decoder renders actual media and rejects superseded seek generations.");
             position = last; var loadedAt = DateTime.UtcNow;
-            while (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio) && preparedAudio is null && DateTime.UtcNow - loadedAt < TimeSpan.FromSeconds(30)) await Task.Delay(100);
+            while (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio) && preparedAudio is null && DateTime.UtcNow - loadedAt < TimeSpan.FromSeconds(30)) await Task.Delay(100);
             await SeekAsync(0); await StartPlaybackAsync(); int timingBefore = renderedFrames;
             var timingClock = System.Diagnostics.Stopwatch.StartNew();
             await Task.Delay(TimeSpan.FromSeconds(Math.Clamp(editor.Timeline.Duration / 10_000_000.0 - 0.05, 0.01, 2)));

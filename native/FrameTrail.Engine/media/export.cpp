@@ -73,7 +73,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         if (CompareStringOrdinal(path.c_str(), -1, root.c_str(), -1, TRUE) == CSTR_EQUAL) throw ValidationError("export", "choose an output outside the project directory");
         auto next = path.parent_path(); if (next == path) break; path = next;
     }
-    const bool has_audio = std::any_of(project.media.begin(), project.media.end(), [](auto& m) { return m.kind == MediaKind::microphone || m.kind == MediaKind::system_audio; });
+    const bool has_audio = std::any_of(project.media.begin(), project.media.end(), [](auto& m) { return m.kind == MediaKind::microphone || m.kind == MediaKind::system_audio || m.kind == MediaKind::android_audio; });
     if (audio_only && !has_audio) throw ValidationError("audio", "project has no recorded audio track");
     auto id = job_id(); const auto temp = target.parent_path() / (L".frametrail-" + id + L".mp4"), wav = target.parent_path() / (L".frametrail-" + id + L".wav");
     Cleanup cleanup{{temp, wav}};

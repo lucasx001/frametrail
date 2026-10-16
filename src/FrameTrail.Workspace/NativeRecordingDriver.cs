@@ -6,10 +6,16 @@ using FrameTrail.Interop;
 namespace FrameTrail.Workspace;
 
 /// <summary>Acquires all requested tracks transactionally. First valid screen QPC is the epoch of every auxiliary source.</summary>
-public sealed class NativeRecordingDriver : IRecordingDriver
+public sealed class NativeRecordingDriver : IRecordingDriver, IRecordingRunDriver
 {
+    private AndroidConnection? android;
+    public async Task EndRunAsync() { var current = android; android = null; if (current is not null) await current.DisposeAsync(); }
     public async Task<IRecordingSegment> StartAsync(RecordingPlan plan, SegmentPaths paths, CancellationToken cancellationToken)
     {
+        if (plan.Android is not null) {
+            android ??= plan.PreparedAndroid ?? await AndroidConnection.ConnectAsync(new AndroidRuntime(), plan.Android, plan.Fps, cancellationToken);
+            return await new AndroidRecordingDriver(android.Capture).StartAsync(plan, paths, cancellationToken);
+        }
         CaptureSession? screen = null; CameraCaptureSession? camera = null; PointerCaptureSession? pointer = null;
         var audio = new List<(AudioSelection Selection, AudioCaptureSession Session, string Path)>();
         try

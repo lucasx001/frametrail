@@ -3,6 +3,8 @@ using FrameTrail.Domain;
 using FrameTrail.Interop;
 using FrameTrail.Workspace;
 
+if (args.Length >= 4 && args[0] == "--m5") return await AndroidValidation.RunAsync(args[1], args[2], args[3], args.Contains("--crash"));
+
 if (args.Length >= 3 && args[0] == "--m2") return await M2Validation.RunAsync(args[1], args[2], args.Contains("--matrix"));
 if (args.Length == 3 && args[0] == "--m3") return await M3Validation.RunAsync(args[1], args[2]);
 if (args.Length == 2 && args[0] == "--camera-continuity") return await CameraContinuityValidation.RunAsync(args[1]);

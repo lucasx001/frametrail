@@ -131,7 +131,7 @@ public sealed partial class EditorWindow : Window
             var old = new DirectoryInfo(cache).EnumerateFiles("editor-*").Where(f => !f.Name.StartsWith(prefix, StringComparison.Ordinal) && !string.Equals(f.FullName, preparedAudio, StringComparison.OrdinalIgnoreCase)).OrderByDescending(f => f.LastWriteTimeUtc).Skip(160);
             foreach (var file in old) { token.ThrowIfCancellationRequested(); try { file.Delete(); } catch (IOException) { } }
             using var media = new MediaSession(snapshot, editor.DirectoryPath); using var registration = token.Register(media.Cancel);
-            var hasAudio = snapshot.Media.Any(m => m.Kind is MediaKind.SystemAudio or MediaKind.Microphone);
+            var hasAudio = snapshot.Media.Any(m => m.Kind is MediaKind.SystemAudio or MediaKind.Microphone or MediaKind.AndroidAudio);
             if (hasAudio && prepareAudio) {
                 var wav = Path.Combine(cache, prefix + "mix.wav"); media.PrepareAudio(wav); token.ThrowIfCancellationRequested();
                 var peaks = await ReadWaveformAsync(wav, token);
@@ -184,6 +184,7 @@ public sealed partial class EditorWindow : Window
         CameraVisible.IsChecked = p.Canvas.Camera.Enabled; CameraVisible.IsEnabled = p.Media.Any(m => m.Kind == MediaKind.Camera); CameraMirror.IsChecked = p.Canvas.Camera.Mirror; CameraSize.Value = p.Canvas.Camera.Width * 100;
         CameraX.Value = p.Canvas.Camera.X * 100; CameraY.Value = p.Canvas.Camera.Y * 100;
         CropEnabled.IsChecked = settings.Crop is not null; CropX.Value = (settings.Crop?.X ?? 0) * 100; CropY.Value = (settings.Crop?.Y ?? 0) * 100; CropWidth.Value = (settings.Crop?.Width ?? 1) * 100; CropHeight.Value = (settings.Crop?.Height ?? 1) * 100;
+        PrimaryAudioLabel.Text = ClipPrimaryAudioLabel.Text = p.PrimarySource?.Kind == "androidUsb" ? "手机内部音频" : "系统声音";
         SystemGain.Value = settings.SystemGain * 100; MicGain.Value = settings.MicrophoneGain * 100; SystemMute.IsChecked = settings.SystemMuted; MicMute.IsChecked = settings.MicrophoneMuted;
         var level = selected is not null && settings.ClipAudio.TryGetValue(selected, out var value) ? value : new AudioLevel();
         ClipSystemGain.Value = level.SystemGain * 100; ClipMicGain.Value = level.MicrophoneGain * 100; ClipSystemMute.IsChecked = level.SystemMuted; ClipMicMute.IsChecked = level.MicrophoneMuted;
@@ -207,7 +208,7 @@ public sealed partial class EditorWindow : Window
     {
         if (editor.IsExporting || preview.Session is null) return;
         if (position >= editor.Timeline.Duration - 1) position = 0;
-        if (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio)) {
+        if (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio)) {
             if (preparedAudio is null) { ShowNotice("正在准备声音", "混音缓存完成后即可播放带声音的预览。"); return; }
             await Task.Run(() => preview.Session.PlayAudio(preparedAudio, position));
         }

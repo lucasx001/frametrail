@@ -10,7 +10,7 @@ public sealed class UnsupportedProjectVersionException(int version)
 
 public static class ProjectJson
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
     public const int MaximumJsonBytes = 16 * 1024 * 1024;
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -31,7 +31,7 @@ public static class ProjectJson
             using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
             RejectDuplicateKeys(document.RootElement);
             if (document.RootElement.ValueKind == JsonValueKind.Object &&
-                document.RootElement.TryGetProperty("schemaVersion", out var schema) && schema.ValueKind == JsonValueKind.Number && schema.TryGetInt32(out var version) && version != SchemaVersion)
+                document.RootElement.TryGetProperty("schemaVersion", out var schema) && schema.ValueKind == JsonValueKind.Number && schema.TryGetInt32(out var version) && version != 1 && version != SchemaVersion)
                 throw new UnsupportedProjectVersionException(version);
             var snapshot = JsonSerializer.Deserialize<ProjectSnapshot>(json, Options)
                 ?? throw new ProjectFormatException("Project root must be an object.");
@@ -39,6 +39,13 @@ public static class ProjectJson
             return snapshot;
         }
         catch (JsonException error) { throw new ProjectFormatException("Invalid project JSON: " + error.Message, error); }
+    }
+
+    public static ProjectSnapshot UpgradeToCurrent(ProjectSnapshot snapshot) {
+        ValidateProtocol(snapshot);
+        if (snapshot.SchemaVersion == SchemaVersion) return snapshot;
+        var video = snapshot.Media.First(m => m.Kind == MediaKind.Screen);
+        return snapshot with { SchemaVersion = SchemaVersion, PrimarySource = new() { Width = video.Width, Height = video.Height } };
     }
 
     public static string Serialize(ProjectSnapshot snapshot)
@@ -54,12 +61,25 @@ public static class ProjectJson
     // overlap, media coverage, mapping, layout) is Core::validate_project.
     public static void ValidateProtocol(ProjectSnapshot snapshot)
     {
-        if (snapshot.SchemaVersion != SchemaVersion) throw new ProjectFormatException("Only project schema 1 is supported.");
+        if (snapshot.Media is null || snapshot.Segments is null || snapshot.Effects is null || snapshot.Markers is null || snapshot.Canvas is null || snapshot.Export is null)
+            throw new ProjectFormatException("Required collection or settings cannot be null.");
+        if (snapshot.SchemaVersion is not (1 or 2)) throw new ProjectFormatException("Only project schemas 1 and 2 are supported.");
+        if (snapshot.SchemaVersion == 1 && (snapshot.PrimarySource is not null || snapshot.Media.Any(m => m?.Kind == MediaKind.AndroidAudio)))
+            throw new ProjectFormatException("Android fields require schema 2.");
+        if (snapshot.SchemaVersion == 2) {
+            var source = snapshot.PrimarySource ?? throw new ProjectFormatException("Schema 2 requires primarySource.");
+            if (source.Kind is not ("desktop" or "androidUsb") || source.Orientation != "locked" || source.Width is 0 or > 32768 || source.Height is 0 or > 32768)
+                throw new ProjectFormatException("Invalid primary source.");
+            if (source.Kind != "androidUsb" && snapshot.Media.Any(m => m?.Kind == MediaKind.AndroidAudio)) throw new ProjectFormatException("Phone audio requires an Android source.");
+            if (source.Kind == "androidUsb") {
+                if (snapshot.Media.Any(m => m?.Kind is MediaKind.PointerEvents or MediaKind.SystemAudio)) throw new ProjectFormatException("Android capture cannot contain Windows pointer or loopback tracks.");
+                if (snapshot.Media.Any(m => m?.Kind == MediaKind.Screen && (m.Width != source.Width || m.Height != source.Height))) throw new ProjectFormatException("Android dimensions must remain fixed throughout a recording.");
+            }
+        }
         if (!ValidId(snapshot.ProjectId) || snapshot.Revision < 0) throw new ProjectFormatException("Invalid project ID or revision.");
         ValidateTime(snapshot.SourceDuration);
         if (snapshot.SourceDuration.Ticks <= 0) throw new ProjectFormatException("Source duration must be positive.");
-        if (snapshot.Media is null || snapshot.Segments is null || snapshot.Effects is null || snapshot.Markers is null || snapshot.Canvas is null || snapshot.Export is null)
-            throw new ProjectFormatException("Required collection or settings cannot be null.");
+
         if (snapshot.Media.Count is 0 or > 100_000 || snapshot.Segments.Count is 0 or > 100_000 || snapshot.Effects.Count > 100_000)
             throw new ProjectFormatException("Invalid collection count.");
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -166,7 +186,7 @@ public static class ProjectJson
             ? reader.GetString() switch
             {
                 "screen" => MediaKind.Screen, "camera" => MediaKind.Camera, "systemAudio" => MediaKind.SystemAudio,
-                "microphone" => MediaKind.Microphone, "pointerEvents" => MediaKind.PointerEvents,
+                "microphone" => MediaKind.Microphone, "pointerEvents" => MediaKind.PointerEvents, "androidAudio" => MediaKind.AndroidAudio,
                 _ => throw new JsonException("Unknown or noncanonical media kind.")
             }
             : throw new JsonException("Media kind must be a string.");
@@ -174,7 +194,7 @@ public static class ProjectJson
         public override void Write(Utf8JsonWriter writer, MediaKind value, JsonSerializerOptions options) => writer.WriteStringValue(value switch
         {
             MediaKind.Screen => "screen", MediaKind.Camera => "camera", MediaKind.SystemAudio => "systemAudio",
-            MediaKind.Microphone => "microphone", MediaKind.PointerEvents => "pointerEvents", _ => throw new JsonException("Unknown media kind.")
+            MediaKind.Microphone => "microphone", MediaKind.PointerEvents => "pointerEvents", MediaKind.AndroidAudio => "androidAudio", _ => throw new JsonException("Unknown media kind.")
         });
     }
 }
