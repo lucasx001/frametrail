@@ -82,6 +82,8 @@ struct Renderer {
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> images;
     std::filesystem::path root;
     uint32_t width{}, height{}, software{}, fallbacks{};
+    uint32_t viewport_width{}, viewport_height{};
+    bool preview_4k{};
     Json cached_settings = Json::object(); const Project* settings_source{};
     Renderer(const std::filesystem::path& path);
     ~Renderer();

@@ -108,6 +108,7 @@ public sealed partial class MainWindow : Window
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m3-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m4-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--mockup-self-test");
+                    if (testIndex < 0) testIndex = Array.IndexOf(args, "--fullscreen-self-test");
                     PresentEditor(opened, testIndex >= 0 && args.Length > testIndex + 1 ? args[testIndex + 1] : null);
                 }); return;
             }

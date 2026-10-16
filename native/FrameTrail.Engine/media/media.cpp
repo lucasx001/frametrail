@@ -1,6 +1,8 @@
 #include "internal.hpp"
 #include <mmsystem.h>
 #include <array>
+#include <algorithm>
+#include <cmath>
 
 using namespace frametrail::media;
 namespace {
@@ -56,6 +58,12 @@ int32_t __cdecl ft_media_swapchain(ft_media_handle handle, void** output) {
 int32_t __cdecl ft_media_resize(ft_media_handle handle, uint32_t width, uint32_t height, double sx, double sy) {
     return protect([&] { auto s = get(handle); std::scoped_lock lock(s->mutex); s->gpu().resize(width, height, sx, sy); });
 }
+int32_t __cdecl ft_media_preview_quality(ft_media_handle handle, uint32_t quality) {
+    return protect([&] {
+        if (quality > 1) winrt::throw_hresult(E_INVALIDARG);
+        auto s = get(handle); std::scoped_lock lock(s->mutex); s->gpu().preview_4k = quality == 1;
+    });
+}
 int32_t __cdecl ft_media_generation(ft_media_handle handle, uint64_t generation) {
     return protect([&] { auto s = get(handle); auto old = s->generation.load(); while (generation > old && !s->generation.compare_exchange_weak(old, generation)) { } });
 }
@@ -99,8 +107,18 @@ int32_t __cdecl ft_media_render(ft_media_handle handle, int64_t ticks, uint64_t 
         std::scoped_lock lock(s->mutex); s->check_cancel(); if (generation < s->generation) winrt::throw_hresult(cancelled_hr);
         auto scene = s->evaluator.evaluate(ticks); if (!scene) winrt::throw_hresult(E_INVALIDARG);
         auto& gpu = s->gpu();
-        // Preview caps raster resolution without altering authored output settings.
-        const double scale = std::min({1.0, 1920.0 / scene->width, 1080.0 / scene->height}); auto w = static_cast<uint32_t>(std::max(2.0, scene->width * scale)), h = static_cast<uint32_t>(std::max(2.0, scene->height * scale));
+        // Rasterize vector chrome/text at display resolution, rather than stretching
+        // an authored low-resolution canvas. Export uses its own explicit dimensions.
+        const double cap_w = scene->width >= scene->height ? 3840.0 : 2160.0;
+        const double cap_h = scene->width >= scene->height ? 2160.0 : 3840.0;
+        double scale;
+        if (gpu.preview_4k) scale = std::min(cap_w / scene->width, cap_h / scene->height);
+        else if (gpu.viewport_width && gpu.viewport_height)
+            scale = std::min({gpu.viewport_width / double(scene->width), gpu.viewport_height / double(scene->height), cap_w / scene->width, cap_h / scene->height});
+        else // Unattached thumbnail/analysis sessions keep their authored resolution.
+            scale = std::min({1.0, 1920.0 / scene->width, 1080.0 / scene->height});
+        auto w = static_cast<uint32_t>(std::max(2.0, std::round(scene->width * scale)));
+        auto h = static_cast<uint32_t>(std::max(2.0, std::round(scene->height * scale)));
         gpu.render(s->project, *scene, w, h);
         if (generation < s->generation) winrt::throw_hresult(cancelled_hr);
         if (png && *png) write_png(gpu.device.Get(), gpu.context.Get(), gpu.output.Get(), png);

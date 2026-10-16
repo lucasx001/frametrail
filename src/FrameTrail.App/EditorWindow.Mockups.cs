@@ -39,7 +39,7 @@ public sealed partial class EditorWindow
         {
             var row = new Grid { ColumnSpacing = 10 }; row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(62) }); row.ColumnDefinitions.Add(new ColumnDefinition());
             var caption = new TextBlock { Text = label, FontSize = 11, VerticalAlignment = VerticalAlignment.Center }; caption.SetValue(AutomationProperties.AccessibilityViewProperty, Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw); row.Children.Add(caption);
-            field.Height = field.MinHeight = 30; field.FontSize = 11; field.Padding = new Thickness(10, 0, 10, 0); field.CornerRadius = new CornerRadius(8); field.BorderThickness = new Thickness(0.75);
+            field.Height = field.MinHeight = 30; field.FontSize = 11; field.Padding = new Thickness(10, 6, 10, 6); field.CornerRadius = new CornerRadius(8); field.BorderThickness = new Thickness(0.75);
             AutomationProperties.SetName(field, label); AutomationProperties.SetAutomationId(field, id); Grid.SetColumn(field, 1); row.Children.Add(field);
             field.TextChanged += (_, _) => QueueMockupChange();
             field.LostFocus += async (_, _) => { if (!loadingVisuals) { field.Text = field.Text.Trim(); await SafeAsync(FlushVisualChangesAsync); } };

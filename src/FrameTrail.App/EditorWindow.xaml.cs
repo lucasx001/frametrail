@@ -79,9 +79,11 @@ public sealed partial class EditorWindow : Window
             bool initialized = false; working = true;
             await SafeAsync(async () => { await ReloadAsync(); initialized = true; });
             working = false; UpdateState();
+            PlayButton.Focus(FocusState.Programmatic);
             startup.TrySetResult(initialized);
             if (this.validationDirectory is not null) {
-                if (Environment.GetCommandLineArgs().Contains("--mockup-self-test")) await RunMockupValidationAsync(this.validationDirectory);
+                if (Environment.GetCommandLineArgs().Contains("--fullscreen-self-test")) await RunFullscreenValidationAsync(this.validationDirectory);
+                else if (Environment.GetCommandLineArgs().Contains("--mockup-self-test")) await RunMockupValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--m4-self-test")) await RunM4ValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--m3-self-test")) await RunM3ValidationAsync(this.validationDirectory);
                 else await RunValidationAsync(this.validationDirectory);
@@ -269,7 +271,7 @@ public sealed partial class EditorWindow : Window
         } finally { loadingInspector = false; }
         RefreshVisualInspector();
     }
-    private void ShowNotice(string title, string message, InfoBarSeverity severity = InfoBarSeverity.Informational) { Notice.Title = title; Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true; }
+    private void ShowNotice(string title, string message, InfoBarSeverity severity = InfoBarSeverity.Informational) { if (previewFullscreen) SetPreviewFullscreen(false); Notice.Title = title; Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true; }
     private static string Format(long ticks) => TimeSpan.FromTicks(ticks).ToString(ticks >= TimeSpan.TicksPerHour ? @"h\:mm\:ss\.ff" : @"mm\:ss\.ff");
     private void UpdateClock() { ClockLabel.Text = $"{Format(position)} / {Format(editor.Timeline.Duration)}"; timeline.Position(position); QueueMockupPoster(); }
     private async Task SeekAsync(long ticks)
@@ -371,7 +373,7 @@ public sealed partial class EditorWindow : Window
     private void TimelineZoom_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) { if (timeline is not null) timeline.PixelsPerSecond = e.NewValue; }
     private void CanvasZoom_SelectionChanged(object sender, SelectionChangedEventArgs e) => SizePreview();
     private void PreviewContainer_SizeChanged(object sender, SizeChangedEventArgs e) => SizePreview();
-    private void SizePreview() { if (PreviewMount is null || PreviewContainer is null || CanvasZoom is null) return; double zoom = CanvasZoom.SelectedIndex switch { 1 => 1.25, 2 => 1.5, 3 => 2, _ => 1 }; double ratio = (double)editor.Snapshot.Canvas.Width / editor.Snapshot.Canvas.Height; double width = Math.Max(2, Math.Min(PreviewContainer.ActualWidth, PreviewContainer.ActualHeight * ratio)); CanvasScroll.Width = width; CanvasScroll.Height = width / ratio; PreviewMount.Width = width * zoom; PreviewMount.Height = width / ratio * zoom; }
+    private void SizePreview() { if (PreviewMount is null || PreviewContainer is null || CanvasZoom is null) return; double zoom = previewFullscreen ? 1 : CanvasZoom.SelectedIndex switch { 1 => 1.25, 2 => 1.5, 3 => 2, _ => 1 }; double ratio = (double)editor.Snapshot.Canvas.Width / editor.Snapshot.Canvas.Height; double width = Math.Max(2, Math.Min(PreviewContainer.ActualWidth, PreviewContainer.ActualHeight * ratio)); CanvasScroll.Width = width; CanvasScroll.Height = width / ratio; PreviewMount.Width = width * zoom; PreviewMount.Height = width / ratio * zoom; }
     private async void RetrySave_Click(object sender, RoutedEventArgs e) => await SafeAsync(editor.FlushAsync);
     private void Sources_Click(object sender, RoutedEventArgs e) { try { Process.Start(new ProcessStartInfo("explorer.exe", editor.DirectoryPath) { UseShellExecute = true }); } catch (Exception error) { ShowNotice("无法打开素材目录", error.Message); } }
     internal void ReportProjectError(string title, string message) => ShowNotice(title, message, InfoBarSeverity.Error);
@@ -414,8 +416,12 @@ public sealed partial class EditorWindow : Window
     }
     private async void Root_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key == VirtualKey.F11 || (previewFullscreen && e.Key == VirtualKey.Escape)) {
+            e.Handled = true; await SafeAsync(TogglePreviewFullscreenAsync); return;
+        }
         var source = e.OriginalSource as DependencyObject;
         if (InputAncestor<TextBox>(source) is not null || InputAncestor<NumberBox>(source) is not null || InputAncestor<Slider>(source) is not null || InputAncestor<ToggleButton>(source) is not null || InputAncestor<ComboBox>(source) is not null || working || switchingProjects || showingDeleteConfirmation || editor.IsExporting || showingExport) return;
+        if (previewFullscreen && e.Key is not (VirtualKey.Space or VirtualKey.Left or VirtualKey.Right)) return;
         bool control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
         if (control && e.Key == VirtualKey.Z) { e.Handled = true; await PerformAsync(editor.UndoAsync); }
         else if (control && e.Key == VirtualKey.Y) { e.Handled = true; await PerformAsync(editor.RedoAsync); }

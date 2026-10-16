@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using FrameTrail.Interop;
 
 namespace FrameTrail.App;
 
@@ -186,6 +187,17 @@ public sealed partial class EditorWindow
     private void PreviewOptions_Click(object sender, RoutedEventArgs e)
     {
         var menu = new MenuFlyout(); foreach (var (label, index) in new[] { ("适合窗口", 0), ("125%", 1), ("150%", 2), ("200%", 3) }) { int choice = index; var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = CanvasZoom.SelectedIndex == choice }; item.Click += (_, _) => CanvasZoom.SelectedIndex = choice; menu.Items.Add(item); }
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var qualityMenu = new MenuFlyoutSubItem { Text = "预览清晰度" };
+        foreach (var (label, quality) in new[] { ("自动 · 匹配屏幕", PreviewQuality.Automatic), ("4K · 高清预览", PreviewQuality.UltraHd) }) {
+            var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = preview.Quality == quality };
+            item.Click += async (_, _) => {
+                try { await preview.SetQualityAsync(quality, position); }
+                catch (Exception error) { ShowNotice("预览清晰度切换失败", error.Message, InfoBarSeverity.Error); }
+            };
+            qualityMenu.Items.Add(item);
+        }
+        menu.Items.Add(qualityMenu);
         menu.Items.Add(new MenuFlyoutSeparator()); var reload = new MenuFlyoutItem { Text = "重新加载预览" }; reload.Click += ReloadPreview_Click; menu.Items.Add(reload); menu.ShowAt((FrameworkElement)sender);
     }
 }

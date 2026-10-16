@@ -26,6 +26,7 @@ void Renderer::resize(uint32_t w, uint32_t h, double sx, double sy) {
     d2->SetTarget(nullptr); FT_MEDIA_CHECK(swapchain->ResizeBuffers(2, w, h, DXGI_FORMAT_B8G8R8A8_UNORM, 0));
     ComPtr<IDXGISwapChain2> chain; FT_MEDIA_CHECK(swapchain.As(&chain)); DXGI_MATRIX_3X2_F matrix{static_cast<float>(1 / sx), 0, 0, static_cast<float>(1 / sy), 0, 0};
     FT_MEDIA_CHECK(chain->SetMatrixTransform(&matrix));
+    viewport_width = w; viewport_height = h;
 }
 ComPtr<ID2D1Bitmap1> Renderer::bitmap(ID3D11Texture2D* texture, bool target, bool alpha) {
     ComPtr<IDXGISurface> surface; FT_MEDIA_CHECK(texture->QueryInterface(IID_PPV_ARGS(&surface))); ComPtr<ID2D1Bitmap1> result;

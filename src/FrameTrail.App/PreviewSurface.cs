@@ -17,6 +17,7 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
     private ulong generation;
     private bool disposed;
     internal MediaSession? Session => media;
+    internal PreviewQuality Quality { get; private set; }
     internal event EventHandler<Exception>? Failed;
     internal PreviewSurface()
     {
@@ -30,11 +31,27 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
         var created = await Task.Run(() => new MediaSession(snapshot, directory));
         if (disposed) { created.Dispose(); return; }
         nint pointer = 0;
-        try { pointer = await Task.Run(created.AcquireSwapChain); this.As<ISwapChainPanelNative>().SetSwapChain(pointer); media = created; created.SetGeneration(generation); await ResizeAsync(); }
+        try { pointer = await Task.Run(created.AcquireSwapChain); this.As<ISwapChainPanelNative>().SetSwapChain(pointer); media = created; created.SetGeneration(generation); created.SetPreviewQuality(Quality); await ResizeAsync(); }
         catch { created.Dispose(); throw; }
         finally { if (pointer != 0) Marshal.Release(pointer); }
     }
     internal void InvalidateRequests() { generation++; media?.SetGeneration(generation); }
+    internal async Task SetQualityAsync(PreviewQuality quality, long ticks)
+    {
+        Quality = quality;
+        var current = media; if (current is null || disposed) return;
+        InvalidateRequests(); var request = generation;
+        await renderGate.WaitAsync();
+        try {
+            if (ReferenceEquals(media, current)) {
+                var selected = Quality;
+                await Task.Run(() => current.SetPreviewQuality(selected));
+                if (request == generation) await Task.Run(() => current.Render(ticks, request));
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally { renderGate.Release(); }
+    }
     internal async Task UpdateEffectsAsync(ProjectSnapshot snapshot, long ticks)
     {
         var current = media; if (current is null || disposed) return;
@@ -66,7 +83,7 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
                 await Task.Run(() => { current.UpdateProject(snapshot, request); current.Render(ticks, request); });
         } finally { renderGate.Release(); }
     }
-    private async Task ResizeAsync()
+    internal async Task ResizeAsync()
     {
         var current = media; if (current is null || disposed || ActualWidth < 1 || ActualHeight < 1) return;
         var sx = CompositionScaleX; var sy = CompositionScaleY;

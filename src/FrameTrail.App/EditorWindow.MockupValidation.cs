@@ -46,6 +46,9 @@ public sealed partial class EditorWindow
                 if (ProjectJson.Serialize(editor.Snapshot with { Revision = 0 }) != before) throw new IOException("Mockup knob undo changed unrelated settings.");
             } finally { Marshal.Release(chain); }
             checks.Add("Knob updates hot-preview on the existing swap chain, commit one revision, and undo exactly.");
+            // A reused fixture can already contain the target title. Ensure this
+            // assertion exercises a real text edit rather than an unchanged value.
+            if (frameTitle.Text == "FrameTrail 演示窗口") { frameTitle.Text = "原始窗口"; await FlushVisualChangesAsync(); }
             frameTitle.Focus(FocusState.Programmatic); frameTitle.Text = "FrameTrail 演示窗口"; await Task.Delay(520);
             if (!visualTransaction || editor.Preview?.Editor?.FrameTitle != frameTitle.Text) throw new IOException("Title did not preview during its focus session.");
             await FlushVisualChangesAsync(); frameScale.Focus(FocusState.Programmatic);
@@ -104,7 +107,8 @@ public sealed partial class EditorWindow
             {
                 string actual = Path.Combine(directory, name + "-live.png"), expected = Path.Combine(directory, name + "-expected.png");
                 await preview.RenderAsync(position, true, actual);
-                await Task.Run(() => { using var media = new MediaSession(snapshot, editor.DirectoryPath); media.Render(position, png: expected); });
+                var size = await Task.Run(() => MediaSession.ProbeVisual(actual, false));
+                await Task.Run(() => { using var media = new MediaSession(snapshot, editor.DirectoryPath); media.Resize(size.Width, size.Height); media.Render(position, png: expected); });
                 var pixels = await File.ReadAllBytesAsync(actual);
                 if (!pixels.SequenceEqual(await File.ReadAllBytesAsync(expected))) throw new IOException("Attached preview differs from authored settings: " + name);
                 if (!ReferenceEquals(session, preview.Session)) throw new IOException("Mockup edit replaced the media session.");

@@ -18,6 +18,8 @@ FTM_API void __cdecl ft_media_destroy(ft_media_handle handle);
 // Returns an AddRef'd IDXGISwapChain1. Caller releases the COM reference.
 FTM_API int32_t __cdecl ft_media_swapchain(ft_media_handle handle, void** swapchain);
 FTM_API int32_t __cdecl ft_media_resize(ft_media_handle handle, uint32_t width, uint32_t height, double scale_x, double scale_y);
+// Preview-only quality: 0 matches physical viewport pixels, 1 renders within 4K UHD.
+FTM_API int32_t __cdecl ft_media_preview_quality(ft_media_handle handle, uint32_t quality);
 FTM_API int32_t __cdecl ft_media_generation(ft_media_handle handle, uint64_t generation);
 // Low-frequency authored effect edits only; preserves decoder/device/swapchain.
 FTM_API int32_t __cdecl ft_media_update_effects(ft_media_handle handle, const char* json, uint32_t length, uint64_t generation);

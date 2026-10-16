@@ -6,6 +6,8 @@ using FrameTrail.Domain;
 
 namespace FrameTrail.Interop;
 
+public enum PreviewQuality : uint { Automatic, UltraHd }
+
 internal sealed class MediaHandle : SafeHandleZeroOrMinusOneIsInvalid
 {
     internal MediaHandle(ulong value) : base(true) => SetHandle(checked((nint)value));
@@ -29,6 +31,7 @@ internal static class MediaNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_media_destroy(ulong handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_swapchain(MediaHandle handle, out nint swapchain);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_resize(MediaHandle handle, uint width, uint height, double sx, double sy);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_preview_quality(MediaHandle handle, PreviewQuality quality);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_generation(MediaHandle handle, ulong generation);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_update_effects(MediaHandle handle, byte[] json, uint length, ulong generation);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_update_project(MediaHandle handle, byte[] json, uint length, ulong generation);
@@ -63,6 +66,7 @@ public sealed class MediaSession : IDisposable
     }
     public nint AcquireSwapChain() { MediaNative.Check(MediaNative.ft_media_swapchain(handle, out var pointer)); return pointer; }
     public void Resize(uint width, uint height, double sx = 1, double sy = 1) => MediaNative.Check(MediaNative.ft_media_resize(handle, width, height, sx, sy));
+    public void SetPreviewQuality(PreviewQuality quality) => MediaNative.Check(MediaNative.ft_media_preview_quality(handle, quality));
     public void SetGeneration(ulong value) => MediaNative.Check(MediaNative.ft_media_generation(handle, value));
     /// <summary>Replace effects at an edit boundary without recreating native media resources.</summary>
     public void UpdateEffects(ProjectSnapshot snapshot, ulong generation)
