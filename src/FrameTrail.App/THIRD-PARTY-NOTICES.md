@@ -1,5 +1,9 @@
 # Third-party notices
 
+## Redistributed runtime dependencies
+
+Self-contained candidates include the Microsoft .NET runtime and Windows App SDK. Their original notices are copied to `Licenses/dotnet-LICENSE.txt`, `Licenses/dotnet-NOTICES.txt` and `Licenses/WindowsAppSDK-NOTICE.txt` during packaging. The native JSON parser is nlohmann/json (MIT); its original license is included at `Licenses/nlohmann-json-MIT.txt`. The candidate's external NuGet lock file and SHA-256 payload inventory record the exact dependency versions and files. Development builds use the same dependency lock files in the repository.
+
 The recorder and editor layouts, colour tokens and pictogram geometry are adapted from DogSC, https://github.com/laogou717/dogsc, specifically RecorderSetupSurface.swift, RecorderSurfaceStyle.swift, RecorderViews.swift, RecorderPopover.swift, RecorderPanelInteraction.swift, EditorView.swift, EditorDesignTokens.swift, EditorInspectorPalette.swift, EditorInspectorTabBar.swift, EditorBarSlider.swift, EditorTimelineLayout.swift, EditorExportViews.swift, AppSettingsView.swift and AppLineIcon.swift. The WinUI implementation is maintained in FrameTrail.
 
 MIT License

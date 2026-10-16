@@ -16,6 +16,20 @@ jobs:
       - name: Build native engine, WinUI app, and run CPU tests
         shell: pwsh
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore
+      - name: Build and verify unsigned distribution candidate
+        shell: powershell
+        run: |
+          ./scripts/package.ps1 -SkipBuild -OutputDirectory artifacts/packages/ci-candidate
+          ./scripts/verify-package.ps1 -PackageDirectory artifacts/packages/ci-candidate
+      - name: Preserve distribution candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameTrail-x64-development-candidate
+          path: |
+            artifacts/packages/ci-candidate/*.msix
+            artifacts/packages/ci-candidate/*.zip
+            artifacts/packages/ci-candidate/*.json
+            artifacts/packages/ci-candidate/*.txt
       - name: Preserve test results
         if: always()
         uses: actions/upload-artifact@v4

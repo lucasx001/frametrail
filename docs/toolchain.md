@@ -75,7 +75,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run.ps1 -Confi
 
 可在报错的终端中运行 `Get-ExecutionPolicy -List` 检查各作用域。策略作用域与优先级见 [Microsoft 执行策略说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1)。
 
-WinUI应用采用unpackaged + WindowsAppSDKSelfContained，构建时复制FrameTrail.Engine/Capture/Audio/Recording/Media DLL到应用目录。原生模块静态链接 CRT，避免缺少 Debug CRT 或加载过旧宿主运行库；所有跨 ABI 的缓冲由调用方提供，对象由创建它的 DLL 销毁，不跨 CRT 释放内存。媒体像素留在原生引擎，C#仅持有句柄及状态。当前是开发目录启动；MSIX签名、安装更新和发布留到0011。
+WinUI应用采用unpackaged + WindowsAppSDKSelfContained，构建时复制FrameTrail.Engine/Capture/Audio/Recording/Media DLL到应用目录。原生模块静态链接 CRT，避免缺少 Debug CRT 或加载过旧宿主运行库；所有跨 ABI 的缓冲由调用方提供，对象由创建它的 DLL 销毁，不跨 CRT 释放内存。媒体像素留在原生引擎，C#仅持有句柄及状态。M4 已增加 .NET/Windows App SDK 自包含便携 ZIP 与未签名 MSIX 候选，publish 同时复制 XBF/PRI，见 [分发说明](distribution.md)。正式签名、干净机器安装/升级/卸载及发布仍须完成 0011 验收。
 
 ## ABI与生命周期
 

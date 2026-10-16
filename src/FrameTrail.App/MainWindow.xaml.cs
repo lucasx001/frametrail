@@ -102,6 +102,7 @@ public sealed partial class MainWindow : Window
                     opened = await ProjectWorkspace.OpenAsync(Path.GetFullPath(args[editorIndex + 1]));
                     var testIndex = Array.IndexOf(args, "--m2-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m3-self-test");
+                    if (testIndex < 0) testIndex = Array.IndexOf(args, "--m4-self-test");
                     PresentEditor(opened, testIndex >= 0 && args.Length > testIndex + 1 ? args[testIndex + 1] : null);
                 }); return;
             }
@@ -543,6 +544,9 @@ public sealed partial class MainWindow : Window
             await File.WriteAllTextAsync(absolute, JsonSerializer.Serialize(new { success, windowLoaded = true, version, abi = EngineSession.ExpectedAbiVersion,
                 lifecycleChecks = success ? 100 : 0, capsuleWidth = AppWindow.Size.Width, capsuleHeight = AppWindow.Size.Height,
                 chrome = RecorderWindowChrome.Diagnostics(this),
+                runtimeDirectory = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory(),
+                nativeModules = System.Diagnostics.Process.GetCurrentProcess().Modules.Cast<System.Diagnostics.ProcessModule>()
+                    .Where(module => module.ModuleName.StartsWith("FrameTrail.", StringComparison.OrdinalIgnoreCase) || module.ModuleName == "Microsoft.UI.Xaml.dll").Select(module => module.FileName).ToArray(),
                 processId = Environment.ProcessId, osVersion = Environment.OSVersion.VersionString, timestampUtc = DateTimeOffset.UtcNow, error = errorMessage }, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { success = false; }

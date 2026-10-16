@@ -69,7 +69,7 @@ void copy_frame(ft_media_frame& output, const frametrail::core::MediaFrame& fram
 uint32_t FT_CALL ft_engine_abi_version(void) { return FT_ABI_VERSION; }
 ft_result FT_CALL ft_engine_version(char* utf8, uint32_t capacity, uint32_t* required) {
     return protect([&] {
-        const auto result = copy_string("0.1.0", utf8, capacity, required);
+        const auto result = copy_string(FRAMETRAIL_VERSION, utf8, capacity, required);
         return result == FT_OK ? result : fail(result, "Invalid engine version buffer");
     });
 }

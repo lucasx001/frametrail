@@ -15,6 +15,8 @@
 - [工具链与构建](docs/toolchain.md)
 - [M0/M1 主 agent 审阅与验证](docs/validation/m0-m1-review.md)
 - [M2 编辑与导出验证](docs/validation/m2-editor-export.md)
+- [M4 可靠性与分发验证](docs/validation/m4-reliability-distribution.md)
+- [使用指南](docs/user-guide.md) / [隐私说明](docs/privacy.md) / [版本说明](docs/release-notes.md)
 
 技术方向：WinUI 3 / C# 应用层，C++ 原生媒体引擎，Windows.Graphics.Capture、WASAPI、Direct3D 11、Media Foundation。
 
@@ -33,7 +35,20 @@ Windows 11 x64，准备工具链后在本目录运行：
 
 默认测试排除需要实际设备的托管检查；实机补充运行 `.\scripts\test.cmd -Configuration Release -IncludeHardware`。具体依赖、原生输出目录和验证命令见工具链文档。
 
-当前是开发原型。摄像头周期分段仍有重启间隙，60 FPS、30 分钟联合音画同步及外设矩阵尚未验收；请查看规格中的实现边界。
+当前是开发候选版。摄像头自动分段已复用持续采集源；60 FPS 长时表现、30 分钟联合音画同步及外设矩阵尚未全面验收，请查看规格中的实现边界。
+
+## M4 候选包与回归
+
+```powershell
+.\scripts\package.cmd -OutputDirectory artifacts\packages\my-candidate
+.\scripts\verify-package.cmd -PackageDirectory artifacts\packages\my-candidate -SmokeTest
+# 登录桌面上执行真实录制、编辑和导出；会记录测试区域画面
+.\scripts\verify-package.cmd -PackageDirectory artifacts\packages\my-candidate -WorkflowTest
+.\scripts\validate-m4.cmd -DurationSeconds 60
+.\scripts\validate-recovery.cmd
+```
+
+输出自包含便携 ZIP、未签名 MSIX、依赖/载荷清单与 SHA-256。未签名 MSIX 仅供开发验证，便携包解压后运行 `FrameTrail.App.exe`。脚本保留旧产物，每次使用新目录；可选已有证书签名和 App Installer 来源配置见 [分发说明](docs/distribution.md)。当前未进行正式签名、干净机器安装/升级/卸载或公开发布。
 
 ## 编辑与导出
 

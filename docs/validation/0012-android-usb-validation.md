@@ -95,3 +95,14 @@ scrcpy server 的 Apache-2.0 许可保存在 `docs/licenses/scrcpy-Apache-2.0.tx
 | 安装 / 更新 / 卸载及 M4 | 便携测试包不代表签名安装器或更新验收；0010/0011 的原验收未完成 |
 
 不在首轮范围：无线连接、远程控制/剪贴板、动态旋转连续录制、Windows loopback 与手机音频同时捕获、任意编码器的自动重编码兼容。遇到非单调 H.264 PTS 或配置变化时安全结束，不宣称所有品牌/ROM 可用。
+
+## M4 合并后的复验（2026-10-16）
+
+以已合入 M4 的 `main` / `1b5c355` 为整合基线。合并保留 M4 的可靠性/分发保护与 M5 的 Android 原生模块、运行时和递归 WinUI 资源发布；版本预检同时接受 schema 1 和 2，继续拒绝未来版本，避免 M4 的新版本保护误拒绝旧桌面工程。
+
+- `artifacts/m5-merge-build.log`：Release 0 警告、0 错误，7 组原生及 137 项默认托管测试通过（App 7、Capture 6、Domain 79、Workspace 45）。Hardware 类别仍未运行。
+- `artifacts/validation/m5/merge-20261016-retry/`：完整 Android 媒体/断流/进程终止恢复复验通过；独立核查 17 个 MP4、两幅实时原生预览、手机 PCM 混音与 AAC 导出。首次复验在 ADB `start-server` 返回非零后中止；随后单独启动固定 ADB 成功，再用新目录完整重跑通过。首次与重跑日志分别为 `artifacts/m5-merge-validation.log`、`artifacts/m5-merge-validation-retry.log`。
+- `artifacts/packages/m5-merge-20261016/`：自包含未签名 MSIX / ZIP 候选生成成功；`verify-package.cmd -SmokeTest` 校验 540 个载荷文件、归档内容、分发校验和及本机启动。证据为 `artifacts/m5-merge-package.log`、`artifacts/m5-merge-package-verify.log`。
+- `artifacts/validation/m5/merge-package-ui-20261016/android-ui-validation.json`：候选包在仅含 Windows 系统路径、移除外部 .NET 配置后完成 Android 页面检查，`success: true`；包内 Android DLL 的 SHA-256 与本次验证的原生构建一致。
+
+这些新增证据仍是本机自动验证，不补齐上述真机、长时同步、签名或干净机器安装验收。

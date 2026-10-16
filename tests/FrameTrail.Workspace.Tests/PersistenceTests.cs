@@ -127,13 +127,64 @@ public sealed class PersistenceTests : IAsyncLifetime
     {
         var workspace = await CreateAsync(); await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch); await workspace.DisposeAsync();
         var path = Path.Combine(Project, "project.json"); var json = (await File.ReadAllTextAsync(path)).Replace("\"schemaVersion\": 1", "\"schemaVersion\": 999"); await File.WriteAllTextAsync(path, json);
-        await Assert.ThrowsAsync<ProjectFormatException>(() => ProjectWorkspace.OpenAsync(Project, Validate, Probe)); Assert.Equal(json, await File.ReadAllTextAsync(path));
+        await Assert.ThrowsAsync<UnsupportedProjectVersionException>(() => ProjectWorkspace.OpenAsync(Project, Validate, Probe)); Assert.Equal(json, await File.ReadAllTextAsync(path));
     }
     [Fact] public async Task DecoderFailureRejectsCheckpointEvenWhenMoovExists()
     {
         await using var workspace = ProjectWorkspace.Create(Project, "project1", Validate, (_, _) => throw new IOException("decoder rejected media"));
         await File.WriteAllBytesAsync(workspace.Resolve("media/screen.mp4"), FinalizedMp4Header);
         await Assert.ThrowsAsync<IOException>(() => workspace.SaveAsync(Snapshot(), workspace.SessionEpoch));
+    }
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public async Task MissingOrCorruptManifestRecoversPreviousSnapshot(bool corrupt)
+    {
+        var workspace = await CreateAsync();
+        await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch);
+        await workspace.SaveAsync(Snapshot(2), workspace.SessionEpoch);
+        await workspace.DisposeAsync();
+        if (corrupt) await File.WriteAllTextAsync(Path.Combine(Project, "recovery", "manifest.json"), "{broken");
+        await File.WriteAllTextAsync(Path.Combine(Project, "project.json"), "{broken");
+        var recovery = await ProjectWorkspace.RecoverAsync(Project, Validate, Probe);
+        await using (var recovered = recovery.Workspace) { Assert.Equal(1, recovered.Snapshot!.Revision); }
+        await using var reopened = await ProjectWorkspace.OpenAsync(Project, Validate, Probe);
+        Assert.Equal(1, reopened.Snapshot!.Revision);
+        Assert.Contains(recovery.Warnings, w => w.Contains("manifest unavailable"));
+    }
+    [Fact] public async Task RecoveryNeverOverwritesNewerProjectWithOldCheckpoint()
+    {
+        var workspace = await CreateAsync(); var snapshot = Snapshot();
+        await workspace.SaveAsync(snapshot, workspace.SessionEpoch);
+        await workspace.WriteManifestAsync(new() { ProjectId = "project1", CheckpointJson = ProjectJson.Serialize(snapshot) });
+        await workspace.DisposeAsync();
+        var file = Path.Combine(Project, "project.json");
+        var future = (await File.ReadAllTextAsync(file)).Replace("\"schemaVersion\": 1", "\"schemaVersion\": 999");
+        await File.WriteAllTextAsync(file, future);
+        await Assert.ThrowsAsync<UnsupportedProjectVersionException>(() => ProjectWorkspace.RecoverAsync(Project, Validate, Probe));
+        Assert.Equal(future, await File.ReadAllTextAsync(file));
+    }
+    [Fact] public async Task CompletedProjectWithCorruptJsonAppearsInRecoveryPicker()
+    {
+        var workspace = await CreateAsync(); var snapshot = Snapshot();
+        await workspace.SaveAsync(snapshot, workspace.SessionEpoch);
+        await workspace.WriteManifestAsync(new() { ProjectId = "project1", Status = "complete", CheckpointJson = ProjectJson.Serialize(snapshot) });
+        await workspace.DisposeAsync();
+        Assert.Empty(await ProjectWorkspace.ScanRecoveryAsync(temporary));
+        await File.WriteAllTextAsync(Path.Combine(Project, "project.json"), "{corrupt");
+        Assert.Equal("snapshot-unreadable", Assert.Single(await ProjectWorkspace.ScanRecoveryAsync(temporary)).Status);
+        var recovery = await ProjectWorkspace.RecoverAsync(Project, Validate, Probe);
+        await using var recovered = recovery.Workspace; Assert.Equal(1, recovered.Snapshot!.Revision);
+    }
+    [Fact] public async Task RecoveryDoesNotDropUnknownFieldsFromAWellFormedProject()
+    {
+        var workspace = await CreateAsync(); var snapshot = Snapshot();
+        await workspace.SaveAsync(snapshot, workspace.SessionEpoch);
+        await workspace.WriteManifestAsync(new() { ProjectId = "project1", CheckpointJson = ProjectJson.Serialize(snapshot) });
+        await workspace.DisposeAsync();
+        var file = Path.Combine(Project, "project.json");
+        var root = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(file))!;
+        root["newerFeature"] = "must survive"; var json = root.ToJsonString(); await File.WriteAllTextAsync(file, json);
+        await Assert.ThrowsAsync<ProjectFormatException>(() => ProjectWorkspace.RecoverAsync(Project, Validate, Probe));
+        Assert.Equal(json, await File.ReadAllTextAsync(file));
     }
     [Fact] public async Task CorruptLatestMediaFallsBackToPreviousCompleteRevision()
     {

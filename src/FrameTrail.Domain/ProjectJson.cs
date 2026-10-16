@@ -4,7 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace FrameTrail.Domain;
 
-public sealed class ProjectFormatException(string message, Exception? inner = null) : Exception(message, inner);
+public class ProjectFormatException(string message, Exception? inner = null) : Exception(message, inner);
+public sealed class UnsupportedProjectVersionException(int version)
+    : ProjectFormatException($"Project schema {version} is unsupported. Open it with a compatible version of FrameTrail.");
 
 public static class ProjectJson
 {
@@ -28,6 +30,9 @@ public static class ProjectJson
         {
             using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
             RejectDuplicateKeys(document.RootElement);
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("schemaVersion", out var schema) && schema.ValueKind == JsonValueKind.Number && schema.TryGetInt32(out var version) && version != 1 && version != SchemaVersion)
+                throw new UnsupportedProjectVersionException(version);
             var snapshot = JsonSerializer.Deserialize<ProjectSnapshot>(json, Options)
                 ?? throw new ProjectFormatException("Project root must be an object.");
             ValidateProtocol(snapshot);

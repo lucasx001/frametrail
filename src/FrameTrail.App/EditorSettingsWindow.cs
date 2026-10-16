@@ -56,6 +56,31 @@ internal sealed class EditorSettingsWindow : Window
             page.Children.Add(Text("这里不更改系统的设备权限。", 11, true));
         } else {
             page.Children.Add(Text("FrameTrail", 28)); page.Children.Add(Text("Windows 屏幕录制与剪辑", 13, true)); page.Children.Add(Tile(Text("界面参考 DogSC，沿用其 PuHuiTi 字体与界面设计。\n\nDogSC 相关设计与字体许可随应用附带。", 12, true)));
+            page.Children.Add(Text($"版本 {typeof(App).Assembly.GetName().Version}", 12, true));
+            var updateStatus = Text("更新由你手动安装；请先结束录制和导出，并关闭已保存的工程。", 12, true);
+            var updates = Button("检查更新"); updates.Click += async (_, _) => {
+                updates.IsEnabled = false;
+                try {
+                    var result = await Windows.ApplicationModel.Package.Current.CheckUpdateAvailabilityAsync();
+                    updateStatus.Text = result.Availability switch {
+                        Windows.ApplicationModel.PackageUpdateAvailability.Available or Windows.ApplicationModel.PackageUpdateAvailability.Required => "有新版本。请保存工程、结束媒体任务并退出 FrameTrail，再从原安装来源安装。",
+                        Windows.ApplicationModel.PackageUpdateAvailability.NoUpdates => "当前没有可用更新。",
+                        _ => "未配置可用的更新来源。请从原安装来源检查版本。"
+                    };
+                } catch { updateStatus.Text = "当前是开发版，或安装来源未提供更新检查。请从原安装来源检查版本。"; }
+                finally { updates.IsEnabled = true; }
+            }; page.Children.Add(updates); page.Children.Add(updateStatus);
+            var diagnostics = Button("导出诊断信息"); diagnostics.Click += async (_, _) => {
+                try {
+                    var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = "FrameTrail-diagnostics" };
+                    picker.FileTypeChoices.Add("诊断信息", new[] { ".json" });
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+                    var file = await picker.PickSaveFileAsync(); if (file is not null) await File.WriteAllTextAsync(file.Path, SafeDiagnostics.Export());
+                } catch { updateStatus.Text = "无法写入诊断文件，请选择有写入权限的位置后重试。"; }
+            }; page.Children.Add(diagnostics);
+            foreach (var (label, file) in new[] { ("使用指南", "user-guide.md"), ("隐私说明", "privacy.md"), ("版本说明", "release-notes.md") }) {
+                var document = Button(label); document.Click += (_, _) => Process.Start(new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "Docs", file)) { UseShellExecute = true }); page.Children.Add(document);
+            }
             var notices = Button("第三方许可"); notices.Click += (_, _) => Process.Start(new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "THIRD-PARTY-NOTICES.md")) { UseShellExecute = true }); page.Children.Add(notices);
         }
     }
