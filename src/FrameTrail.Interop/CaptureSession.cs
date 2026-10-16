@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using FrameTrail.Domain;
 
 namespace FrameTrail.Interop;
 
@@ -11,9 +12,15 @@ public sealed record CaptureSource(CaptureSourceKind Kind, nuint Handle, string 
 }
 public readonly record struct CaptureRegion(int X, int Y, int Width, int Height);
 public sealed record CaptureCapabilities(bool WgcSupported, uint HardwareH264Count, uint SoftwareH264Count, long QpcFrequency);
+public sealed record VideoCodecCapabilities(string Codec, uint HardwareCount, uint SoftwareCount, uint DecoderCount)
+{
+    public bool CanEncode => HardwareCount > 0 || SoftwareCount > 0;
+    public bool CanRecord => CanEncode && DecoderCount > 0;
+    public string Availability => !CanEncode ? "此设备不可用" : DecoderCount == 0 ? "缺少系统解码器" : HardwareCount > 0 ? "硬件编码" : "软件编码";
+}
 public sealed record CapturePerformance(bool GpuSamples, ulong Converted, ulong ConversionQpc, ulong ConversionMaxQpc, ulong WriterQpc, ulong WriterMaxQpc);
 public sealed record CaptureSettings(CaptureSource Source, string OutputPath,
-    CaptureRegion? Region = null, uint Fps = 30, uint Bitrate = 10_000_000, uint QueueCapacity = 4, bool AllowSoftware = false);
+    CaptureRegion? Region = null, uint Fps = 30, uint Bitrate = 10_000_000, uint QueueCapacity = 4, bool AllowSoftware = false, string VideoCodec = VideoCodecs.H264);
 public sealed record CaptureStatus(CaptureState State, int ErrorCode, uint Width, uint Height,
     uint HardwareAvailable, bool HardwareActive, uint QueueDepth, uint QueueHighWater,
     ulong FramesReceived, ulong FramesWritten, ulong FramesDropped, ulong FramesRateLimited,
@@ -40,6 +47,15 @@ public sealed class CaptureSession : IDisposable, IAsyncDisposable
         CaptureNative.Check(CaptureNative.GetCapabilities(ref value));
         return new(value.WgcSupported != 0, value.HardwareH264Count, value.SoftwareH264Count, value.QpcFrequency);
     }
+    internal static uint CodecId(string codec) => codec switch {
+        VideoCodecs.H264 => 0, VideoCodecs.Hevc => 1, VideoCodecs.Av1 => 2,
+        _ => throw new ArgumentOutOfRangeException(nameof(codec), "Unsupported video codec.")
+    };
+    public static IReadOnlyList<VideoCodecCapabilities> GetVideoCodecs() => VideoCodecs.All.Select(codec => {
+        var value = new CaptureNative.CodecCapabilities { StructSize = (uint)Marshal.SizeOf<CaptureNative.CodecCapabilities>(), Codec = CodecId(codec) };
+        CaptureNative.Check(CaptureNative.GetCodecCapabilities(ref value));
+        return new VideoCodecCapabilities(codec, value.HardwareCount, value.SoftwareCount, value.DecoderCount);
+    }).ToArray();
 
     public static IReadOnlyList<CaptureSource> EnumerateSources()
     {
@@ -79,7 +95,7 @@ public sealed class CaptureSession : IDisposable, IAsyncDisposable
             Fps = settings.Fps, Bitrate = settings.Bitrate, QueueCapacity = settings.QueueCapacity,
             AllowSoftware = settings.AllowSoftware ? 1U : 0U, OutputPath = Path.GetFullPath(settings.OutputPath)
         };
-        int result = CaptureNative.Start(in options, out var handle);
+        int result = CaptureNative.Start(in options, CodecId(settings.VideoCodec), out var handle);
         if (result < 0) { handle?.Dispose(); CaptureNative.Check(result); }
         if (handle is null || handle.IsInvalid) throw new InvalidOperationException("Capture did not return a valid native session.");
         if (cancellationToken.IsCancellationRequested) { handle.Dispose(); cancellationToken.ThrowIfCancellationRequested(); }

@@ -93,6 +93,7 @@ private:
     ComPtr<ID2D1Bitmap1> bitmap(ID3D11Texture2D* texture, bool target = false, bool alpha = false);
     ComPtr<ID2D1Bitmap1> image(const std::filesystem::path& path);
     void layer(const Project& project, const MediaFrame& frame, float radius, bool shadow, const Json& settings, bool screen, const VisualScene& visual);
+    void frame_chrome(D2D1_RECT_F content, std::string_view style, double canvas_short, const Json& settings);
     void ensure_surface(ComPtr<ID3D11Texture2D>& texture, uint32_t w, uint32_t h);
     void background(const Project& project, const FrameScene& scene);
     void stickers(const FrameScene& scene, bool attached);
@@ -109,7 +110,7 @@ std::vector<float> stretch_wsola(const std::vector<float>& input, double rate, s
 struct Session {
     MfScope mf;
     Project project; FrameSceneEvaluator evaluator;
-    const int64_t output_duration;
+    std::atomic_int64_t output_duration;
     std::filesystem::path root;
     std::unique_ptr<Renderer> renderer;
     std::mutex mutex, audio_mutex;

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources targetOsVersion="10.0.0" majorVersion="1">
+  <index root="\" startIndexAt="FrameTrail.App.pri">
+    <default>
+      <qualifier name="Language" value="zh-CN" />
+      <qualifier name="Scale" value="100" />
+    </default>
+    <indexer-config type="PRI" />
+  </index>
+</resources>

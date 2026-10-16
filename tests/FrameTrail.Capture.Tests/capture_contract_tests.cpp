@@ -19,6 +19,11 @@ int main() {
     static_assert(sizeof(ft_capture_status) == 1136);
     static_assert(sizeof(ft_capture_capabilities) == 24);
     expect(ft_capture_get_capabilities(nullptr) < 0, "capability null rejected");
+    expect(ft_capture_get_codec_capabilities(nullptr) < 0, "codec capability null rejected");
+    ft_video_codec_capabilities unsupported{sizeof(ft_video_codec_capabilities), 99};
+    expect(ft_capture_get_codec_capabilities(&unsupported) < 0, "unknown codec rejected");
+    ft_capture_handle invalid_codec_handle = reinterpret_cast<void*>(1);
+    expect(ft_capture_start_with_codec(nullptr, 99, &invalid_codec_handle) < 0 && !invalid_codec_handle, "invalid codec start clears handle");
     expect(ft_capture_enumerate_sources(nullptr, 1, nullptr) < 0, "source invalid array rejected");
     expect(ft_capture_start(nullptr, nullptr) < 0, "invalid start rejected");
     expect(ft_capture_pause(nullptr) < 0, "null pause rejected");

@@ -1,5 +1,6 @@
 #include "capture.h"
 #include "frame_pacing.h"
+#include "../codecs/video_codec.hpp"
 #include <windows.h>
 #include <roapi.h>
 #include <d3d11.h>
@@ -50,19 +51,6 @@ struct mf_scope { mf_scope() { check_hresult(MFStartup(MF_VERSION)); } ~mf_scope
 template <class F> HRESULT guard(F&& fn) noexcept {
     try { fn(); return S_OK; } catch (hresult_error const& e) { last_error = e.message().c_str(); return e.code(); }
     catch (std::bad_alloc const&) { return E_OUTOFMEMORY; } catch (...) { return E_FAIL; }
-}
-uint32_t encoder_count(UINT32 flags, std::vector<GUID>* classes = nullptr) {
-    MFT_REGISTER_TYPE_INFO output{ MFMediaType_Video, MFVideoFormat_H264 };
-    IMFActivate** activations{}; UINT32 count{};
-    check_hresult(MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, flags | MFT_ENUM_FLAG_SORTANDFILTER,
-        nullptr, &output, &activations, &count));
-    for (UINT32 i = 0; i < count; ++i) {
-        GUID id{};
-        if (classes && SUCCEEDED(activations[i]->GetGUID(MFT_TRANSFORM_CLSID_Attribute, &id))) classes->push_back(id);
-        activations[i]->Release();
-    }
-    CoTaskMemFree(activations);
-    return count;
 }
 com_ptr<IDXGIAdapter1> adapter_for(HMONITOR monitor, uint32_t* hdr = nullptr) {
     com_ptr<IDXGIFactory1> factory; check_hresult(CreateDXGIFactory1(__uuidof(IDXGIFactory1), factory.put_void()));
@@ -130,6 +118,7 @@ std::vector<ft_capture_source> enumerate_sources() {
 struct frame_entry { com_ptr<ID3D11Texture2D> texture; int64_t time{}; };
 class capture_run {
     ft_capture_options options_{};
+    uint32_t codec_{};
     std::wstring path_;
     std::thread thread_;
     mutable std::mutex mutex_;
@@ -191,7 +180,7 @@ class capture_run {
         if (options_.kind == FT_CAPTURE_REGION) { x = options_.crop_x; y = options_.crop_y; w = options_.crop_width; h = options_.crop_height; }
         if (x < 0 || y < 0 || w <= 1 || h <= 1 || int64_t(x) + w > source_size_.Width || int64_t(y) + h > source_size_.Height)
             throw hresult_error(E_INVALIDARG, L"Region must fit one display in physical pixels.");
-        // H.264 NV12 requires even dimensions. Trim at most one pixel on right/bottom; reported dimensions are authoritative.
+        // 4:2:0 NV12 requires even dimensions. Trim at most one pixel on right/bottom; reported dimensions are authoritative.
         w &= ~1; h &= ~1;
         crop_ = { static_cast<UINT>(x), static_cast<UINT>(y), 0, static_cast<UINT>(x + w), static_cast<UINT>(y + h), 1 };
         status_.width = w; status_.height = h;
@@ -238,9 +227,9 @@ class capture_run {
     }
     void setup_writer() {
         std::vector<GUID> hardware_classes;
-        status_.hardware_available = encoder_count(MFT_ENUM_FLAG_HARDWARE, &hardware_classes);
+        status_.hardware_available = frametrail::codecs::count(codec_, MFT_ENUM_FLAG_HARDWARE, &hardware_classes);
         bool software_allowed = options_.allow_software && status_.width <= 1920 && status_.height <= 1080 && options_.fps <= 30;
-        if (!status_.hardware_available && !software_allowed) throw hresult_error(MF_E_TOPO_CODEC_NOT_FOUND, L"No H.264 hardware encoder. Software capture is limited to 1080p30 and must be enabled.");
+        if (!status_.hardware_available && !software_allowed) throw hresult_error(MF_E_TOPO_CODEC_NOT_FOUND, L"No hardware encoder for the selected codec. Software capture is limited to 1080p30 and must be enabled.");
         HANDLE file = CreateFileW(path_.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE) throw_last_error();
         CloseHandle(file);
@@ -255,7 +244,7 @@ class capture_run {
         check_hresult(MFCreateSinkWriterFromURL(path_.c_str(), nullptr, attrs.get(), writer_.put()));
         com_ptr<IMFMediaType> output; check_hresult(MFCreateMediaType(output.put()));
         check_hresult(output->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
-        check_hresult(output->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264));
+        check_hresult(output->SetGUID(MF_MT_SUBTYPE, frametrail::codecs::subtype(codec_)));
         check_hresult(output->SetUINT32(MF_MT_AVG_BITRATE, options_.bitrate));
         check_hresult(output->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
         check_hresult(MFSetAttributeSize(output.get(), MF_MT_FRAME_SIZE, status_.width, status_.height));
@@ -478,7 +467,7 @@ class capture_run {
     }
     int64_t started_qpc_{};
 public:
-    explicit capture_run(ft_capture_options const& options) : options_(options), path_(options.output_path) {
+    explicit capture_run(ft_capture_options const& options, uint32_t codec) : options_(options), codec_(codec), path_(options.output_path) {
         status_.struct_size = sizeof(status_); status_.state = FT_CAPTURE_STARTING; status_.qpc_frequency = qpc_frequency();
     }
     ~capture_run() { stop(); }
@@ -509,8 +498,16 @@ int32_t FT_CAPTURE_CALL ft_capture_get_capabilities(ft_capture_capabilities* c) 
     if (!c || c->struct_size != sizeof(*c)) return E_INVALIDARG;
     return guard([&] { apartment_scope apartment; mf_scope media;
         c->qpc_frequency = qpc_frequency(); c->wgc_supported = GraphicsCaptureSession::IsSupported();
-        c->hardware_h264_count = encoder_count(MFT_ENUM_FLAG_HARDWARE);
-        c->software_h264_count = encoder_count(MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT); });
+        c->hardware_h264_count = frametrail::codecs::count(FT_VIDEO_H264, MFT_ENUM_FLAG_HARDWARE);
+        c->software_h264_count = frametrail::codecs::count(FT_VIDEO_H264, MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT); });
+}
+int32_t FT_CAPTURE_CALL ft_capture_get_codec_capabilities(ft_video_codec_capabilities* c) {
+    if (!c || c->struct_size != sizeof(*c) || c->codec > FT_VIDEO_AV1) return E_INVALIDARG;
+    return guard([&] { apartment_scope apartment; mf_scope media;
+        c->hardware_count = frametrail::codecs::count(c->codec, MFT_ENUM_FLAG_HARDWARE);
+        c->software_count = frametrail::codecs::count(c->codec, MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT);
+        c->decoder_count = frametrail::codecs::count(c->codec, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SYNCMFT | MFT_ENUM_FLAG_ASYNCMFT, nullptr, true);
+    });
 }
 int32_t FT_CAPTURE_CALL ft_capture_enumerate_sources(ft_capture_source* sources, uint32_t capacity, uint32_t* count) {
     if (!count || (!sources && capacity)) return E_INVALIDARG;
@@ -519,13 +516,16 @@ int32_t FT_CAPTURE_CALL ft_capture_enumerate_sources(ft_capture_source* sources,
         std::copy(all.begin(), all.end(), sources); });
 }
 int32_t FT_CAPTURE_CALL ft_capture_start(ft_capture_options const* o, ft_capture_handle* result) {
+    return ft_capture_start_with_codec(o, FT_VIDEO_H264, result);
+}
+int32_t FT_CAPTURE_CALL ft_capture_start_with_codec(ft_capture_options const* o, uint32_t codec, ft_capture_handle* result) {
     if (result) *result = nullptr;
-    if (!o || !result || o->struct_size != sizeof(*o) || !o->output_path || !*o->output_path || !o->source_handle ||
+    if (!o || !result || codec > FT_VIDEO_AV1 || o->struct_size != sizeof(*o) || !o->output_path || !*o->output_path || !o->source_handle ||
         o->kind < FT_CAPTURE_MONITOR || o->kind > FT_CAPTURE_REGION || (o->fps != 30 && o->fps != 60) ||
         o->queue_capacity < 2 || o->queue_capacity > 8 || o->bitrate < 100000 || o->bitrate > 200000000) return E_INVALIDARG;
     return guard([&] {
         if (std::filesystem::path(o->output_path).extension() != L".mp4") throw hresult_error(E_INVALIDARG, L"Output must use the .mp4 extension.");
-        auto run = std::make_unique<capture_run>(*o); HRESULT start = run->start();
+        auto run = std::make_unique<capture_run>(*o, codec); HRESULT start = run->start();
         if (FAILED(start)) { ft_capture_status status{}; run->status(status); throw hresult_error(start, status.message); }
         *result = run.release();
     });

@@ -57,11 +57,14 @@ internal sealed class EditorTimeline : Grid
     internal void Set(ResolvedTimeline value, string? selection, long ticks) { timeline = value; selected = selection; playhead = ticks; clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i); markers = value.Markers.OrderBy(m => m.Ticks).ToArray(); canvas.Height = value.Effects.Count > 0 ? 294 : 148; Draw(); }
     internal void Position(long ticks) { playhead = ticks; Canvas.SetLeft(playLine, X(playhead)); Canvas.SetLeft(playHandle, X(playhead) - 3.5); }
     internal void SetWaveform(float[]? values) { waveform = values; Draw(); }
-    internal void ClearAssets() { waveform = null; thumbnails.Clear(); Draw(); }
-    internal void ClearThumbnails() { thumbnails.Clear(); Draw(); }
+    private readonly HashSet<long> staleThumbnails = new();
+    internal void ClearAssets() { waveform = null; thumbnails.Clear(); staleThumbnails.Clear(); Draw(); }
+    internal void ClearThumbnails() { thumbnails.Clear(); staleThumbnails.Clear(); Draw(); }
+    internal void InvalidateThumbnails() { staleThumbnails.UnionWith(thumbnails.Keys); Draw(); }
     internal void AddThumbnail(long ticks, string path)
     {
-        if (thumbnails.Count >= 160) thumbnails.Remove(thumbnails.Keys.First()); thumbnails[ticks] = new BitmapImage(new Uri(path)); Draw();
+        if (thumbnails.Count >= 160 && !thumbnails.ContainsKey(ticks)) { var first = thumbnails.Keys.First(); thumbnails.Remove(first); staleThumbnails.Remove(first); }
+        thumbnails[ticks] = new BitmapImage(new Uri(path)); staleThumbnails.Remove(ticks); Draw();
     }
     internal void CancelDrag() { if (dragging) { Finish(false); canvas.ReleasePointerCaptures(); } }
     private double X(long ticks) => 16 + ticks / 10_000_000.0 * EffectiveScale;
@@ -89,8 +92,9 @@ internal sealed class EditorTimeline : Grid
             // The first tick of an entrance can be transparent. An interior sample
             // keeps the filmstrip useful without increasing its bounded cache.
             long representative = clip.OutputStart + Math.Min(5_000_000, clip.OutputDuration / 2);
-            var nearest = thumbnails.TryGetValue(representative, out var thumbnail) ? thumbnail : null;
-            if (nearest is null && ThumbnailsEnabled && !waveformMode && w >= 14) ThumbnailNeeded?.Invoke(representative);
+            bool exact = thumbnails.TryGetValue(representative, out var thumbnail);
+            var nearest = exact ? thumbnail : thumbnails.Count > 0 ? thumbnails.MinBy(item => Math.Abs(item.Key - representative)).Value : null;
+            if ((!exact || staleThumbnails.Contains(representative)) && ThumbnailsEnabled && !waveformMode && w >= 14) ThumbnailNeeded?.Invoke(representative);
             if (nearest is not null && !waveformMode && w >= 6) {
                 int count = Math.Min(24, (int)Math.Ceiling(w / 82)); var strip = new Grid { Height = 46, VerticalAlignment = VerticalAlignment.Top, CornerRadius = new CornerRadius(5) };
                 for (int tile = 0; tile < count; tile++) { strip.ColumnDefinitions.Add(new ColumnDefinition()); var image = new Image { Source = nearest, Stretch = Stretch.UniformToFill }; Grid.SetColumn(image, tile); strip.Children.Add(image); }

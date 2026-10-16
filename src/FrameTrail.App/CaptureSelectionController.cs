@@ -25,6 +25,7 @@ internal sealed class CaptureSelectionController : IDisposable
     private long lastDraw;
     internal CaptureRegion? SelectedRegion => region;
     internal FrameworkElement Surface => (FrameworkElement)card.Content;
+    internal bool UsesCrosshair => shades.Count > 0 && shades.All(s => s.UsesCrosshair);
 
     internal CaptureSelectionController(Window owner, int mode, IReadOnlyList<CaptureSource> sources,
         Action<CaptureSource, CaptureRegion?> confirmed, Action cancelled)
@@ -36,7 +37,7 @@ internal sealed class CaptureSelectionController : IDisposable
         if (mode == 1 && windows.Count == 0) throw new InvalidOperationException("没有可录制的应用窗口。");
         card = new SelectionActionWindow(Action, Cancel);
         card.Closed += (_, _) => { if (!disposed) Cancel(); };
-        try { foreach (var display in displays) shades.Add(new SelectionShade(display, Pointer, Cancel, Action)); }
+        try { foreach (var display in displays) shades.Add(new SelectionShade(display, mode == 2, Pointer, Cancel, Action)); }
         catch { Dispose(); throw; }
         hovered = displays[0];
     }
@@ -44,10 +45,11 @@ internal sealed class CaptureSelectionController : IDisposable
     {
         foreach (var shade in shades) shade.Show();
         card.Activate();
-        if (SelectionShade.Cursor() is var point) hovered = DisplayAt(point.X, point.Y) ?? displays[0];
+        if (SelectionShade.Cursor() is var point) hovered = mode == 1 ? WindowAt(point.X, point.Y) : DisplayAt(point.X, point.Y) ?? displays[0];
         UpdateCard(); Redraw(force: true);
     }
     private CaptureSource? DisplayAt(int x, int y) => displays.FirstOrDefault(s => x >= s.X && y >= s.Y && x < s.X + s.Width && y < s.Y + s.Height);
+    private CaptureSource? WindowAt(int x, int y) => windows.FirstOrDefault(w => SelectionShade.Contains(w, x, y));
     internal void Pointer(uint message, int x, int y)
     {
         if (disposed) return;
@@ -68,9 +70,13 @@ internal sealed class CaptureSelectionController : IDisposable
         }
         else
         {
-            if (selected is not null && message == 0x200) return;
-            hovered = mode == 0 ? display : windows.FirstOrDefault(w => SelectionShade.Contains(w, x, y));
+            hovered = mode == 0 ? display : WindowAt(x, y);
             if (message == 0x201) selected = hovered;
+            if (message == 0x202)
+            {
+                if (selected is not null && selected.Handle == hovered?.Handle) { Action(); return; }
+                selected = null;
+            }
         }
         UpdateCard(); Redraw(message != 0x200);
     }
@@ -85,12 +91,12 @@ internal sealed class CaptureSelectionController : IDisposable
                 "开始录制", selected is not null && region is not null && selected.IsSdr, true);
         }
         else if (source is null)
-            card.SetText("选择一个窗口", "移动鼠标选择窗口，单击确认", "开始录制", false, false);
+            card.SetText("选择一个窗口", "单击要录制的窗口即可开始 · Esc 取消", "开始录制", false, false);
         else
         {
             string title = mode == 0 ? $"显示器 {displays.ToList().FindIndex(d => d.Handle == source.Handle) + 1}" : source.Name;
-            card.SetText(title, source.IsSdr ? $"{source.Width} × {source.Height}" + (selected is null ? " · 单击选择" : " · 已选择") : "当前仅支持 SDR 显示器",
-                selected is null ? (mode == 0 ? "选择此显示器" : "选择此窗口") : "开始录制", source.IsSdr, selected is not null);
+            card.SetText(title, source.IsSdr ? $"{source.Width} × {source.Height} · 单击开始录制" : "当前仅支持 SDR 显示器",
+                "开始录制", source.IsSdr, selected is not null);
         }
         card.PositionOn(display);
     }
@@ -106,7 +112,7 @@ internal sealed class CaptureSelectionController : IDisposable
     private void Action()
     {
         if (disposed) return;
-        if (selected is null && mode != 2) { selected = hovered; UpdateCard(); Redraw(true); return; }
+        if (selected is null && mode != 2) selected = hovered;
         if (selected is null || !selected.IsSdr || mode == 2 && region is null) return;
         var source = selected; var crop = region; Dispose(); confirmed(source, crop);
     }
@@ -194,6 +200,7 @@ internal sealed class SelectionShade : IDisposable
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(nint value);
     [DllImport("user32.dll")] private static extern bool UpdateLayeredWindow(nint window, nint dc, ref Point position, ref Size size, nint source, ref Point origin, uint key, ref Blend blend, uint flags);
     [DllImport("user32.dll")] private static extern nint LoadCursor(nint instance, nint name);
+    [DllImport("user32.dll", EntryPoint = "GetClassLongPtrW")] private static extern nint GetClassLongPtr(nint window, int index);
 
     private readonly CaptureSource display;
     private readonly Action<uint, int, int> pointer;
@@ -203,6 +210,7 @@ internal sealed class SelectionShade : IDisposable
     private readonly nint window, dc, bitmap, bits, previous;
     private readonly int[] pixels;
     private bool disposed;
+    internal bool UsesCrosshair => GetClassLongPtr(window, -12) == LoadCursor(0, 32515);
     internal static Point Cursor() { GetCursorPos(out var point); return point; }
     internal static bool IsOwnWindow(nuint handle) { GetWindowThreadProcessId((nint)handle, out var process); return process == Environment.ProcessId; }
     internal static RecorderWindowChrome.Rect Bounds(CaptureSource source)
@@ -211,11 +219,11 @@ internal sealed class SelectionShade : IDisposable
         return new() { Left = source.X, Top = source.Y, Right = source.X + source.Width, Bottom = source.Y + source.Height };
     }
     internal static bool Contains(CaptureSource source, int x, int y) { var r = Bounds(source); return x >= r.Left && x < r.Right && y >= r.Top && y < r.Bottom; }
-    internal SelectionShade(CaptureSource display, Action<uint, int, int> pointer, Action cancel, Action start)
+    internal SelectionShade(CaptureSource display, bool regionSelection, Action<uint, int, int> pointer, Action cancel, Action start)
     {
         this.display = display; this.pointer = pointer; this.cancel = cancel; this.start = start; procedure = Procedure;
         if (display.Width <= 0 || display.Height <= 0 || (long)display.Width * display.Height > 40_000_000) throw new InvalidOperationException("此显示器尺寸超出选择器支持范围。");
-        var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Procedure = procedure, Instance = GetModuleHandle(null), ClassName = className, Cursor = LoadCursor(0, 32515) };
+        var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Procedure = procedure, Instance = GetModuleHandle(null), ClassName = className, Cursor = LoadCursor(0, regionSelection ? 32515 : 32512) };
         if (RegisterClassEx(ref wc) == 0) throw new System.ComponentModel.Win32Exception();
         window = CreateWindowEx(0x00080088, className, "FrameTrail · 录制范围", 0x80000000, display.X, display.Y, display.Width, display.Height, 0, 0, wc.Instance, 0);
         dc = CreateCompatibleDC(0); var info = new BitmapInfo { Size = 40, Width = display.Width, Height = -display.Height, Planes = 1, Bits = 32 };

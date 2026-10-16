@@ -10,12 +10,16 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <Platforms>x64</Platforms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Brand\FrameTrail.Icon.v1.ico</ApplicationIcon>
     <NativeBuildDirectory Condition="'$(NativeBuildDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\native</NativeBuildDirectory>
   </PropertyGroup>
   <ItemGroup>
     <Content Include="..\..\artifacts\android-runtime\**\*" Link="android-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\MockupStudioGlow.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Brand\FrameTrail.Icon.v1.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="PackageAssets\*.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\docs\user-guide.md" Link="Docs\user-guide.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\docs\privacy.md" Link="Docs\privacy.md" CopyToOutputDirectory="PreserveNewest" />

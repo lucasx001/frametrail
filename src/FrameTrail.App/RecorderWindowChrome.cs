@@ -40,6 +40,7 @@ internal static class RecorderWindowChrome
     }
     internal static void Configure(Window window, double width, double height, double radius, bool center = false)
     {
+        AppIcon.Apply(window);
         if (window.AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = false; presenter.IsMaximizable = false; presenter.IsAlwaysOnTop = true;

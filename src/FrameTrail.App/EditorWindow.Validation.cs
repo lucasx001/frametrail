@@ -48,8 +48,20 @@ public sealed partial class EditorWindow
             AppWindow.Resize(new Windows.Graphics.SizeInt32((int)Math.Round(840 * dpi), (int)Math.Round(600 * dpi))); await Task.Delay(150); Root.UpdateLayout();
             if (PreviewContainer.ActualWidth < 400 || PreviewContainer.ActualHeight < 150 || InspectorTabs.ActualWidth > 340) throw new InvalidOperationException("Compact editor layout clipped.");
             await SaveUiImageAsync(Root, Path.Combine(directory, "editor-compact.png")); AppWindow.Resize(originalSize); await Task.Delay(100);
-            var exportDialog = new EditorExportDialog(ProjectTitle.Text, editor.Timeline.Duration, editor.Snapshot.Canvas.Width, editor.Snapshot.Canvas.Height, BackgroundPreview.Source, ExportToAsync) { XamlRoot = Root.XamlRoot, RequestedTheme = Microsoft.UI.Xaml.ElementTheme.Light };
-            var showing = exportDialog.ShowAsync(); await Task.Delay(150); await SaveUiImageAsync(exportDialog, Path.Combine(directory, "export-dialog.png")); exportDialog.Hide(); await showing;
+            foreach (bool compact in new[] { false, true }) {
+                AppWindow.Resize(compact ? new Windows.Graphics.SizeInt32((int)Math.Round(840 * dpi), (int)Math.Round(600 * dpi)) : originalSize); await Task.Delay(100);
+                foreach (var theme in new[] { Microsoft.UI.Xaml.ElementTheme.Light, Microsoft.UI.Xaml.ElementTheme.Dark }) {
+                    var exportDialog = new EditorExportDialog(ProjectTitle.Text, editor.Timeline.Duration, editor.Snapshot.Canvas.Width, editor.Snapshot.Canvas.Height, BackgroundPreview.Source, ExportToAsync) { XamlRoot = Root.XamlRoot, RequestedTheme = theme };
+                    var showing = exportDialog.ShowAsync();
+                    try {
+                        await Task.Delay(200);
+                        await exportDialog.ValidateActionLayoutAsync(Path.Combine(directory, $"export-{(compact ? "compact" : "normal")}-{theme}"));
+                        if (!compact && theme == Microsoft.UI.Xaml.ElementTheme.Light) await SaveUiImageAsync(exportDialog, Path.Combine(directory, "export-dialog.png"));
+                    } finally { exportDialog.Hide(); await showing; }
+                }
+            }
+            AppWindow.Resize(originalSize); await Task.Delay(100);
+            checks.Add("Export/cancel actions fit every ancestor clip in normal and 840x600 DIP windows, light/dark themes, and ready/busy states.");
             Root.RequestedTheme = priorAppearance; checks.Add("Six inspector pages and frame subnavigation are read-only; light/dark, 840x600 DIP and export sheet render.");
             await preview.RenderAsync(0, true, Path.Combine(directory, "preview.png"));
             var last = Math.Min(editor.Timeline.Duration / 2, 15_000_000);

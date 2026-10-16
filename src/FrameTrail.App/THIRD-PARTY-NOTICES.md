@@ -4,7 +4,9 @@
 
 Self-contained candidates include the Microsoft .NET runtime and Windows App SDK. Their original notices are copied to `Licenses/dotnet-LICENSE.txt`, `Licenses/dotnet-NOTICES.txt` and `Licenses/WindowsAppSDK-NOTICE.txt` during packaging. The native JSON parser is nlohmann/json (MIT); its original license is included at `Licenses/nlohmann-json-MIT.txt`. The candidate's external NuGet lock file and SHA-256 payload inventory record the exact dependency versions and files. Development builds use the same dependency lock files in the repository.
 
-The recorder and editor layouts, colour tokens and pictogram geometry are adapted from DogSC, https://github.com/laogou717/dogsc, specifically RecorderSetupSurface.swift, RecorderSurfaceStyle.swift, RecorderViews.swift, RecorderPopover.swift, RecorderPanelInteraction.swift, EditorView.swift, EditorDesignTokens.swift, EditorInspectorPalette.swift, EditorInspectorTabBar.swift, EditorBarSlider.swift, EditorTimelineLayout.swift, EditorExportViews.swift, AppSettingsView.swift and AppLineIcon.swift. The WinUI implementation is maintained in FrameTrail.
+The recorder and editor layouts, colour tokens and pictogram geometry are adapted from DogSC, https://github.com/laogou717/dogsc, specifically RecorderSetupSurface.swift, RecorderSurfaceStyle.swift, RecorderViews.swift, RecorderPopover.swift, RecorderPanelInteraction.swift, EditorView.swift, EditorDesignTokens.swift, EditorInspectorPalette.swift, EditorInspectorTabBar.swift, EditorBarSlider.swift, EditorTimelineLayout.swift, EditorExportViews.swift, AppSettingsView.swift and AppLineIcon.swift. The mockup turntable, cards, knobs, defaults and frame geometry additionally adapt EditorMockupTurntable.swift, EditorVisualEffectsControls.swift, EditorInspectorKnobs.swift, EditorInspectorView.swift, EditorInspectorArtwork.swift, ScreenFrameDefaults.swift, CompositionScene.swift and FrameScene.swift at revision 6df2c49b7388b753c92147a8d679ad410d3aa7dc. The WinUI and D2D implementation is maintained in FrameTrail.
+
+The frame chrome rendering also adapts SharedFrameRenderer.swift at that same revision.
 
 MIT License
 

@@ -32,5 +32,6 @@ private:
     double crop_width_{1}, crop_height_{1};
     std::vector<VisualEffect> effects_;
     std::string frame_style_, camera_shape_;
+    double frame_scale_{1}, frame_toolbar_scale_{1};
 };
 } // namespace frametrail::core

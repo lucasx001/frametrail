@@ -10,7 +10,7 @@ public sealed record AudioSelection(AudioCaptureKind Kind, string? DeviceId = nu
 public sealed record RecordingPlan(string ProjectPath, CaptureSource Source, CaptureRegion? Region = null,
     uint Fps = 30, bool AllowSoftware = false, IReadOnlyList<AudioSelection>? Audio = null,
     CameraDevice? Camera = null, CameraFormat? CameraFormat = null, bool RecordPointer = true, int CheckpointSeconds = 60,
-    AndroidSelection? Android = null, AndroidConnection? PreparedAndroid = null);
+    AndroidSelection? Android = null, AndroidConnection? PreparedAndroid = null, bool AutomaticZoom = true, string VideoCodec = VideoCodecs.H264);
 public sealed record SegmentPaths(string Screen, string Pointer, string Shapes, string Camera,
     IReadOnlyList<string> Audio, string Diagnostics, string? PhoneAudio = null);
 public sealed record SegmentStart(long EpochQpc, long QpcFrequency, uint Width, uint Height);
@@ -74,6 +74,8 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             ObjectDisposedException.ThrowIf(disposed, this);
             if (state is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("A recording is already active.");
             if (requested.CheckpointSeconds < 5 || requested.CheckpointSeconds > 300) throw new ArgumentOutOfRangeException(nameof(requested.CheckpointSeconds));
+            if (!VideoCodecs.IsSupported(requested.VideoCodec)) throw new ArgumentException("Unsupported recording codec.", nameof(requested));
+            if (requested.Android is not null && requested.VideoCodec != VideoCodecs.H264) throw new ArgumentException("Phone source recording currently uses H.264; choose another codec when exporting.", nameof(requested));
             if (requested.Camera is not null && requested.CameraFormat is null) throw new ArgumentException("Choose a camera format.");
             if (requested.Android is not null && (requested.RecordPointer || requested.Camera is not null || requested.Audio?.Any(a => a.Kind != AudioCaptureKind.Microphone) == true))
                 throw new ArgumentException("Android recording uses phone audio and optional computer microphone; disable Windows pointer, camera and system audio.");
@@ -206,7 +208,22 @@ public sealed class RecordingCoordinator : IAsyncDisposable
         }
         segments.Add(new() { Id = "segment-" + Guid.NewGuid().ToString("N"), SourceStart = MediaTime.FromTicks(sourceTicks), SourceDuration = MediaTime.FromTicks(result.DurationTicks), Rate = new() });
         sourceTicks += result.DurationTicks;
-        var checkpoint = MakeSnapshot(); await workspace!.SaveAsync(checkpoint, workspace.SessionEpoch);
+        var checkpoint = MakeSnapshot();
+        if (plan!.AutomaticZoom && plan.RecordPointer && plan.Android is null && media.Any(m => m.Kind == MediaKind.PointerEvents))
+        {
+            try
+            {
+                checkpoint = await Task.Run(async () => EngineSession.Edit(checkpoint,
+                    await AutomaticZoomPlanner.CreateCommandAsync(workspace!, checkpoint)));
+                revision = checkpoint.Revision;
+            }
+            catch (Exception error) when (error is IOException or JsonException or EngineException or ProjectFormatException or InvalidOperationException or FormatException or OverflowException or KeyNotFoundException)
+            {
+                // Camera planning is optional; it must never discard finalized media.
+                AddWarning("自动缩放生成失败，已保留录制素材和此前的运镜：" + error.Message);
+            }
+        }
+        await workspace!.SaveAsync(checkpoint, workspace.SessionEpoch);
         await WriteManifestAsync("recording");
     }
     private ProjectSnapshot MakeSnapshot()
@@ -216,9 +233,10 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             PrimarySource = plan.Android is null ? null : new() { Kind = "androidUsb", Width = main.Width, Height = main.Height },
             ProjectId = workspace!.Snapshot?.ProjectId ?? projectIdentity(), Revision = ++revision,
             SourceDuration = MediaTime.FromTicks(sourceTicks), Media = media.ToArray(), Segments = segments.ToArray(),
+            Effects = workspace.Snapshot?.Effects ?? Array.Empty<SourceEffect>(),
             Markers = markers.Where(m => m.Time.Ticks <= sourceTicks).ToArray(),
             Canvas = new() { Width = main.Width, Height = main.Height, Camera = new() { Enabled = plan!.Camera is not null } },
-            Export = new() { Fps = new() { Numerator = (int)plan!.Fps } } };
+            Export = new() { Fps = new() { Numerator = (int)plan!.Fps }, VideoCodec = plan.VideoCodec } };
     }
     private string? createdProjectId;
     private string projectIdentity() => createdProjectId ??= Guid.NewGuid().ToString("N");

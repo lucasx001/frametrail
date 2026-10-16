@@ -19,6 +19,7 @@ internal sealed class EditorSettingsWindow : Window
     internal EditorSettingsWindow(string directory, Action<ElementTheme> setAppearance)
     {
         this.directory = directory; this.setAppearance = setAppearance; Title = "FrameTrail · 设置";
+        AppIcon.Apply(this);
         root.RequestedTheme = EditorAppearance.Current; root.Background = RecorderTheme.Brush(root, "EditorStage");
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(112) }); root.RowDefinitions.Add(new RowDefinition());
         var navSurface = new Border { Background = RecorderTheme.Brush(root, "EditorPanel"), CornerRadius = new CornerRadius(28), Padding = new Thickness(6), Height = 56, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Child = navigation };

@@ -225,9 +225,19 @@ Project parse_project(std::string_view text) {
 
 void validate_project(const Project& project) {
     const auto editor = Json::parse(project.editor_json);
-    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "frameStyle", "cameraShape", "backdrop"});
+    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "backdrop"});
     if(editor.contains("cursorSmoothing")) { auto v=number(editor["cursorSmoothing"],"editor.cursorSmoothing"); if(v<0 || v>0.5)invalid("editor.cursorSmoothing","must be 0..0.5 seconds"); }
-    if(editor.contains("frameStyle")) { auto s=editor["frameStyle"].get<std::string>(); if(s!="none" && s!="window" && s!="browser" && s!="device")invalid("editor.frameStyle","unsupported frame"); }
+    if(editor.contains("frameStyle")) { auto s=editor["frameStyle"].get<std::string>(); if(s!="none" && s!="window" && s!="browser" && s!="device" && s!="windowLight" && s!="windowDark" && s!="browserLight" && s!="browserDark" && s!="devicePhone")invalid("editor.frameStyle","unsupported frame"); }
+    for (const auto* key : {"frameScale", "frameToolbarScale", "frameOuterCornerRadius"}) if(editor.contains(key)) {
+        auto value=number(editor[key],std::string("editor.")+key); auto scale=std::string_view(key)!="frameOuterCornerRadius";
+        auto minimum=std::string_view(key)=="frameScale"?0.6:std::string_view(key)=="frameToolbarScale"?0.65:0.0;
+        if(value<minimum || value>(scale?1.6:160.0))invalid(std::string("editor.")+key,"frame parameter outside allowed range");
+    }
+    for (const auto* key : {"frameTitle", "frameBrowserAddress"}) if(editor.contains(key)) {
+        if(!editor[key].is_string())invalid(std::string("editor.")+key,"invalid frame text");
+        const auto& value=editor[key].get_ref<const std::string&>();auto limit=std::string_view(key)=="frameTitle"?120u:240u;
+        if(value.size()>limit*4 || std::count_if(value.begin(),value.end(),[](unsigned char c){return (c&0xC0)!=0x80;})>limit)invalid(std::string("editor.")+key,"frame text too long");
+    }
     if(editor.contains("cameraShape")) { auto s=editor["cameraShape"].get<std::string>(); if(s!="rounded" && s!="rectangle" && s!="circle")invalid("editor.cameraShape","unsupported shape"); }
     if(editor.contains("backdrop")) {
         auto b=editor["backdrop"]; object(b,"editor.backdrop",{"kind","path","secondary"});
@@ -358,7 +368,7 @@ void validate_project(const Project& project) {
     if (output.width < 2 || output.height < 2 || output.width > 7680 || output.height > 7680 || output.width % 2 || output.height % 2)
         invalid("export", "H.264 output dimensions must be even and in 2..7680");
     if (output.fps.denominator != 1 || (output.fps.numerator != 30 && output.fps.numerator != 60)) invalid("export.fps", "schema 1 supports 30/1 or 60/1");
-    if (output.video_codec != "h264" || output.audio_codec != "aac" || output.container != "mp4") invalid("export", "schema 1 defaults require h264/aac/mp4");
+    if ((output.video_codec != "h264" && output.video_codec != "hevc" && output.video_codec != "av1") || output.audio_codec != "aac" || output.container != "mp4") invalid("export", "requires h264, hevc or av1 video with aac/mp4");
 }
 
 std::string serialize_project(const Project& project) {

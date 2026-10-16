@@ -28,7 +28,7 @@ public sealed class NativeRecordingDriver : IRecordingDriver, IRecordingRunDrive
                 audio.Add((entry.selection, session, entry.path));
             }
             if (plan.Camera is not null) camera = await Task.Run(() => CameraCaptureSession.Start(plan.Camera, plan.CameraFormat!, paths.Camera), cancellationToken);
-            screen = await CaptureSession.StartAsync(new(plan.Source, paths.Screen, plan.Region, plan.Fps, AllowSoftware: plan.AllowSoftware), cancellationToken);
+            screen = await CaptureSession.StartAsync(new(plan.Source, paths.Screen, plan.Region, plan.Fps, AllowSoftware: plan.AllowSoftware, VideoCodec: plan.VideoCodec), cancellationToken);
             CaptureStatus status;
             var waitStart = Stopwatch.GetTimestamp();
             while (true)

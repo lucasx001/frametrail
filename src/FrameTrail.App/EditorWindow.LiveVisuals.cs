@@ -17,6 +17,7 @@ public sealed partial class EditorWindow
     private bool visualPending, visualTransaction, committingVisuals;
     private int visualPreviewCount;
     private EditorBarSlider[] visualSliders = [];
+    private bool AnyVisualControlDragging => visualSliders.Any(s => s.IsDragging) || MockupKnobs.Any(s => s.IsDragging) || MockupMetadataFocused;
 
     private void InitializeLiveVisuals()
     {
@@ -53,6 +54,8 @@ public sealed partial class EditorWindow
     private void QueueVisualChange()
     {
         if (loadingVisuals || !ready || working || closing || editor.IsExporting || CurrentEffect is null) return;
+        if (mockupEditing && (visualPending || visualTransaction)) { _ = SafeAsync(async () => { await FlushVisualChangesAsync(); QueueVisualChange(); }); return; }
+        mockupEditing = false;
         var draft = SelectedVisualDraft(); if (draft is null) return;
         var prior = editor.Preview?.Effects.FirstOrDefault(e => e.Id == draft.Id) ?? CurrentEffect;
         if (prior is not null && VisualResources.Ticks(prior.SourceStart) == VisualResources.Ticks(draft.SourceStart) && VisualResources.Ticks(prior.SourceDuration) == VisualResources.Ticks(draft.SourceDuration) && JsonNode.DeepEquals(JsonNode.Parse(prior.Parameters.GetRawText()), JsonNode.Parse(draft.Parameters.GetRawText()))) return;
@@ -60,7 +63,7 @@ public sealed partial class EditorWindow
         preview.InvalidateRequests(); // A completed older frame must not overwrite newer input.
         if (!committingVisuals && visualPreviewWork.IsCompleted && !visualPreviewTimer!.IsRunning) visualPreviewTimer.Start();
         visualCommitTimer!.Stop();
-        if (!visualSliders.Any(s => s.IsDragging)) { visualCommitTimer.Interval = TimeSpan.FromMilliseconds(400); visualCommitTimer.Start(); }
+        if (!AnyVisualControlDragging) { visualCommitTimer.Interval = TimeSpan.FromMilliseconds(400); visualCommitTimer.Start(); }
     }
     private void StartVisualPreview()
     {
@@ -69,12 +72,17 @@ public sealed partial class EditorWindow
     }
     private ProjectSnapshot? StageVisualDraft()
     {
+        if (mockupEditing) {
+            if (!visualTransaction) { editor.BeginTransaction(); visualTransaction = true; }
+            return editor.PreviewCommand(new { op = "settings", editor = MockupDraft() });
+        }
         var effect = SelectedVisualDraft(); if (effect is null) return null;
         if (!visualTransaction) { editor.BeginTransaction(); visualTransaction = true; }
         return editor.PreviewCommand(new { op = "effectUpsert", effectId = effect.Id, effect });
     }
     private void LocateVisualPreview(ProjectSnapshot candidate)
     {
+        if (mockupEditing) return;
         var ranges = EngineSession.ResolveTimeline(candidate).Effects.Where(e => e.Id == selectedEffect).ToArray();
         var current = ranges.FirstOrDefault(e => position > e.OutputStart + 10_000 && position < e.OutputStart + e.OutputDuration - 10_000);
         if (current is not null || ranges.Length == 0) return;
@@ -132,16 +140,13 @@ public sealed partial class EditorWindow
             ShowNotice("效果保存未完成", error.Message);
         }
         finally {
-            committingVisuals = false; timeline.EditingEnabled = !working && !editor.IsExporting; UpdateState();
-            if (visualPending) { visualPreviewTimer!.Start(); visualCommitTimer!.Interval = TimeSpan.FromMilliseconds(400); if (!visualSliders.Any(s => s.IsDragging)) visualCommitTimer.Start(); }
+            committingVisuals = false; if (!visualPending) mockupEditing = false; timeline.EditingEnabled = !working && !editor.IsExporting; UpdateState();
+            if (visualPending) { visualPreviewTimer!.Start(); visualCommitTimer!.Interval = TimeSpan.FromMilliseconds(400); if (!AnyVisualControlDragging) visualCommitTimer.Start(); }
         }
     }
     private async Task RestartVisualAssetsAsync()
     {
-        assetsCancellation.Cancel(); await assetWorker; assetsCancellation.Dispose(); assetsCancellation = new();
-        thumbnails = System.Threading.Channels.Channel.CreateBounded<long>(128); pendingThumbnails.Clear(); timeline.ClearThumbnails();
-        var snapshot = editor.Snapshot; var queue = thumbnails; var token = assetsCancellation.Token;
-        assetWorker = Task.Run(() => BuildAssetsAsync(snapshot, queue, token, prepareAudio: false));
+        await RestartProjectAssetsAsync(prepareAudio: false, updateThumbnails: true);
     }
     private async Task CancelVisualChangesAsync()
     {
@@ -150,6 +155,7 @@ public sealed partial class EditorWindow
             await visualPreviewWork;
             if (visualTransaction) { editor.CancelTransaction(); visualTransaction = false; }
             await preview.UpdateEffectsAsync(editor.Snapshot, position);
+            mockupEditing = false; loadingVisuals = true; try { RefreshMockupInspector(forceText: true); } finally { loadingVisuals = false; }
             LoadSelectedVisual(); RefreshTimeline();
         }
         catch (Exception error) { ShowNotice("取消效果预览未完成", error.Message); }

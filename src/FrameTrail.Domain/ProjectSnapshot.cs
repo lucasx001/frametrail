@@ -141,6 +141,11 @@ public sealed record EditorSettings
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NormalizedRect? Crop { get; init; }
     public double CursorSmoothing { get; init; } = 0.08;
     public string FrameStyle { get; init; } = "none";
+    public double FrameScale { get; init; } = 1;
+    public double FrameToolbarScale { get; init; } = 1;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public double? FrameOuterCornerRadius { get; init; }
+    public string FrameTitle { get; init; } = "";
+    public string FrameBrowserAddress { get; init; } = "";
     public string CameraShape { get; init; } = "rounded";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public BackdropSettings? Backdrop { get; init; }
 }

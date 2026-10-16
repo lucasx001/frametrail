@@ -9,3 +9,5 @@ CMakeUserPresets.json
 *.user
 *.suo
 *.frametrailproject/
+__pycache__/
+*.py[cod]

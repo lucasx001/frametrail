@@ -9,6 +9,13 @@ activity extension and merge rules from
 `Sources/RecorderCore/AutoZoomPlanner.swift`, reference revision
 `6df2c49b7388b753c92147a8d679ad410d3aa7dc`.
 
+The mockup selector and native frame rendering adapt EditorMockupTurntable.swift,
+EditorVisualEffectsControls.swift, EditorInspectorKnobs.swift, EditorInspectorView.swift,
+EditorInspectorArtwork.swift, ScreenFrameDefaults.swift, CompositionScene.swift and
+FrameScene.swift and SharedFrameRenderer.swift at that same revision. The ports are maintained in
+`EditorMockupTurntable.cs`, `EditorMockupKnob.cs`, `EditorWindow.Mockups.cs`,
+`FrameStyles.cs`, `core/include/frametrail/core/mockup.hpp` and `media/mockup.cpp`.
+
 Copyright (c) 2026 神烦老狗. Distributed under the MIT License.
 The complete original notice is retained in [dogsc-MIT.txt](docs/licenses/dogsc-MIT.txt).
 

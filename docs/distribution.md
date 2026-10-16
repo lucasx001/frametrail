@@ -12,6 +12,8 @@ M4 当前为开发候选阶段。正式对外分发前需完成 [0010](0010-reli
 
 `package.cmd` 默认执行锁依赖 Release 构建及测试，然后自包含发布；`-SkipBuild` 跳过前置全量构建/测试，但 publish 仍编译应用。产物是 x64 ZIP、MSIX、逐文件 `payload-manifest.json`、NuGet 锁文件和 `SHA256SUMS.txt`。清单记录源提交和是否有未提交修改；自包含运行时、编译 XAML、原生 DLL、字体和许可都进入载荷。
 
+应用图标统一使用 `src/FrameTrail.App/Assets/Brand/FrameTrail.Icon.v1.ico`，嵌入 EXE，并随 build/publish 复制供各窗口加载。`src/FrameTrail.App/PackageAssets/` 包含从同版 PNG 生成的 57 个透明安装包图标，覆盖基准尺寸、125%–400% 缩放和明暗无底板资源。打包时由 `packaging/priconfig.xml` 将构建 PRI 中的图标和嵌入 XAML 一并合入包身份对应的 `resources.pri`；保留 `FrameTrail.App.pri` 供 WinUI 加载。更新原图后可通过 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icon-assets.ps1` 重建这些 PNG。见 [图标验证](validation/app-icon.md)。
+
 `verify-package` 逐项校验载荷和两个压缩包的 SHA-256；`-SmokeTest` 清除子进程的开发运行时变量和 PATH，执行 100 次引擎生命周期检查，并核对实际加载的运行时与产品模块位置。`-WorkflowTest` 在同一候选上录制两段真实屏幕区域、保存/重开、剪辑/撤销/重做并导出 MP4。UI 检查属于应用内调用，不等同于系统鼠标/跨 DPI 可访问性验收。
 
 ## 签名与证书

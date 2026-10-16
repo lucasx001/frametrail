@@ -95,6 +95,30 @@
             </Grid>
         </ControlTemplate></Setter.Value></Setter>
     </Style>
+    <Style x:Key="RecorderIconToggle" TargetType="ToggleButton">
+        <Setter Property="Width" Value="44" /><Setter Property="Height" Value="44" />
+        <Setter Property="Padding" Value="0" /><Setter Property="BorderThickness" Value="0" />
+        <Setter Property="UseSystemFocusVisuals" Value="True" />
+        <Setter Property="FocusVisualPrimaryThickness" Value="1" /><Setter Property="FocusVisualSecondaryThickness" Value="0" />
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
+            <Grid x:Name="Root" Background="Transparent" CornerRadius="22">
+                <VisualStateManager.VisualStateGroups>
+                    <VisualStateGroup x:Name="CommonStates">
+                        <VisualState x:Name="Normal" />
+                        <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Background" Value="{ThemeResource RecorderWell}" /></VisualState.Setters></VisualState>
+                        <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Presenter.Opacity" Value="0.55" /></VisualState.Setters></VisualState>
+                        <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.35" /></VisualState.Setters></VisualState>
+                    </VisualStateGroup>
+                    <VisualStateGroup x:Name="CheckStates">
+                        <VisualState x:Name="Unchecked" />
+                        <VisualState x:Name="Checked"><VisualState.Setters><Setter Target="OnDot.Visibility" Value="Visible" /></VisualState.Setters></VisualState>
+                    </VisualStateGroup>
+                </VisualStateManager.VisualStateGroups>
+                <ContentPresenter x:Name="Presenter" HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" />
+                <Ellipse x:Name="OnDot" Width="4" Height="4" Fill="{StaticResource RecorderMint}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,6" Visibility="Collapsed" />
+            </Grid>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style x:Key="RecorderPillButton" TargetType="Button" BasedOn="{StaticResource RecorderIconButton}">
         <Setter Property="Width" Value="Auto" /><Setter Property="MinWidth" Value="72" />
         <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}" /><Setter Property="FontSize" Value="13" />

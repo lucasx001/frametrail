@@ -40,15 +40,15 @@
        </Grid>
       </Button>
       <TextBox x:Name="RecordingName" PlaceholderText="自动命名" Margin="6,4" Height="34" MinHeight="34" FontFamily="{StaticResource RecorderFont}" FontSize="13" Padding="12,5" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="17" AutomationProperties.Name="录制名称" />
-      <Border Background="{ThemeResource RecorderSilver}" CornerRadius="17" Padding="3" Margin="6,4"><Border Background="{ThemeResource RecorderWell}" CornerRadius="14" Height="28"><TextBlock Text="H.264" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" /></Border></Border>
+      <StackPanel Margin="10,4" Spacing="6"><TextBlock Text="视频编码" Style="{StaticResource RecorderCaption}"/><ComboBox x:Name="CodecPicker" HorizontalAlignment="Stretch" FontSize="12" BorderThickness="0" Background="{ThemeResource RecorderWell}" CornerRadius="16" AutomationProperties.Name="录制视频编码" AutomationProperties.AutomationId="recorder.videoCodec"/></StackPanel>
       <Grid Margin="10,4" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
        <TextBlock Text="帧率上限" VerticalAlignment="Center" /><ComboBox x:Name="FpsPicker" Grid.Column="1" SelectedIndex="0" HorizontalAlignment="Stretch" FontSize="12" BorderThickness="0" Background="{ThemeResource RecorderWell}" CornerRadius="16" AutomationProperties.Name="录制帧率上限"><ComboBoxItem Content="30 FPS" /><ComboBoxItem Content="60 FPS" /></ComboBox>
       </Grid>
-      <ToggleButton x:Name="PointerEnabled" Content="记录光标与点击" IsChecked="True" Style="{StaticResource RecorderSettingToggle}" />
+      <ToggleButton x:Name="PointerEnabled" Content="记录光标与点击" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" Style="{StaticResource RecorderSettingToggle}" />
       <ToggleButton x:Name="ExcludeControl" Content="排除录制条与备忘录" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" Style="{StaticResource RecorderSettingToggle}" />
       <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
       <Button Style="{StaticResource RecorderMenuButton}" Click="Android_Click" Content="Android USB 录屏…" />
-      <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="打开项目…" />
+      <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="打开已有项目…" />
       <Button x:Name="RecoverButton" Style="{StaticResource RecorderMenuButton}" Click="Recovery_Click" Content="恢复中断录制" />
       <Button x:Name="MemoMenuButton" Style="{StaticResource RecorderMenuButton}" Click="Memo_Click" Content="打开备忘录" />
       <Button x:Name="RefreshButton" Style="{StaticResource RecorderMenuButton}" Click="Refresh_Click" Content="刷新来源与设备" />
@@ -109,9 +109,11 @@
    <Button x:Name="SourceWheel" Width="106" Height="40" CornerRadius="20" Background="{ThemeResource RecorderWell}" Style="{StaticResource RecorderIconButton}" Click="SourceMode_Click" PointerWheelChanged="SourceMode_Wheel" KeyDown="SourceMode_KeyDown" AutomationProperties.Name="录制来源：显示器" ToolTipService.ToolTip="点击、滚轮或方向键切换录制来源">
     <StackPanel Orientation="Horizontal" Spacing="8"><local:RecorderGlyph x:Name="SourceGlyph" Kind="Display" /><TextBlock x:Name="SourceModeLabel" Text="显示器" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" /><Canvas Width="6" Height="10" VerticalAlignment="Center"><Path Data="M1,3 L3,1 L5,3 M1,7 L3,9 L5,7" Stroke="{ThemeResource RecorderFaint}" StrokeThickness="1" StrokeLineJoin="Round" /></Canvas></StackPanel>
    </Button>
+   <Button x:Name="OpenProjectButton" Style="{StaticResource RecorderIconButton}" Click="Open_Click" AutomationProperties.Name="打开已有项目" AutomationProperties.AutomationId="recorder.openProject" ToolTipService.ToolTip="从项目保存目录打开已有项目"><local:RecorderGlyph Kind="Folder" Width="17" Height="17" /></Button>
    <Button x:Name="MicrophoneButton" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Microphone_Click" AutomationProperties.Name="麦克风：关闭" ToolTipService.ToolTip="麦克风"><local:RecorderGlyph x:Name="MicrophoneGlyph" Kind="Microphone" IsOn="False" Width="16" Height="16" /></Button>
    <Button x:Name="CameraButton" Style="{StaticResource RecorderIconButton}" Click="Camera_Click" AutomationProperties.Name="摄像头：关闭" ToolTipService.ToolTip="摄像头"><local:RecorderGlyph x:Name="CameraGlyph" Kind="Camera" IsOn="False" Width="16" Height="16" /></Button>
    <Button x:Name="SystemButton" Style="{StaticResource RecorderIconButton}" Click="System_Click" AutomationProperties.Name="系统声音：关闭" ToolTipService.ToolTip="系统声音"><local:RecorderGlyph x:Name="SystemGlyph" Kind="Speaker" IsOn="False" Width="16" Height="16" /></Button>
+   <ToggleButton x:Name="AutomaticZoomEnabled" Style="{StaticResource RecorderIconToggle}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" AutomationProperties.AutomationId="recorder.autoZoom" AutomationProperties.Name="点击自动缩放：开启" ToolTipService.ToolTip="点击自动缩放：开启"><local:RecorderGlyph x:Name="AutomaticZoomGlyph" Kind="AutoZoom" Width="17" Height="17" /></ToggleButton>
    <Button x:Name="MoreButton" Style="{StaticResource RecorderIconButton}" Click="More_Click" AutomationProperties.Name="保存与录制配置" ToolTipService.ToolTip="保存与录制配置"><Grid><local:RecorderGlyph Kind="More" Width="16" Height="16" /><Ellipse x:Name="NoticeBadge" Width="5" Height="5" Fill="{StaticResource RecorderAmber}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0" Visibility="Collapsed" /></Grid></Button>
    <Button x:Name="StartButton" Margin="4,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Start_Click" AutomationProperties.Name="选择来源并开始录制" ToolTipService.ToolTip="开始录制"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Ellipse Fill="White" Width="12" Height="12" /></Grid></Button>
    <Grid Width="22" Height="40" Background="Transparent" AutomationProperties.Name="拖动录制条" ToolTipService.ToolTip="按住胶囊空白处或此处拖动"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>

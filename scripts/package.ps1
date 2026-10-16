@@ -26,6 +26,7 @@ foreach ($sdkRoot in @((Join-Path $env:USERPROFILE '.nuget\packages\microsoft.wi
     if (Test-Path -LiteralPath $sdkRoot) { $sdkTools += Get-ChildItem -LiteralPath $sdkRoot -Filter makeappx.exe -Recurse | Where-Object FullName -Match '[\\/]x64[\\/]' | Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName }
 }
 $makeappx = if ($sdkTools.Count -gt 0) { $sdkTools[0] } else { Resolve-FrameTrailTool 'makeappx.exe' }
+$makepri = Resolve-FrameTrailTool 'makepri.exe' @((Join-Path (Split-Path $makeappx) 'makepri.exe'))
 $dotnet = Resolve-FrameTrailTool 'dotnet'
 $payload = Join-Path $OutputDirectory 'app'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
@@ -46,23 +47,16 @@ Copy-Item -LiteralPath (Join-Path $nuget "microsoft.netcore.app.runtime.win-x64\
 $appSdkVersion = ($appProject.Project.ItemGroup.PackageReference | Where-Object Include -eq 'Microsoft.WindowsAppSDK').Version
 Copy-Item -LiteralPath (Join-Path $nuget "microsoft.windowsappsdk\$appSdkVersion\NOTICE.txt") -Destination (Join-Path $licenses 'WindowsAppSDK-NOTICE.txt')
 Copy-Item -LiteralPath (Join-Path $NativeBuildDirectory '_deps\nlohmann_json-src\LICENSE.MIT') -Destination (Join-Path $licenses 'nlohmann-json-MIT.txt')
-foreach ($required in @('FrameTrail.App.exe','FrameTrail.App.dll','FrameTrail.App.pri','App.xbf','MainWindow.xbf','EditorWindow.xbf','RecorderStyles.xbf','EditorStyles.xbf','coreclr.dll','hostfxr.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','Assets\Fonts\LICENSE.txt','Licenses\dogsc-MIT.txt','THIRD-PARTY-NOTICES.md','Docs\privacy.md')) {
+foreach ($required in @('FrameTrail.App.exe','FrameTrail.App.dll','FrameTrail.App.pri','App.xbf','MainWindow.xbf','EditorWindow.xbf','RecorderStyles.xbf','EditorStyles.xbf','coreclr.dll','hostfxr.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','Assets\Fonts\LICENSE.txt','Assets\Brand\FrameTrail.Icon.v1.ico','PackageAssets\StoreLogo.png','PackageAssets\Square44x44Logo.png','PackageAssets\Square150x150Logo.png','Licenses\dogsc-MIT.txt','THIRD-PARTY-NOTICES.md','Docs\privacy.md')) {
     if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Candidate is missing $required" }
 }
 Get-ChildItem -LiteralPath $payload -Filter '*.pdb' -Recurse | Remove-Item
 $manifest.Package.Identity.Publisher = $Publisher
 $manifest.Save((Join-Path $payload 'AppxManifest.xml'))
-Add-Type -AssemblyName System.Drawing
-$assets = Join-Path $payload 'PackageAssets'; New-Item -ItemType Directory -Path $assets | Out-Null
-foreach ($entry in @(@('StoreLogo',50),@('Square44x44Logo',44),@('Square150x150Logo',150))) {
-    $size = [int]$entry[1]; $bitmap = New-Object Drawing.Bitmap($size,$size); $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    try {
-        $graphics.Clear([Drawing.Color]::FromArgb(255,24,30,40)); $graphics.SmoothingMode = 'AntiAlias'
-        $pen = New-Object Drawing.Pen([Drawing.Color]::FromArgb(255,90,174,255),([single]($size * 0.09)))
-        try { $graphics.DrawRectangle($pen,([single]($size * 0.23)),([single]($size * 0.23)),([single]($size * 0.54)),([single]($size * 0.54))) } finally { $pen.Dispose() }
-        $bitmap.Save((Join-Path $assets ($entry[0] + '.png')),[Drawing.Imaging.ImageFormat]::Png)
-    } finally { $graphics.Dispose(); $bitmap.Dispose() }
-}
+# Reindex the build's PRI under the package identity so shell icon qualifiers
+# and embedded WinUI XAML resources are available together in resources.pri.
+& $makepri new /pr $payload /cf (Join-Path $ProjectRoot 'packaging\priconfig.xml') /mn (Join-Path $payload 'AppxManifest.xml') /of (Join-Path $payload 'resources.pri') /o > (Join-Path $OutputDirectory 'makepri.log') 2>&1
+if ($LASTEXITCODE -ne 0) { throw 'Package icon indexing failed; see makepri.log in the output directory.' }
 $name = "FrameTrail-$version-x64"
 $package = Join-Path $OutputDirectory ($name + '.msix')
 & $makeappx pack /d $payload /p $package /o > (Join-Path $OutputDirectory 'makeappx.log') 2>&1

@@ -47,13 +47,31 @@ public sealed partial class MainWindow
             await SaveUiFrameAsync(RecorderRoot, Path.Combine(directory, "setup-light.png"));
             if (Math.Abs(RecorderRoot.ActualHeight - 56) > 1 || SetupPanel.ActualWidth > RecorderRoot.ActualWidth + 1)
                 throw new InvalidOperationException($"Setup layout clipped: {RecorderRoot.ActualWidth}x{RecorderRoot.ActualHeight}, content {SetupPanel.ActualWidth}.");
-            checks.Add("Setup fits 374x56 DIPs without content clipping.");
+            checks.Add($"Setup fits {SetupWidth}x56 DIPs without content clipping.");
+            if (CodecPicker.Items.Count != 3 || VideoCodecSelector.Selected(CodecPicker) != FrameTrail.Domain.VideoCodecs.H264) throw new InvalidOperationException("Recording codecs or compatible default are missing.");
+            foreach (var item in CodecPicker.Items.OfType<ComboBoxItem>().Where(i => i.IsEnabled)) {
+                CodecPicker.SelectedItem = item;
+                if (VideoCodecSelector.Selected(CodecPicker) != (string)item.Tag) throw new InvalidOperationException("Recording codec selection was ignored.");
+            }
+            CodecPicker.SelectedIndex = 0;
+            checks.Add("Recording settings expose H.264, H.265/HEVC and AV1, gate availability and retain the selected codec; H.264 is the default.");
+            if (AutomaticZoomEnabled.IsChecked != true || !AutomaticZoomGlyph.IsOn) throw new InvalidOperationException("Automatic zoom must default on.");
+            AutomaticZoomEnabled.IsChecked = false;
+            if (AutomaticZoomGlyph.IsOn || PointerEnabled.IsChecked != true) throw new InvalidOperationException("Automatic zoom off must retain cursor recording.");
+            await SaveUiFrameAsync(RecorderRoot, Path.Combine(directory, "setup-zoom-off.png"));
+            AutomaticZoomEnabled.IsChecked = true; PointerEnabled.IsChecked = false;
+            if (AutomaticZoomEnabled.IsEnabled || AutomaticZoomGlyph.IsOn) throw new InvalidOperationException("Automatic zoom needs pointer recording.");
+            PointerEnabled.IsChecked = true;
+            if (!AutomaticZoomEnabled.IsEnabled || !AutomaticZoomGlyph.IsOn) throw new InvalidOperationException("Automatic zoom was not restored with pointer recording.");
+            checks.Add("Recorder capsule exposes automatic zoom on/off independently of cursor recording, with the pointer dependency enforced.");
             RecorderRoot.RequestedTheme = ElementTheme.Dark; await Task.Delay(150);
             await SaveUiFrameAsync(RecorderRoot, Path.Combine(directory, "setup-dark.png"));
             RecorderRoot.RequestedTheme = ElementTheme.Light;
             RollSource(1); if (SourceModeLabel.Text != "窗口") throw new InvalidOperationException("Source wheel did not advance to window.");
             RollSource(1); if (SourceModeLabel.Text != "区域") throw new InvalidOperationException("Source wheel did not advance to region.");
             RollSource(1); if (SourceModeLabel.Text != "手机") throw new InvalidOperationException("Source wheel did not advance to Android.");
+            if (CodecPicker.IsEnabled) throw new InvalidOperationException("Phone original codec must not use the desktop codec selector.");
+            if (AutomaticZoomEnabled.IsEnabled || AutomaticZoomGlyph.IsOn) throw new InvalidOperationException("Desktop click zoom must be disabled for Android.");
             RollSource(1); if (SourceModeLabel.Text != "显示器") throw new InvalidOperationException("Source wheel did not return to display.");
             checks.Add("Source wheel cycles display, window, region and Android.");
             MicrophoneFlyout.ShowAt(MicrophoneButton); await Task.Delay(200);
@@ -72,8 +90,22 @@ public sealed partial class MainWindow
             projects = Path.Combine(directory, "projects"); RecordingName.Text = "ui-validation-" + DateTime.Now.ToString("HHmmss");
             SoftwareAllowed.IsChecked = true; SystemEnabled.IsChecked = false; CameraEnabled.IsChecked = false;
             var source = sources.First(s => s.Kind == CaptureSourceKind.Monitor && s.IsSdr);
+            foreach (var mode in new[] { 0, 1 })
+            {
+                CaptureSource? picked = null;
+                var front = source with { Kind = CaptureSourceKind.Window, Handle = 1, Name = "Front fixture window", X = source.X + 20, Y = source.Y + 20, Width = 320, Height = 240 };
+                var back = front with { Handle = 2, Name = "Back fixture window" };
+                using var picking = new CaptureSelectionController(this, mode, new[] { source, front, back }, (chosen, crop) => { if (crop is not null) throw new InvalidOperationException("Click selection unexpectedly cropped."); picked = chosen; }, () => { });
+                if (picking.UsesCrosshair) throw new InvalidOperationException("Display/window selection registered a crosshair cursor.");
+                picking.Pointer(0x201, source.X + 100, source.Y + 100);
+                if (picked is not null) throw new InvalidOperationException("Selection must wait for click release.");
+                picking.Pointer(0x202, source.X + 100, source.Y + 100);
+                if (picked?.Handle != (mode == 0 ? source.Handle : front.Handle)) throw new InvalidOperationException("Click did not directly confirm the display/topmost window.");
+            }
+            checks.Add("Display/window selectors register the arrow cursor; one down/up click confirms the display or frontmost overlapping window without a second confirmation.");
             using (var framing = new CaptureSelectionController(this, 2, sources, (_, _) => { }, () => { }))
             {
+                if (!framing.UsesCrosshair) throw new InvalidOperationException("Region selector must register the crosshair cursor.");
                 framing.Show();
                 framing.Pointer(0x201, source.X + 20, source.Y + 20);
                 framing.Pointer(0x200, source.X + 660, source.Y + 380);

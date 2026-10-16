@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "../codecs/video_codec.hpp"
 #include <algorithm>
 #include <array>
 #include <propvarutil.h>
@@ -86,7 +87,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
     ComPtr<IMFSinkWriter> writer; FT_MEDIA_CHECK(MFCreateSinkWriterFromURL(temp.c_str(), nullptr, attributes.Get(), &writer));
     std::unique_ptr<Nv12> converter;
     if (!audio_only) {
-        ComPtr<IMFMediaType> type; FT_MEDIA_CHECK(MFCreateMediaType(&type)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264));
+        ComPtr<IMFMediaType> type; FT_MEDIA_CHECK(MFCreateMediaType(&type)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_SUBTYPE, frametrail::codecs::subtype(frametrail::codecs::id(project.export_settings.video_codec))));
         FT_MEDIA_CHECK(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, project.export_settings.width, project.export_settings.height)); FT_MEDIA_CHECK(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, fps, 1));
         FT_MEDIA_CHECK(MFSetAttributeRatio(type.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1)); FT_MEDIA_CHECK(type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
         FT_MEDIA_CHECK(type->SetUINT32(MF_MT_AVG_BITRATE, std::clamp<uint32_t>(project.export_settings.width * project.export_settings.height * fps / 8, 4000000, 80000000)));

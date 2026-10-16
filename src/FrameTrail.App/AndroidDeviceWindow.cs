@@ -29,6 +29,7 @@ internal sealed class AndroidDeviceWindow : Window
     internal AndroidDeviceWindow(uint fps, Func<AndroidSelection, AndroidConnection, CancellationToken, Task> start)
     {
         this.fps = fps; this.start = start; Title = "FrameTrail · Android USB";
+        AppIcon.Apply(this);
         root.RequestedTheme = EditorAppearance.Current;
         root.Background = RecorderTheme.Brush(root, "EditorPanel");
         for (int i = 0; i < 6; i++) root.RowDefinitions.Add(new RowDefinition { Height = i == 3 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });

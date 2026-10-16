@@ -73,6 +73,26 @@ int32_t __cdecl ft_media_update_effects(ft_media_handle handle,const char* json,
         auto old=s->generation.load();while(generation>old && !s->generation.compare_exchange_weak(old,generation)){}
     });
 }
+int32_t __cdecl ft_media_update_project(ft_media_handle handle,const char* json,uint32_t length,uint64_t generation) {
+    return protect([&] {
+        if(!json || !length || length>16u*1024u*1024u)winrt::throw_hresult(E_INVALIDARG);
+        auto project=parse_project(std::string_view(json,length)); FrameSceneEvaluator evaluator(project);
+        auto s=get(handle); std::scoped_lock lock(s->mutex); s->check_cancel();
+        if(generation<s->generation)winrt::throw_hresult(cancelled_hr);
+        // Cached readers and pointer tracks are valid only while source identity,
+        // paths, offsets and formats remain unchanged. Switching projects reloads.
+        auto before=Json::parse(serialize_project(s->project)),after=Json::parse(serialize_project(project));
+        for(auto key:{"schemaVersion","projectId","sourceDuration","media"})
+            if(before.at(key)!=after.at(key))throw ValidationError("preview","source changes require a new media session");
+        if(before.value("primarySource",Json{})!=after.value("primarySource",Json{}))throw ValidationError("preview","primary source changed");
+        if(s->audio_running)throw ValidationError("preview","stop preview audio before editing");
+        if(generation<s->generation)winrt::throw_hresult(cancelled_hr);
+        s->project=std::move(project); s->evaluator=std::move(evaluator);
+        s->output_duration=s->evaluator.timeline().output_duration();
+        if(s->renderer)s->renderer->settings_source=nullptr;
+        auto old=s->generation.load();while(generation>old && !s->generation.compare_exchange_weak(old,generation)){}
+    });
+}
 int32_t __cdecl ft_media_render(ft_media_handle handle, int64_t ticks, uint64_t generation, const wchar_t* png) {
     return protect([&] {
         auto s = get(handle); if (generation < s->generation) winrt::throw_hresult(cancelled_hr);

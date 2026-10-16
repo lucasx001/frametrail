@@ -9,6 +9,16 @@ public sealed class ProjectJsonTests
 {
     private static string Fixture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", name));
 
+    [Theory]
+    [InlineData("h265")]
+    [InlineData("vp9")]
+    [InlineData("")]
+    public void UnknownVideoCodecDoesNotBecomeAnUnplayableProject(string codec)
+    {
+        var project = ProjectJson.Deserialize(Fixture("project-v1.json"));
+        Assert.Throws<ProjectFormatException>(() => ProjectJson.Serialize(project with { Export = project.Export with { VideoCodec = codec } }));
+    }
+
     [Fact]
     public void VisualSettingsAndProjectAssetsRoundtripWithoutMachinePaths()
     {

@@ -54,24 +54,7 @@ public sealed partial class EditorSession
     public async Task AutoZoomAsync(double scale = 1.6)
     {
         if (Snapshot.PrimarySource?.Kind == "androidUsb") return;
-        var events = new List<object>();
-        foreach (var media in Snapshot.Media.Where(m => m.Kind == MediaKind.PointerEvents))
-        {
-            using var reader = new StreamReader(workspace.Resolve(media.Path)); string? line; long lastActivity = -1;
-            while ((line = await reader.ReadLineAsync()) is not null)
-            {
-                if (line.Length > 32768) throw new IOException("光标事件过长。");
-                using var document = JsonDocument.Parse(line); var e = document.RootElement;
-                if (!e.TryGetProperty("type", out var type) || type.GetString() != "pointer" || e.TryGetProperty("inside", out var inside) && !inside.GetBoolean()) continue;
-                long ticks = checked(VisualResources.Ticks(new() { Ticks = e.GetProperty("ticks").GetInt64(), Timescale = e.GetProperty("timescale").GetInt32() }) + VisualResources.Ticks(media.StartOffset));
-                int kind = e.TryGetProperty("kind", out var k) ? k.GetInt32() : 0;
-                if (kind is not (1 or 3) && ticks - lastActivity < 1_000_000) continue;
-                lastActivity = ticks;
-                events.Add(new { ticks, x = e.GetProperty("x").GetDouble(), y = e.GetProperty("y").GetDouble(), kind });
-                if (events.Count > 100000) throw new IOException("自动运镜事件超过本次规划上限。");
-            }
-        }
-        await ExecuteAsync(new { op = "autoZoom", events, scale });
+        await ExecuteAsync(await AutomaticZoomPlanner.CreateCommandAsync(workspace, Snapshot, scale));
     }
     public Task ApplyPresetAsync(string name)
     {

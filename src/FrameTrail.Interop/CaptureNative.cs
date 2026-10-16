@@ -45,6 +45,11 @@ internal static class CaptureNative
         internal long QpcFrequency;
     }
     [StructLayout(LayoutKind.Sequential)]
+    internal struct CodecCapabilities
+    {
+        internal uint StructSize, Codec, HardwareCount, SoftwareCount, DecoderCount;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     internal struct Performance
     {
         internal uint StructSize, GpuSamples;
@@ -53,10 +58,12 @@ internal static class CaptureNative
 
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_get_capabilities")]
     internal static extern int GetCapabilities(ref Capabilities capabilities);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_get_codec_capabilities")]
+    internal static extern int GetCodecCapabilities(ref CodecCapabilities capabilities);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_enumerate_sources")]
     internal static extern int EnumerateSources([Out] Source[]? sources, uint capacity, out uint count);
-    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode, EntryPoint = "ft_capture_start")]
-    internal static extern int Start(in Options options, out CaptureSafeHandle handle);
+    [DllImport(Library, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode, EntryPoint = "ft_capture_start_with_codec")]
+    internal static extern int Start(in Options options, uint codec, out CaptureSafeHandle handle);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_pause")]
     internal static extern int Pause(CaptureSafeHandle handle);
     [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "ft_capture_resume")]

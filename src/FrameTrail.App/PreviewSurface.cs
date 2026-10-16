@@ -56,6 +56,16 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
         catch (OperationCanceledException) { }
         finally { renderGate.Release(); }
     }
+    internal async Task UpdateProjectAsync(ProjectSnapshot snapshot, long ticks)
+    {
+        var current = media; if (current is null || disposed) throw new InvalidOperationException("Preview is unavailable.");
+        InvalidateRequests(); var request = generation;
+        await renderGate.WaitAsync();
+        try {
+            if (ReferenceEquals(media, current) && request == generation)
+                await Task.Run(() => { current.UpdateProject(snapshot, request); current.Render(ticks, request); });
+        } finally { renderGate.Release(); }
+    }
     private async Task ResizeAsync()
     {
         var current = media; if (current is null || disposed || ActualWidth < 1 || ActualHeight < 1) return;

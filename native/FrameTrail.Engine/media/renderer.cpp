@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "frametrail/core/mockup.hpp"
 #include "visual_gpu.hpp"
 #include <d2d1_1helper.h>
 #include <algorithm>
@@ -66,17 +67,20 @@ void Renderer::layer(const Project& p, const MediaFrame& frame, float radius, bo
     radius = std::min(radius, static_cast<float>(std::min(r.width, r.height) / 2));
     if(!screen) {if(visual.camera_shape=="circle")radius=float(std::min(r.width,r.height)/2);else if(visual.camera_shape=="rectangle")radius=0;}
     ComPtr<ID2D1SolidColorBrush> brush; FT_MEDIA_CHECK(d2->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, 1), &brush));
+    auto shadow_rect=rect;float shadow_radius=radius;
+    if(screen && visual.frame_style!="none") {
+        auto f=frametrail::core::frame_decoration(visual.frame_style,settings.value("frameScale",1.0),settings.value("frameToolbarScale",1.0),settings.value("frameOuterCornerRadius",-1.0),
+            settings.value("cornerRadius",0.0),std::min(p.canvas.width,p.canvas.height),r.width,r.height);
+        radius=float(f.content_radius);shadow_radius=float(f.outer_radius);
+        shadow_rect=D2D1::RectF(rect.left-float(f.inset),rect.top-float(f.top),rect.right+float(f.inset),rect.bottom+float(f.inset));
+    }
     if (shadow) for (int i = 12; i >= 1; --i) {
         const float spread = i * 1.7f; brush->SetOpacity(static_cast<float>(settings.value("shadow", 0.35)) * 0.022f);
-        auto sr = D2D1::RoundedRect(D2D1::RectF(rect.left - spread, rect.top - spread + 6, rect.right + spread, rect.bottom + spread + 6), radius + spread, radius + spread);
+        auto sr = D2D1::RoundedRect(D2D1::RectF(shadow_rect.left - spread, shadow_rect.top - spread + 6, shadow_rect.right + spread, shadow_rect.bottom + spread + 6), shadow_radius + spread, shadow_radius + spread);
         d2->FillRoundedRectangle(sr, brush.Get());
     }
     if(screen && visual.frame_style!="none") {
-        brush->SetOpacity(1);brush->SetColor(D2D1::ColorF(0.08f,0.09f,0.11f));
-        float inset=visual.frame_style=="device"?10.f:3.f,header=visual.frame_style=="browser"?28.f:visual.frame_style=="window"?22.f:10.f;
-        d2->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(rect.left-inset,rect.top-header,rect.right+inset,rect.bottom+inset),radius+inset,radius+inset),brush.Get());
-        if(visual.frame_style!="device")for(int i=0;i<3;i++){brush->SetColor(D2D1::ColorF(i==0?0.95f:0.85f,i==1?0.75f:0.35f,i==2?0.6f:0.3f));d2->FillEllipse(D2D1::Ellipse(D2D1::Point2F(rect.left+10+i*12,rect.top-header/2),3,3),brush.Get());}
-        if(visual.frame_style=="browser") {brush->SetColor(D2D1::ColorF(0.2f,0.22f,0.26f));d2->FillRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(rect.left+58,rect.top-22,rect.right-18,rect.top-6),5,5),brush.Get());}
+        frame_chrome(rect,visual.frame_style,std::min(p.canvas.width,p.canvas.height),settings);
     }
     ComPtr<ID2D1RoundedRectangleGeometry> geometry; auto rounded = D2D1::RoundedRect(rect, radius, radius); FT_MEDIA_CHECK(factory->CreateRoundedRectangleGeometry(rounded, &geometry));
     d2->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geometry.Get()), nullptr);

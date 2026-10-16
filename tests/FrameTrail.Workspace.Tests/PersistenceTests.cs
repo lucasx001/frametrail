@@ -34,6 +34,14 @@ public sealed class PersistenceTests : IAsyncLifetime
         Assert.Equal(3, ProjectJson.Deserialize(await File.ReadAllTextAsync(workspace.Resolve("project.json"))).Revision);
         Assert.Equal(1, ProjectJson.Deserialize(await File.ReadAllTextAsync(workspace.Resolve("project.previous.json"))).Revision);
     }
+    [Fact] public async Task CleanupLeaseAllowsDamagedProjectsAndRejectsActiveWriterWithoutReadingOrReplacingData()
+    {
+        Directory.CreateDirectory(Project); var json = Path.Combine(Project, "project.json"); await File.WriteAllTextAsync(json, "damaged project");
+        await ProjectWorkspace.VerifyExclusiveAccessAsync(Project);
+        using (var writer = new FileStream(Path.Combine(Project, ".write.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            await Assert.ThrowsAsync<IOException>(() => ProjectWorkspace.VerifyExclusiveAccessAsync(Project));
+        Assert.Equal("damaged project", await File.ReadAllTextAsync(json));
+    }
     [Fact] public async Task FailedSaveCanRetrySameRevision()
     {
         await using var workspace = await CreateAsync(); var path = workspace.Resolve("media/screen.mp4"); File.Delete(path);

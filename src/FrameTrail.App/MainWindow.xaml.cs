@@ -15,6 +15,7 @@ namespace FrameTrail.App;
 
 public sealed partial class MainWindow : Window
 {
+    private const int SetupWidth = 462;
     private EngineSession? session;
     private RecordingCoordinator coordinator = new();
     private ProjectWorkspace? opened;
@@ -27,6 +28,7 @@ public sealed partial class MainWindow : Window
     private IReadOnlyList<CaptureSource> sources = Array.Empty<CaptureSource>();
     private IReadOnlyList<AudioDevice> microphones = Array.Empty<AudioDevice>(), outputs = Array.Empty<AudioDevice>();
     private IReadOnlyList<CameraDevice> cameras = Array.Empty<CameraDevice>();
+    private IReadOnlyList<VideoCodecCapabilities> videoCodecs = Array.Empty<VideoCodecCapabilities>();
     private AudioDevice? microphone, output;
     private CameraDevice? camera;
     private CaptureSource? chosenSource;
@@ -36,7 +38,8 @@ public sealed partial class MainWindow : Window
     private nint hwnd, previousProcedure;
     private readonly WndProc procedure;
     private bool stopRegistered, markerRegistered;
-    private string projects = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "FrameTrail");
+    private readonly ProjectLocations projectLocations = new();
+    private string projects;
     private string engineStatus = "";
     private string surface = "";
     private string lastWarning = "";
@@ -48,6 +51,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         procedure = WindowProcedure;
+        projects = projectLocations.RecordingDirectory;
         InitializeComponent();
         RecorderRoot.RequestedTheme = EditorAppearance.Current;
         EditorAppearance.Changed += SetAppearance;
@@ -59,7 +63,7 @@ public sealed partial class MainWindow : Window
         try { session = new(); engineStatus = $"FrameTrail Engine {EngineSession.Version} · ABI {EngineSession.ExpectedAbiVersion}"; }
         catch (Exception error) { engineStatus = error.Message; ShowFeedback("引擎初始化失败", error.Message, false); }
         coordinator.StatusChanged += UpdateStatus;
-        RecorderWindowChrome.Configure(this, 374, 56, 28, center: true);
+        RecorderWindowChrome.Configure(this, SetupWidth, 56, 28, center: true);
         var launchArgs = Environment.GetCommandLineArgs(); var dragTrace = Array.IndexOf(launchArgs, "--drag-diagnostics");
         RecorderWindowChrome.EnableDragging(this, RecorderRoot, HideFlyouts, dragTrace >= 0 && launchArgs.Length > dragTrace + 1
             ? line => File.AppendAllText(launchArgs[dragTrace + 1], line + Environment.NewLine) : null);
@@ -89,7 +93,7 @@ public sealed partial class MainWindow : Window
         {
             if (loaded) return;
             loaded = true;
-            RecorderWindowChrome.Resize(this, 374, 56, 28);
+            RecorderWindowChrome.Resize(this, SetupWidth, 56, 28);
             var args = Environment.GetCommandLineArgs();
             // Local visual QA must be able to capture the recorder itself. This
             // switch changes only this process; ordinary launches remain excluded.
@@ -103,10 +107,13 @@ public sealed partial class MainWindow : Window
                     var testIndex = Array.IndexOf(args, "--m2-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m3-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m4-self-test");
+                    if (testIndex < 0) testIndex = Array.IndexOf(args, "--mockup-self-test");
                     PresentEditor(opened, testIndex >= 0 && args.Length > testIndex + 1 ? args[testIndex + 1] : null);
                 }); return;
             }
             await InitializeRecorderAsync();
+            var projectTest = Array.IndexOf(args, "--project-open-self-test");
+            if (projectTest >= 0 && args.Length > projectTest + 2) { await RunProjectOpenValidationAsync(args[projectTest + 1], args[projectTest + 2]); return; }
             var androidUiIndex = Array.IndexOf(args, "--android-ui-self-test");
             if (androidUiIndex >= 0 && args.Length > androidUiIndex + 1) {
                 try { OpenAndroid(); await androidWindow!.ValidateUiAsync(Path.GetFullPath(args[androidUiIndex + 1])); }
@@ -196,9 +203,12 @@ public sealed partial class MainWindow : Window
             Sources: CaptureSession.EnumerateSources(),
             Outputs: Optional("系统声音", () => AudioCaptureSession.EnumerateDevices(AudioCaptureKind.System)),
             Microphones: Optional("麦克风", () => AudioCaptureSession.EnumerateDevices(AudioCaptureKind.Microphone)),
-            Cameras: Optional("摄像头", CameraCaptureSession.EnumerateDevices)));
+            Cameras: Optional("摄像头", CameraCaptureSession.EnumerateDevices),
+            Codecs: Optional("视频编码", CaptureSession.GetVideoCodecs)));
         sources = data.Sources.Where(s => s.Handle != (nuint)hwnd).ToArray();
         microphones = data.Microphones; outputs = data.Outputs; cameras = data.Cameras;
+        videoCodecs = data.Codecs;
+        VideoCodecSelector.Populate(CodecPicker, videoCodecs, true, VideoCodecSelector.Selected(CodecPicker));
         microphone = microphones.FirstOrDefault(d => d.Id == microphone?.Id) ?? microphones.FirstOrDefault(d => d.IsDefault) ?? microphones.FirstOrDefault();
         output = outputs.FirstOrDefault(d => d.Id == output?.Id) ?? outputs.FirstOrDefault(d => d.IsDefault) ?? outputs.FirstOrDefault();
         camera = cameras.FirstOrDefault(d => d.Id == camera?.Id);
@@ -251,9 +261,20 @@ public sealed partial class MainWindow : Window
             await SelectCameraAsync(cameras[0]);
     }
     private void AudioScope_Changed(object sender, RoutedEventArgs e) { if (viewReady) ApplyIcons(); }
+    private void AutomaticZoom_Changed(object sender, RoutedEventArgs e) { if (viewReady) ApplyAutomaticZoom(); }
+    private void ApplyAutomaticZoom()
+    {
+        bool available = sourceMode != 3 && PointerEnabled.IsChecked == true;
+        AutomaticZoomEnabled.IsEnabled = available && !busy && coordinator.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete;
+        AutomaticZoomGlyph.IsOn = available && AutomaticZoomEnabled.IsChecked == true;
+        string label = sourceMode == 3 ? "点击自动缩放：手机录屏不可用" : !available ? "点击自动缩放：请先开启记录光标与点击" : "点击自动缩放：" + (AutomaticZoomGlyph.IsOn ? "开启" : "关闭");
+        AutomationProperties.SetName(AutomaticZoomEnabled, label);
+        ToolTipService.SetToolTip(AutomaticZoomEnabled, label + (available ? "\n录制前切换；点击聚焦，停止操作后缩回全景" : ""));
+    }
     private void ApplyIcons()
     {
         if (!viewReady) return;
+        ApplyAutomaticZoom();
         MicrophoneGlyph.IsOn = MicEnabled.IsChecked == true; CameraGlyph.IsOn = sourceMode != 3 && CameraEnabled.IsChecked == true; SystemGlyph.IsOn = sourceMode != 3 && SystemEnabled.IsChecked == true;
         CameraButton.IsEnabled = sourceMode != 3; PointerEnabled.IsEnabled = sourceMode != 3;
         ToolTipService.SetToolTip(SystemButton, sourceMode == 3 ? "在手机连接面板设置内部音频" : "系统声音");
@@ -273,10 +294,10 @@ public sealed partial class MainWindow : Window
         HideFlyouts();
         await ExecuteAsync(async () =>
         {
-            var picker = new Windows.Storage.Pickers.FolderPicker(); picker.FileTypeFilter.Add("*");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-            var folder = await picker.PickSingleFolderAsync(); if (folder is null) return;
-            projects = folder.Path; DestinationName.Text = folder.Name; ToolTipService.SetToolTip(DestinationButton, projects);
+            using var picker = new ProjectFolderPicker(projectLocations.OpenDirectory(), "选择项目保存文件夹", "保存到此文件夹");
+            var folder = picker.Pick(hwnd); if (folder is null) return;
+            projectLocations.SetRecordingDirectory(folder);
+            projects = folder; DestinationName.Text = Path.GetFileName(folder); ToolTipService.SetToolTip(DestinationButton, projects);
             var candidates = await ProjectWorkspace.ScanRecoveryAsync(projects);
             RecoveryPicker.ItemsSource = candidates; RecoveryPicker.SelectedIndex = candidates.Count > 0 ? 0 : -1; RecoverButton.IsEnabled = candidates.Count > 0;
         });
@@ -299,6 +320,7 @@ public sealed partial class MainWindow : Window
     }
     private async Task BeginRecordingAsync(CaptureSource source, CaptureRegion? region, AndroidSelection? android = null, AndroidConnection? prepared = null, CancellationToken cancellationToken = default)
     {
+        if (android is null && CodecPicker.SelectedItem is null) throw new InvalidOperationException("没有可用的视频编码器，请检查显卡驱动与系统视频扩展后刷新设备。");
         if (opened is not null) { await opened.DisposeAsync(); opened = null; }
         var audio = new List<AudioSelection>();
         if (android is null && SystemEnabled.IsChecked == true)
@@ -320,7 +342,8 @@ public sealed partial class MainWindow : Window
         await coordinator.StartAsync(new(path, source, region, prepared?.Capture.Status.FpsLimit ?? (FpsPicker.SelectedIndex == 1 ? 60u : 30u),
             SoftwareAllowed.IsChecked == true, audio, android is null && CameraEnabled.IsChecked == true ? camera : null,
             android is null && CameraEnabled.IsChecked == true ? CameraFormatPicker.SelectedItem as CameraFormat : null, android is null && PointerEnabled.IsChecked == true,
-            Android: android, PreparedAndroid: prepared), cancellationToken);
+            Android: android, PreparedAndroid: prepared, AutomaticZoom: android is null && AutomaticZoomEnabled.IsChecked == true,
+            VideoCodec: android is null ? VideoCodecSelector.Selected(CodecPicker) : VideoCodecs.H264), cancellationToken);
     }
     private void Android_Click(object sender, RoutedEventArgs e) { HideFlyouts(); OpenAndroid(); }
     private void OpenAndroid() {
@@ -371,11 +394,14 @@ public sealed partial class MainWindow : Window
     {
         bool idle = coordinator.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete;
         SetPanelEnabled(SetupPanel, idle && !busy);
+        ApplyAutomaticZoom();
         StartButton.IsEnabled = session is not null && (sources.Count > 0 || sourceMode == 3) && !busy;
         PauseButton.IsEnabled = !busy && coordinator.State is RecordingWorkspaceState.Recording or RecordingWorkspaceState.Paused;
         StopButton.IsEnabled = PauseButton.IsEnabled;
         MarkerButton.IsEnabled = !busy && coordinator.State == RecordingWorkspaceState.Recording;
         RefreshButton.IsEnabled = idle && !busy;
+        CodecPicker.IsEnabled = idle && !busy && sourceMode != 3;
+        ToolTipService.SetToolTip(CodecPicker, sourceMode == 3 ? "手机原始录制使用 H.264，成片导出时可选择其他编码。" : "选择录制视频编码");
     }
     private static void SetPanelEnabled(Panel panel, bool enabled)
     {
@@ -409,7 +435,7 @@ public sealed partial class MainWindow : Window
             HideFlyouts();
             RecorderRoot.CornerRadius = new CornerRadius(idle ? 28 : 24);
             RecordingPanel.Measure(new Windows.Foundation.Size(double.PositiveInfinity, 48));
-            RecorderWindowChrome.Resize(this, idle ? 374 : recording ? RecordingPanel.DesiredSize.Width + 2 : 240, idle ? 56 : 48, idle ? 28 : 24);
+            RecorderWindowChrome.Resize(this, idle ? SetupWidth : recording ? RecordingPanel.DesiredSize.Width + 2 : 240, idle ? 56 : 48, idle ? 28 : 24);
             var visual = ElementCompositionPreview.GetElementVisual(RecordingDot); visual.StopAnimation("Opacity"); visual.Opacity = 1;
             RecordingDot.Fill = (Brush)Application.Current.Resources[paused ? "RecorderAmber" : "RecorderRed"];
             if (recording && !paused && new Windows.UI.ViewManagement.UISettings().AnimationsEnabled)
@@ -444,11 +470,80 @@ public sealed partial class MainWindow : Window
         HideFlyouts();
         await ExecuteAsync(async () =>
         {
-            var picker = new Windows.Storage.Pickers.FileOpenPicker(); picker.FileTypeFilter.Add(".json"); WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-            var file = await picker.PickSingleFileAsync(); if (file is null) return;
-            if (!string.Equals(Path.GetFileName(file.Path), "project.json", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("请选择工程目录中的 project.json。");
-            await ResetWorkspaceAsync(); opened = await ProjectWorkspace.OpenAsync(Path.GetDirectoryName(file.Path)!); PresentEditor(opened);
+            using var picker = new ProjectFolderPicker(projectLocations.OpenDirectory());
+            var folder = picker.Pick(hwnd); if (folder is null) return;
+            await OpenExistingProjectAsync(folder);
         });
+    }
+    private async Task OpenExistingProjectAsync(string path)
+    {
+        if (coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("请先结束当前录制，再打开其他项目。");
+        path = ProjectLocations.ProjectDirectory(path);
+        var current = editorWindow; var active = opened ?? coordinator.Workspace;
+        if (active is not null && string.Equals(active.DirectoryPath, path, StringComparison.OrdinalIgnoreCase))
+        { if (current is not null) current.Activate(); else PresentEditor(active); return; }
+        ProjectWorkspace? candidate = await ProjectWorkspace.OpenAsync(path);
+        EditorWindow? next = null;
+        try
+        {
+            // Validate and render the destination while the current project and lease
+            // are still intact. Invalid/locked projects never close the current editor.
+            next = CreateEditor(candidate); next.SetProjectTransition(true);
+            if (current is not null) next.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(current.AppWindow.Position.X, current.AppWindow.Position.Y, current.AppWindow.Size.Width, current.AppWindow.Size.Height));
+            next.Activate();
+            if (!await next.Startup.WaitAsync(TimeSpan.FromSeconds(30))) throw new IOException("所选项目无法完成预览，请检查项目素材。");
+            editorWindow = next;
+            if (current is not null)
+            {
+                await current.RequestCloseAsync();
+                if (!current.HasClosed) throw new IOException("当前项目尚未完成保存，已保留当前编辑页面。");
+            }
+            await ResetWorkspaceAsync(); opened = candidate; candidate = null;
+            next.SetProjectTransition(false); AppWindow.Hide(); next.Activate();
+        }
+        catch
+        {
+            editorWindow = current;
+            if (next is not null) await next.DiscardWindowAsync();
+            if (current is not null) current.Activate(); else { AppWindow.Show(); Activate(); }
+            throw;
+        }
+        finally { if (candidate is not null) await candidate.DisposeAsync(); }
+    }
+    private async Task DeleteExistingProjectAsync(string path)
+    {
+        if (coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("请先结束当前录制，再删除项目。");
+        path = ProjectLocations.DeletionDirectory(path);
+        bool active = string.Equals((opened ?? coordinator.Workspace)?.DirectoryPath, path, StringComparison.OrdinalIgnoreCase);
+        var current = editorWindow;
+        if (active)
+        {
+            if (current is not null) {
+                editorWindow = null;
+                await current.RequestCloseAsync();
+                if (!current.HasClosed) { editorWindow = current; throw new IOException("当前项目尚未完成保存，删除已取消。"); }
+            }
+            completion?.Close(); completion = null;
+            await ResetWorkspaceAsync();
+        }
+        else
+        {
+            // Acquire a writable lease before touching an inactive project. A
+            // project being recorded/edited by another process must stay intact.
+            await ProjectWorkspace.VerifyExclusiveAccessAsync(path);
+        }
+        try { await Task.Run(() => ProjectDeletion.Recycle(path)); }
+        catch (Exception error) {
+            if (active && Directory.Exists(path)) {
+                try { await OpenExistingProjectAsync(path); } catch { AppWindow.Show(); Activate(); }
+            }
+            if (editorWindow is not null) editorWindow.ReportProjectError("删除未完成", error.Message);
+            else { AppWindow.Show(); Activate(); ShowFeedback("删除未完成", error.Message); }
+            throw;
+        }
+        var recoverable = await ProjectWorkspace.ScanRecoveryAsync(projects);
+        RecoveryPicker.ItemsSource = recoverable; RecoveryPicker.SelectedIndex = recoverable.Count > 0 ? 0 : -1; RecoverButton.IsEnabled = recoverable.Count > 0;
+        if (editorWindow is null) { AppWindow.Show(); Activate(); ShowFeedback("项目已删除", "已将所选项目交给 Windows 回收站处理。", false); }
     }
     private async void Recover_Click(object sender, RoutedEventArgs e)
     {
@@ -467,15 +562,25 @@ public sealed partial class MainWindow : Window
         coordinator = new(); coordinator.StatusChanged += UpdateStatus;
         if (opened is not null) { await opened.DisposeAsync(); opened = null; }
         surface = ""; SetupPanel.Visibility = Visibility.Visible; RecordingPanel.Visibility = ProgressPanel.Visibility = Visibility.Collapsed;
-        RecorderRoot.CornerRadius = new CornerRadius(28); RecorderWindowChrome.Resize(this, 374, 56, 28);
+        RecorderRoot.CornerRadius = new CornerRadius(28); RecorderWindowChrome.Resize(this, SetupWidth, 56, 28);
     }
     private void PresentEditor(ProjectWorkspace workspace, string? validation = null)
     {
         if (editorWindow is not null) { editorWindow.Activate(); return; }
         completion?.Close(); completion = null;
-        editorWindow = new EditorWindow(workspace, validation);
-        editorWindow.Closed += async (_, _) => { editorWindow = null; if (validation is not null) { if (opened is not null) await opened.DisposeAsync(); allowClose = true; closing = true; Close(); Application.Current.Exit(); } else if (!closing) { await InitializeRecorderAsync(); AppWindow.Show(); Activate(); } };
+        editorWindow = CreateEditor(workspace, validation);
         editorWindow.Activate(); AppWindow.Hide();
+    }
+    private EditorWindow CreateEditor(ProjectWorkspace workspace, string? validation = null)
+    {
+        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync);
+        window.Closed += async (_, _) => {
+            if (!ReferenceEquals(editorWindow, window)) return;
+            editorWindow = null;
+            if (validation is not null) { if (opened is not null) await opened.DisposeAsync(); allowClose = true; closing = true; Close(); Application.Current.Exit(); }
+            else if (!closing) { await InitializeRecorderAsync(); AppWindow.Show(); Activate(); }
+        };
+        return window;
     }
     private void Memo_Click(object sender, RoutedEventArgs e)
     {

@@ -21,6 +21,8 @@ FTM_API int32_t __cdecl ft_media_resize(ft_media_handle handle, uint32_t width, 
 FTM_API int32_t __cdecl ft_media_generation(ft_media_handle handle, uint64_t generation);
 // Low-frequency authored effect edits only; preserves decoder/device/swapchain.
 FTM_API int32_t __cdecl ft_media_update_effects(ft_media_handle handle, const char* json, uint32_t length, uint64_t generation);
+// Same-project edits; keeps existing decoders, GPU device and attached swapchain.
+FTM_API int32_t __cdecl ft_media_update_project(ft_media_handle handle, const char* json, uint32_t length, uint64_t generation);
 FTM_API int32_t __cdecl ft_media_render(ft_media_handle handle, int64_t ticks, uint64_t generation, const wchar_t* png);
 FTM_API int32_t __cdecl ft_media_status_get(ft_media_handle handle, ft_media_status* status);
 FTM_API int32_t __cdecl ft_media_cancel(ft_media_handle handle);

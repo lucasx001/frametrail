@@ -1,4 +1,5 @@
 #include "frametrail/core/scene.hpp"
+#include "frametrail/core/mockup.hpp"
 #include <algorithm>
 #include <utility>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,7 @@ FrameSceneEvaluator::FrameSceneEvaluator(Project project)
     const auto settings = nlohmann::json::parse(project_.editor_json);
     const auto crop = settings.value("crop", nlohmann::json::object()); crop_width_ = crop.value("width", 1.0); crop_height_ = crop.value("height", 1.0);
     frame_style_=settings.value("frameStyle",std::string("none")); camera_shape_=settings.value("cameraShape",std::string("rounded"));
+    frame_scale_=settings.value("frameScale",1.0); frame_toolbar_scale_=settings.value("frameToolbarScale",1.0);
     for(auto&e:project_.effects)effects_.push_back(parse_visual_effect(e));
 }
 
@@ -44,6 +46,11 @@ std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_tick
     region.x += padding; region.y += padding; region.width -= 2 * padding; region.height -= 2 * padding;
     FrameScene scene{project_.revision, output_ticks, mapped->ticks, mapped->segment_id, canvas.width, canvas.height, canvas.background,
         {screen->id, mapped->ticks - normalized_ticks(screen->start_offset), fit(region, screen->width * crop_width_, screen->height * crop_height_), false}, std::nullopt};
+    if(frame_style_!="none") for(int iteration=0;iteration<3;iteration++) {
+        auto r=scene.screen.output_rect;
+        auto f=frame_decoration(frame_style_,frame_scale_,frame_toolbar_scale_,-1,0,std::min(canvas.width,canvas.height),r.width,r.height);
+        scene.screen.output_rect=fit({region.x+f.inset,region.y+f.top,region.width-2*f.inset,region.height-f.top-f.inset},screen->width*crop_width_,screen->height*crop_height_);
+    }
     if (canvas.camera.enabled) {
         if (const auto* camera = media_at(project_, MediaKind::camera, mapped->ticks)) {
             scene.camera = MediaFrame{camera->id, mapped->ticks - normalized_ticks(camera->start_offset),

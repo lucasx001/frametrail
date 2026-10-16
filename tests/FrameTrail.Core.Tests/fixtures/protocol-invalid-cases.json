@@ -29,6 +29,7 @@
   { "name": "unknown time field", "path": ["sourceDuration", "unit"], "value": "seconds" },
   { "name": "odd export width", "path": ["export", "width"], "value": 1919 },
   { "name": "unsupported FPS", "path": ["export", "fps", "numerator"], "value": 120 },
+  { "name": "unsupported video codec", "path": ["export", "videoCodec"], "value": "vp9" },
   { "name": "null marker collection", "path": ["markers"], "value": null },
   { "name": "negative marker time", "path": ["markers", 0, "time", "ticks"], "value": -1 },
   { "name": "duplicate marker ID", "path": ["markers", 0, "id"], "value": "screen-1" }

@@ -31,6 +31,7 @@ internal static class MediaNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_resize(MediaHandle handle, uint width, uint height, double sx, double sy);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_generation(MediaHandle handle, ulong generation);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_update_effects(MediaHandle handle, byte[] json, uint length, ulong generation);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_update_project(MediaHandle handle, byte[] json, uint length, ulong generation);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_render(MediaHandle handle, long ticks, ulong generation, string? png);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_status_get(MediaHandle handle, ref MediaStatus status);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_cancel(MediaHandle handle);
@@ -68,6 +69,11 @@ public sealed class MediaSession : IDisposable
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new { revision = snapshot.Revision, effects = snapshot.Effects }, EffectJson);
         MediaNative.Check(MediaNative.ft_media_update_effects(handle, bytes, (uint)bytes.Length, generation));
+    }
+    public void UpdateProject(ProjectSnapshot snapshot, ulong generation)
+    {
+        var bytes = Encoding.UTF8.GetBytes(ProjectJson.Serialize(snapshot));
+        MediaNative.Check(MediaNative.ft_media_update_project(handle, bytes, (uint)bytes.Length, generation));
     }
     public void Render(long ticks, ulong generation = 0, string? png = null) => MediaNative.Check(MediaNative.ft_media_render(handle, ticks, generation, png));
     public MediaStatus Status { get { var s = new MediaStatus { Size = (uint)Marshal.SizeOf<MediaStatus>() }; MediaNative.Check(MediaNative.ft_media_status_get(handle, ref s)); return s; } }

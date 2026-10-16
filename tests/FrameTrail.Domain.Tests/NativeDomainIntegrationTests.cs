@@ -9,6 +9,21 @@ public sealed class NativeDomainIntegrationTests
 {
     private static ProjectSnapshot Project() => ProjectJson.Deserialize(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "project-v1.json")));
 
+    [Theory]
+    [InlineData("h264")]
+    [InlineData("hevc")]
+    [InlineData("av1")]
+    public void CodecSelectionSurvivesManagedAndNativeProjectRoundtrip(string codec)
+    {
+        var original = Project();
+        var project = original with { Export = original.Export with { VideoCodec = codec } };
+        var restored = ProjectJson.Deserialize(ProjectJson.Serialize(project));
+        Assert.Equal(codec, restored.Export.VideoCodec);
+        EngineSession.ValidateProject(restored);
+        using var session = new EngineSession(); session.LoadProject(restored);
+        Assert.Equal(codec, EngineSession.Edit(restored, new { op = "settings", export = restored.Export }).Export.VideoCodec);
+    }
+
     [Fact]
     public void ManagedSerializationIsAcceptedByAuthoritativeNativeValidator()
     {

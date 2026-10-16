@@ -58,6 +58,10 @@ typedef struct ft_capture_capabilities {
     uint32_t wgc_supported, hardware_h264_count, software_h264_count;
     int64_t qpc_frequency;
 } ft_capture_capabilities;
+enum ft_video_codec { FT_VIDEO_H264 = 0, FT_VIDEO_HEVC = 1, FT_VIDEO_AV1 = 2 };
+typedef struct ft_video_codec_capabilities {
+    uint32_t struct_size, codec, hardware_count, software_count, decoder_count;
+} ft_video_codec_capabilities;
 // Additive diagnostics API; capture-status ABI remains unchanged.
 typedef struct ft_capture_performance {
     uint32_t struct_size, gpu_samples;
@@ -66,7 +70,10 @@ typedef struct ft_capture_performance {
 // Enumeration is two-pass; count returns required number; insufficient buffer => HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER).
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_enumerate_sources(ft_capture_source* sources, uint32_t capacity, uint32_t* count);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_get_capabilities(ft_capture_capabilities* capabilities);
+FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_get_codec_capabilities(ft_video_codec_capabilities* capabilities);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_start(const ft_capture_options* options, ft_capture_handle* handle);
+// Same options/status ABI. No fallback to a different codec when unavailable.
+FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_start_with_codec(const ft_capture_options* options, uint32_t codec, ft_capture_handle* handle);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_pause(ft_capture_handle handle);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_resume(ft_capture_handle handle);
 FT_CAPTURE_API int32_t FT_CAPTURE_CALL ft_capture_pause_at(ft_capture_handle handle, int64_t boundary_qpc);

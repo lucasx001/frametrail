@@ -39,4 +39,10 @@
 - 证据路径：`artifacts/validation/m3/run-05/result`、`ui-06/ui`、`ui-03/ui/actual-playback.jpg`、`m2-regression`、`final-build-tests.log`；详见 [M3 验证记录](validation/m3-motion-effects.md)。
 - 边界：减少动画通过纯时间求值/参数隔离及主题前后像素相同验证，未修改 Windows 全局设置。当前完成本机功能闭环；跨 GPU/HDR/DPI、长工程及 1080p60 复杂效果性能留给 0010，不把短测当作发行验收。未运行 Mac Swift 程序对照。
 
+### 2026-10-16 — 录制自动运镜接入修复
+
+- 自动生成入口移至录制准备胶囊，默认开启；移除编辑器的生成按钮，保留既有缩放片段的编辑能力。
+- 以实际移动和左右键按下作为活动，过滤静止的定时位置采样；分段、暂停、停止及主来源关闭时自动生成并保存效果。续录按源时间偏移重新规划，不重复累积片段。
+- 10 项录制运镜回归、真实媒体预览/MP4 独立像素对比及开关 UI 验证通过，详见 [修复验证](validation/click-motion-source-selection.md)。
+
 完成后更新本文件清单与 progress.md；需求变化同时修改 spec.md。未达到的验收项保持未勾选。

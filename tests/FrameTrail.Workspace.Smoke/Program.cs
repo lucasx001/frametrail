@@ -3,10 +3,14 @@ using FrameTrail.Domain;
 using FrameTrail.Interop;
 using FrameTrail.Workspace;
 
+if (args.Length is 2 or 3 && args[0] == "--video-codecs") return await VideoCodecValidation.RunAsync(args[1], args.Length == 3 ? args[2] : null);
+if (args.Length == 3 && args[0] == "--video-codec-matrix") return await VideoCodecMatrixValidation.RunAsync(args[1], args[2]);
+
 if (args.Length >= 4 && args[0] == "--m5") return await AndroidValidation.RunAsync(args[1], args[2], args[3], args.Contains("--crash"));
 
 if (args.Length >= 3 && args[0] == "--m2") return await M2Validation.RunAsync(args[1], args[2], args.Contains("--matrix"));
 if (args.Length == 3 && args[0] == "--m3") return await M3Validation.RunAsync(args[1], args[2]);
+if (args.Length == 3 && args[0] == "--recording-motion") return await RecordingMotionValidation.RunAsync(args[1], args[2]);
 if (args.Length == 2 && args[0] == "--camera-continuity") return await CameraContinuityValidation.RunAsync(args[1]);
 
 if (args.Length < 1) { Console.Error.WriteLine("Usage: FrameTrail.Workspace.Smoke <new.frametrailproject> [--camera] [--checkpoint] [--fixture] [--fps60] | --camera-continuity <new-directory> | <existing.frametrailproject> --recover"); return 2; }

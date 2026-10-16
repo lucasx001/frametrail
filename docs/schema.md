@@ -91,7 +91,7 @@ Effect 必需字段为 `id`、`kind`、`sourceStart`、`sourceDuration`、`param
 
 Marker 为 `{id,time,label}`。time 为 0–sourceDuration（含末端）的源时间；label 可为空，UTF-8 最多 512 字节。成片显示时使用 TimelineMap；被删除区间的标记不进入成片。
 
-Export 必需字段为 `width/height/fps/videoCodec/audioCodec/container`。当前约束：宽高为 2–7680 的偶数；FPS 为 30/1 或 60/1；`h264/aac/mp4`。这里只是工程设置校验，不保证当前机器有对应编码能力。其他导出产品能力在 M2 实现，不将未实现的编码格式作为已支持项。
+Export 必需字段为 `width/height/fps/videoCodec/audioCodec/container`。当前约束：宽高为 2–7680 的偶数；FPS 为 30/1 或 60/1；`videoCodec` 为 `h264/hevc/av1`，声音与容器为 `aac/mp4`。默认仍为 `h264`，H.265 使用规范键 `hevc`。这里只是工程设置校验，不保证当前机器有对应编码能力；应用按 Media Foundation 编码器和解码器探测结果提供选项，尺寸/帧率组合在启动时检查。旧 H.264 工程继续兼容。
 
 ## 原生桥接与修订事务
 
@@ -125,7 +125,9 @@ Schema 1 增加可选 `editor` 对象；旧录制没有此字段时使用中性�
 继续使用 schema 1 的可选 `editor` 和预留 `effects[].parameters`。旧工程缺省值兼容；旧版严格解析器会拒绝不认识的新 editor 字段，不能用旧版覆盖新工程。
 
 - `editor.cursorSmoothing`：0–0.5 秒，默认 0.08；0 关闭平滑。因果指数加权，仅取采样时刻及之前四个时间常数内的事件。
-- `editor.frameStyle`：`none/window/browser/device`；默认 none。
+- `editor.frameStyle`：`none/windowLight/windowDark/browserLight/browserDark/devicePhone`；默认 none。兼容读取旧值 `window/browser/device`，选择器分别显示深色窗口、深色浏览器、自适应设备框。
+- 样机几何（2026-10-16）：`frameScale` 为 0.6–1.6，缺省 1；`frameToolbarScale` 为 0.65–1.6，缺省 1；可省略 `frameOuterCornerRadius` 为 0–160，缺省按样式取 24 / 18 / 22 / 64。数值以画布短边 1080 的标准单位计算，顶栏和边框随屏幕透视一起变换，并参与内容 fit。`cornerRadius` 仍控制内容圆角。
+- 样机文字：`frameTitle` 最多 120 个 Unicode 码点，`frameBrowserAddress` 最多 240 个，缺省空串；Windows 输入框按 UTF-16 长度限制。网址仅作为画面文字。切换和还原样式应用 DogSC 默认比例、顶栏、内外圆角与阴影，保留标题、网址、裁切、布局及其他设置。旧版严格解析器会拒绝这些新字段。
 - `editor.cameraShape`：`rounded/rectangle/circle`；默认 rounded。圆形使用中心正方形裁切，保持独立镜像和位置。
 - `editor.backdrop`：可省略的 `{kind,path,secondary}`；kind 为 `solid/gradient/image/video`，secondary 为 SDR RGBA。图片与视频的 path 必须为工程 `assets/` 内相对路径；视频按输出时间循环。
 

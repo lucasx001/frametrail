@@ -59,8 +59,7 @@ public sealed partial class EditorWindow
         var host = (StackPanel)InspectorScroll.Content; host.Children.Add(motionSettings); host.Children.Add(openingSettings);
         PictureSettings.Children.Add(mockupSettings);
         AutomationProperties.SetAutomationId(effectPicker, "editor.effect.picker");
-        motionSettings.Children.Add(VisualLabel("点击运镜"));
-        motionSettings.Children.Add(VisualTile(VisualButton("根据点击生成运镜", async () => { await editor.AutoZoomAsync(); ShowNotice("自动运镜已更新", "已保留手工编辑的片段。没有点击记录时不会添加运镜。"); }, "editor.effect.auto")));
+        motionSettings.Children.Add(VisualLabel("运镜与效果"));
         var add = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         add.ColumnDefinitions.Add(new()); add.ColumnDefinitions.Add(new());
         var kinds = new[] { "zoom", "mask", "focus", "tilt", "sticker" };
@@ -97,9 +96,7 @@ public sealed partial class EditorWindow
         cursorSmooth.Committed += async (_, _) => { if (!loadingVisuals && ready) await PerformAsync(() => editor.ExecuteAsync(new { op = "settings", editor = (editor.Snapshot.Editor ?? new()) with { CursorSmoothing = cursorSmooth.Value } })); };
         CameraSettings.Children.Add(VisualTile(cameraShape));
         cameraShape.SelectionChanged += async (_, _) => { if (!loadingVisuals && ready && !working) await PerformAsync(() => editor.ExecuteAsync(new { op = "settings", editor = (editor.Snapshot.Editor ?? new()) with { CameraShape = new[] { "rounded", "rectangle", "circle" }[Math.Max(0, cameraShape.SelectedIndex)] } })); };
-        var frame = VisualChoice("画面边框", "无边框", "窗口", "浏览器", "设备");
-        frame.SelectionChanged += async (_, _) => { if (!loadingVisuals && ready && !working) await PerformAsync(() => editor.ExecuteAsync(new { op = "settings", editor = (editor.Snapshot.Editor ?? new()) with { FrameStyle = new[] { "none", "window", "browser", "device" }[Math.Max(0, frame.SelectedIndex)] } })); };
-        frame.Tag = "frameStyle"; AutomationProperties.SetAutomationId(frame, "editor.frame.style"); mockupSettings.Children.Add(VisualLabel("画面样机")); mockupSettings.Children.Add(VisualTile(frame));
+        InitializeMockups();
         BackgroundSettings.Children.Add(VisualTile(VisualButton("导入背景图片", async () => { var path = await PickVisualAsync(false); if (path is not null) await SetBackdropAsync("image", path); }, "editor.background.image"), VisualButton("导入循环视频", async () => { var path = await PickVisualAsync(true); if (path is not null) await SetBackdropAsync("video", path); }, "editor.background.video"), VisualButton("使用渐变背景", () => SetBackdropAsync("gradient"), "editor.background.gradient")));
         InitializeLiveVisuals();
     }
@@ -125,7 +122,7 @@ public sealed partial class EditorWindow
             var list = editor.Snapshot.Effects.Select(e => new EffectEntry(e.Id, $"{EffectName(e.Kind)} · {VisualResources.Ticks(e.SourceStart) / 10_000_000.0:0.##}s")).ToArray();
             effectPicker.ItemsSource = list; effectPicker.SelectedItem = list.FirstOrDefault(e => e.Id == selectedEffect) ?? list.FirstOrDefault(); selectedEffect = (effectPicker.SelectedItem as EffectEntry)?.Id;
             var settings = editor.Snapshot.Editor ?? new(); cursorSmooth.Value = settings.CursorSmoothing; cameraShape.SelectedIndex = Array.IndexOf(new[] { "rounded", "rectangle", "circle" }, settings.CameraShape);
-            foreach (var tile in mockupSettings.Children.OfType<Border>()) if (tile.Child is StackPanel panel) foreach (var box in panel.Children.OfType<ComboBox>()) if (box.Tag as string == "frameStyle") box.SelectedIndex = Array.IndexOf(new[] { "none", "window", "browser", "device" }, settings.FrameStyle);
+            RefreshMockupInspector();
             var opening = editor.Snapshot.Effects.FirstOrDefault(e => e.Id == "opening-screen");
             if (opening is not null) { introStyle.SelectedIndex = Array.IndexOf(introStyles, StringValue(opening.Parameters, "style", "fade")); introDuration.Value = NumberValue(opening.Parameters, "enter", 0.7); }
         }
@@ -207,5 +204,5 @@ public sealed partial class EditorWindow
         menu.Items.Add(new MenuFlyoutSeparator()); var save = new MenuFlyoutItem { Text = "保存当前预设" }; save.Click += async (_, _) => await SafeAsync(editor.SaveVisualPresetAsync); menu.Items.Add(save);
         var load = new MenuFlyoutItem { Text = "应用已保存预设", IsEnabled = File.Exists(Path.Combine(editor.DirectoryPath, "assets", "presets", "saved.json")) }; load.Click += async (_, _) => await PerformAsync(editor.LoadVisualPresetAsync); menu.Items.Add(load); menu.ShowAt((FrameworkElement)sender);
     }
-    private void FrameMockup_Click(object sender, RoutedEventArgs e) { ShowInspector(0); mockupPage = true; UpdateFrameNavigation(); }
+    private void FrameMockup_Click(object sender, RoutedEventArgs e) { ShowInspector(0); mockupPage = true; UpdateFrameNavigation(); _ = SafeAsync(async () => { await FlushVisualChangesAsync(); QueueMockupPoster(); }); }
 }

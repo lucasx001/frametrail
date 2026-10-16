@@ -68,6 +68,13 @@ public sealed class ProjectWorkspace : IAsyncDisposable
         return new(path, lease, validator, mediaProbe);
     }
 
+    /// <summary>Checks the writer lease without reading damaged/missing media, allowing cleanup of broken projects.</summary>
+    public static async Task VerifyExclusiveAccessAsync(string path)
+    {
+        await using var lease = Acquire(NormalizeRoot(path), null, null);
+        await lease.BarrierAsync();
+    }
+
     public static async Task<ProjectWorkspace> OpenAsync(string path, Action<ProjectSnapshot>? validator = null, Action<string, bool>? mediaProbe = null)
     {
         path = NormalizeRoot(path); var result = Acquire(path, validator, mediaProbe);

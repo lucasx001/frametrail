@@ -23,6 +23,7 @@ public sealed partial class EditorWindow
     private static SolidColorBrush Hex(uint n) => new(Windows.UI.Color.FromArgb(255, (byte)(n >> 16), (byte)(n >> 8), (byte)n));
     private void InitializeChrome()
     {
+        AppIcon.Apply(this);
         ExtendsContentIntoTitleBar = true; SetTitleBar(TitleDragRegion); AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
         Root.RequestedTheme = EditorAppearance.Current;
         UpdateCaptionTheme();
