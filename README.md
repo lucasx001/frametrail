@@ -24,6 +24,14 @@
 
 开发时按 `docs/000x-*.md` 的顺序推进。每步完成后更新任务验收项与 `progress.md`，保留构建、自动测试和实机验收之间的区别。
 
+## 下载、安装与发布
+
+版本安装包位于 [GitHub Releases](https://github.com/lucasx001/frametrail/releases)。选择 `FrameTrail-X.Y.Z-x64-Setup.exe` 即可按当前用户安装；也可下载便携 ZIP，完整解压后运行。安装包包含运行时，无需开发工具，支持 Windows 11 x64（最低 build 22621）。首次公开发布前该页面可能暂无版本；当前 EXE 未签名，Windows 可能显示未知发布者或 SmartScreen 提示。
+
+维护者可在 **Actions → Release Windows application → Run workflow** 输入 `0.0.1`，或推送 `v0.0.1` tag，自动构建、测试、打包并发布对应版本。支持先保留草稿，已公开版本不会被覆盖；下一版使用 `0.0.2`。首次使用前需将工作流合并到默认分支。操作与更新说明见 [分发文档](docs/distribution.md)，执行状态见 [0019](docs/0019-github-releases.md)。
+
+也提供 **Build Microsoft Store MSIX** 工作流：注册商店应用并配置三个身份变量后生成提交包，由 Microsoft 在通过认证后签名，无需自购代码签名证书。尚未注册可开启 `test_only` 生成打包测试 MSIX。配置、版本映射和上传步骤见 [Microsoft Store 分发](docs/microsoft-store.md)。
+
 ## 构建与启动
 
 Windows 11 x64，准备工具链后在本目录运行：
@@ -50,7 +58,7 @@ Windows 11 x64，准备工具链后在本目录运行：
 .\scripts\validate-recovery.cmd
 ```
 
-输出自包含便携 ZIP、未签名 MSIX、依赖/载荷清单与 SHA-256。未签名 MSIX 仅供开发验证，便携包解压后运行 `FrameTrail.App.exe`。脚本保留旧产物，每次使用新目录；可选已有证书签名和 App Installer 来源配置见 [分发说明](docs/distribution.md)。当前未进行正式签名、干净机器安装/升级/卸载或公开发布。
+输出自包含便携 ZIP、未签名 MSIX、依赖/载荷清单与 SHA-256。未签名 MSIX 仅供开发验证，便携包解压后运行 `FrameTrail.App.exe`。增加 `-BuildInstaller` 可生成每用户 Setup.exe；GitHub Release 流程默认包含安装器并排除未签名 MSIX。脚本保留旧产物，每次使用新目录；工具准备、可选已有证书签名和 App Installer 来源配置见 [分发说明](docs/distribution.md)。正式签名、干净机器安装/升级/卸载和公开发布状态分别记录。
 
 ## 编辑与导出
 

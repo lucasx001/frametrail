@@ -12,10 +12,15 @@ public sealed class EditorMediaCacheTests : IDisposable
     {
         var cache = new EditorMediaCache(root, 100);
         string old = cache.FilePath("old", "mix.wav"), active = cache.FilePath("active", "mix.wav"), foreign = Path.Combine(root, "cache", "user.wav");
-        File.WriteAllBytes(old, new byte[90]); File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-1));
-        File.WriteAllBytes(active, new byte[80]); File.WriteAllBytes(foreign, new byte[80]); cache.Pin(active); cache.Trim();
+        // Files created in the same filesystem clock tick can tie on hosted CI.
+        // Give this eviction-order test distinct timestamps instead of relying on write speed.
+        var oldest = DateTime.UtcNow.AddDays(-1);
+        File.WriteAllBytes(old, new byte[90]); File.SetLastWriteTimeUtc(old, oldest);
+        File.WriteAllBytes(active, new byte[80]); File.SetLastWriteTimeUtc(active, oldest.AddHours(1));
+        File.WriteAllBytes(foreign, new byte[80]); cache.Pin(active); cache.Trim();
         Assert.False(File.Exists(old)); Assert.True(File.Exists(active)); Assert.True(File.Exists(foreign));
-        cache.Unpin(active); File.WriteAllBytes(cache.FilePath("new", "frame.png"), new byte[80]); cache.Trim();
+        cache.Unpin(active); string newest = cache.FilePath("new", "frame.png");
+        File.WriteAllBytes(newest, new byte[80]); File.SetLastWriteTimeUtc(newest, oldest.AddHours(2)); cache.Trim();
         Assert.False(File.Exists(active));
     }
     [Fact] public void AudioKeySurvivesRevisionAndPictureChangesButTracksAudioAndSourceReplacement()

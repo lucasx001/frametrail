@@ -62,3 +62,12 @@ function Get-FrameTrailSha256([string] $Path) {
     try { return [BitConverter]::ToString($hash.ComputeHash($inputFile)).Replace('-','').ToLowerInvariant() }
     finally { $inputFile.Dispose(); $hash.Dispose() }
 }
+
+function Get-FrameTrailPackagingTools {
+    $candidates = @()
+    foreach ($root in @((Join-Path $env:USERPROFILE '.nuget\packages\microsoft.windows.sdk.buildtools'), "${env:ProgramFiles(x86)}\Windows Kits\10\bin", (Join-Path $DefaultToolchainRoot 'msvc\Windows Kits\10\bin'))) {
+        if (Test-Path -LiteralPath $root) { $candidates += Get-ChildItem -LiteralPath $root -Filter makeappx.exe -Recurse | Where-Object FullName -Match '[\\/]x64[\\/]' | Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName }
+    }
+    $makeappx = if ($candidates.Count) { $candidates[0] } else { Resolve-FrameTrailTool 'makeappx.exe' }
+    [pscustomobject]@{ MakeAppx = $makeappx; MakePri = Resolve-FrameTrailTool 'makepri.exe' @((Join-Path (Split-Path $makeappx) 'makepri.exe')) }
+}

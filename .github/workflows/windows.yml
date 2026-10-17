@@ -1,6 +1,7 @@
 name: Windows build and logic tests
 on:
   push:
+    branches: ['**']
   pull_request:
 jobs:
   build:
@@ -13,20 +14,43 @@ jobs:
       - name: Prepare pinned Android runtime and notices
         shell: pwsh
         run: ./scripts/setup-android.ps1
+      - name: Test release metadata and prepare pinned installer compiler
+        shell: pwsh
+        run: |
+          ./scripts/test-release.ps1
+          ./scripts/test-store.ps1
+          ./scripts/setup-installer-tool.ps1
       - name: Build native engine, WinUI app, and run CPU tests
         shell: pwsh
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore
       - name: Build and verify unsigned distribution candidate
         shell: powershell
         run: |
-          ./scripts/package.ps1 -SkipBuild -OutputDirectory artifacts/packages/ci-candidate
+          ./scripts/package.ps1 -SkipBuild -BuildInstaller -OutputDirectory artifacts/packages/ci-candidate
           ./scripts/verify-package.ps1 -PackageDirectory artifacts/packages/ci-candidate
+      - name: Build and verify Microsoft Store test MSIX
+        shell: powershell
+        run: |
+          ./scripts/package-store.ps1 -PackageDirectory artifacts/packages/ci-candidate -OutputDirectory artifacts/store -TestOnly
+          ./scripts/test-store-package.ps1 -PackageDirectory artifacts/store
+      - name: Preserve Store test package (not for submission)
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameTrail-Microsoft-Store-TEST-ONLY
+          path: |
+            artifacts/store/*.msix
+            artifacts/store/store-manifest.json
+            artifacts/store/STORE-SUBMISSION.md
+            artifacts/store/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve distribution candidate
         uses: actions/upload-artifact@v4
         with:
           name: FrameTrail-x64-development-candidate
           path: |
             artifacts/packages/ci-candidate/*.msix
+            artifacts/packages/ci-candidate/*-Setup.exe
             artifacts/packages/ci-candidate/*.zip
             artifacts/packages/ci-candidate/*.json
             artifacts/packages/ci-candidate/*.txt

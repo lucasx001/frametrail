@@ -50,6 +50,10 @@ FrameTrail 是面向 Windows 11 的原生录屏与轻量剪辑工具，用于制
 
 2026-10-17 编辑器补充：媒体准备与容量缓存、光标、连续缩略图、命名预设分别见 [0015](0015-editor-media-cache.md)、[0016](0016-cursor-presentation.md)、[0017](0017-continuous-filmstrip.md)、[0018](0018-visual-preset-library.md)。新录制默认预设仅在首个检查点应用，之后分段保留；打开已有工程不会自动覆盖其画面。剩余工作统一见 [todo.md](todo.md)。
 
+2026-10-17 分发补充：GitHub Actions 支持手动输入 `X.Y.Z` 或推送 `vX.Y.Z` tag，锁依赖构建并发布 Setup.exe、便携 ZIP、版本/依赖清单和 SHA-256。Setup.exe 按当前用户安装，运行时自包含；应用运行时拒绝安装/卸载，不强制终止媒体任务。当前安装器未签名，未签名 MSIX 不进入公共 Release，更新为保存退出后手动下载安装。实现与验证见 [0019](0019-github-releases.md) 和 [分发说明](distribution.md)。
+
+2026-10-17 Store 分发补充：提供独立 MSIX 提交包和 Actions 入口，使用实际 Partner Center 身份；未注册时只能生成有明确测试标记的包。产品 `X.Y.Z` 与商店包 `(X+1).Y.Z.0` 分开记录，保持 0.x 产品版本和商店升级序列兼容。由 Microsoft 在认证后签名，站外安装器继续独立分发，见 [0020](0020-microsoft-store.md)。
+
 ## 2. 用户流程与状态
 
 1. 启动 → 选择显示器、窗口或区域 → 选择音频与摄像头 → 检查能力和权限。M5 增加 Android 手机来源，先完成 USB 连接、调试授权、设备选择与预览检查。

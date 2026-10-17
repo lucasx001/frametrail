@@ -6,7 +6,9 @@ param(
     [string] $Publisher = 'CN=FrameTrail Development',
     [string] $SigningCertificateThumbprint,
     [uri] $UpdateBaseUri,
-    [switch] $SkipBuild
+    [switch] $SkipBuild,
+    [switch] $BuildInstaller,
+    [string] $InstallerCompiler
 )
 . "$PSScriptRoot\common.ps1"
 Import-FrameTrailToolchain $ToolchainRoot
@@ -16,17 +18,14 @@ $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath $OutputDirectory) { throw 'Choose a new package directory; existing candidates are retained.' }
 if ($UpdateBaseUri -and (!$UpdateBaseUri.IsAbsoluteUri -or $UpdateBaseUri.Scheme -ne 'https' -or $UpdateBaseUri.UserInfo -or $UpdateBaseUri.Query -or $UpdateBaseUri.Fragment -or !$UpdateBaseUri.AbsoluteUri.EndsWith('/'))) { throw 'UpdateBaseUri must be an HTTPS directory URI ending in / without credentials, query or fragment.' }
 [xml] $versions = Get-Content (Join-Path $ProjectRoot 'version.props') -Raw -Encoding UTF8
+$releaseVersion = [string]$versions.Project.PropertyGroup.Version
 $version = [string]$versions.Project.PropertyGroup.FileVersion
 [xml] $manifest = Get-Content (Join-Path $ProjectRoot 'packaging\AppxManifest.xml') -Raw -Encoding UTF8
 [xml] $executableManifest = Get-Content (Join-Path $ProjectRoot 'src\FrameTrail.App\app.manifest') -Raw -Encoding UTF8
 if ($manifest.Package.Identity.Version -ne $version -or $executableManifest.assembly.assemblyIdentity.version -ne $version) { throw 'Version mismatch: version.props, app.manifest and AppxManifest.xml must agree.' }
 if (!$SkipBuild) { & "$PSScriptRoot\build.ps1" -Configuration Release -NativeBuildDirectory $NativeBuildDirectory -ToolchainRoot $ToolchainRoot -LockedRestore }
-$sdkTools = @()
-foreach ($sdkRoot in @((Join-Path $env:USERPROFILE '.nuget\packages\microsoft.windows.sdk.buildtools'), "${env:ProgramFiles(x86)}\Windows Kits\10\bin", (Join-Path $DefaultToolchainRoot 'msvc\Windows Kits\10\bin'))) {
-    if (Test-Path -LiteralPath $sdkRoot) { $sdkTools += Get-ChildItem -LiteralPath $sdkRoot -Filter makeappx.exe -Recurse | Where-Object FullName -Match '[\\/]x64[\\/]' | Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName }
-}
-$makeappx = if ($sdkTools.Count -gt 0) { $sdkTools[0] } else { Resolve-FrameTrailTool 'makeappx.exe' }
-$makepri = Resolve-FrameTrailTool 'makepri.exe' @((Join-Path (Split-Path $makeappx) 'makepri.exe'))
+$packagingTools = Get-FrameTrailPackagingTools
+$makeappx = $packagingTools.MakeAppx; $makepri = $packagingTools.MakePri
 $dotnet = Resolve-FrameTrailTool 'dotnet'
 $payload = Join-Path $OutputDirectory 'app'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
@@ -57,7 +56,7 @@ $manifest.Save((Join-Path $payload 'AppxManifest.xml'))
 # and embedded WinUI XAML resources are available together in resources.pri.
 & $makepri new /pr $payload /cf (Join-Path $ProjectRoot 'packaging\priconfig.xml') /mn (Join-Path $payload 'AppxManifest.xml') /of (Join-Path $payload 'resources.pri') /o > (Join-Path $OutputDirectory 'makepri.log') 2>&1
 if ($LASTEXITCODE -ne 0) { throw 'Package icon indexing failed; see makepri.log in the output directory.' }
-$name = "FrameTrail-$version-x64"
+$name = "FrameTrail-$releaseVersion-x64"
 $package = Join-Path $OutputDirectory ($name + '.msix')
 & $makeappx pack /d $payload /p $package /o > (Join-Path $OutputDirectory 'makeappx.log') 2>&1
 if ($LASTEXITCODE -ne 0) { throw 'MSIX validation failed; see makeappx.log in the output directory.' }
@@ -87,10 +86,11 @@ $files = @(Get-ChildItem -LiteralPath $payload -File -Recurse | Sort-Object Full
     [ordered]@{ path = $_.FullName.Substring($payload.TrimEnd('\').Length + 1).Replace('\','/'); bytes = $_.Length; sha256 = (Get-FrameTrailSha256 $_.FullName) }
 })
 $revision = (& git -C $ProjectRoot rev-parse HEAD).Trim(); $dirty = [bool](& git -C $ProjectRoot status --porcelain)
-[ordered]@{ version = $version; architecture = 'x64'; minimumWindowsBuild = 22621; publisher = $Publisher; signature = $signature; sourceRevision = $revision; sourceDirty = $dirty; files = $files } |
+[ordered]@{ version = $version; releaseVersion = $releaseVersion; architecture = 'x64'; minimumWindowsBuild = 22621; publisher = $Publisher; signature = $signature; installerSignature = $(if ($BuildInstaller) { 'unsigned' } else { 'not-built' }); sourceRevision = $revision; sourceDirty = $dirty; files = $files } |
     ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'payload-manifest.json') -Encoding UTF8
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'src\FrameTrail.App\packages.lock.json') -Destination (Join-Path $OutputDirectory 'nuget-dependencies.lock.json')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($payload,(Join-Path $OutputDirectory ($name + '-portable.zip')))
+if ($BuildInstaller) { & "$PSScriptRoot\package-installer.ps1" -PackageDirectory $OutputDirectory -InstallerCompiler $InstallerCompiler }
 Get-ChildItem -LiteralPath $OutputDirectory -File | Sort-Object Name | ForEach-Object { (Get-FrameTrailSha256 $_.FullName) + '  ' + $_.Name } | Set-Content -LiteralPath (Join-Path $OutputDirectory 'SHA256SUMS.txt') -Encoding ASCII
 Write-Host "Candidate: $OutputDirectory ($signature). No package was installed or published."
