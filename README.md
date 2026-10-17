@@ -30,6 +30,8 @@
 
 维护者可在 **Actions → Release Windows application → Run workflow** 输入 `0.0.1`，或推送 `v0.0.1` tag，自动构建、测试、打包并发布对应版本。支持先保留草稿，已公开版本不会被覆盖；下一版使用 `0.0.2`。首次使用前需将工作流合并到默认分支。操作与更新说明见 [分发文档](docs/distribution.md)，执行状态见 [0019](docs/0019-github-releases.md)。
 
+也提供 **Build Microsoft Store MSIX** 工作流：注册商店应用并配置三个身份变量后生成提交包，由 Microsoft 在通过认证后签名，无需自购代码签名证书。尚未注册可开启 `test_only` 生成打包测试 MSIX。配置、版本映射和上传步骤见 [Microsoft Store 分发](docs/microsoft-store.md)。
+
 ## 构建与启动
 
 Windows 11 x64，准备工具链后在本目录运行：

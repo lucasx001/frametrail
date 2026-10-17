@@ -66,6 +66,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-installer
 
 ## 签名与证书
 
+若选择 **Microsoft Store MSIX** 分发，无需购买代码签名证书：提交专用未签名包，通过认证后由 Microsoft 签名。已新增独立工作流和发版时的可选 Store Actions 附件；当前尚未注册产品，只生成明确标注的测试身份包。配置与流程见 [Microsoft Store 分发](microsoft-store.md)。下面的自有证书要求针对站外 MSIX 侧载，不是商店提交的前置条件。
+
 默认发布者为 `CN=FrameTrail Development`，MSIX 明确标记为未签名开发候选。正常侧载需要可信签名。已有 CurrentUser/My 代码签名证书时可传入 `-Publisher` 和 `-SigningCertificateThumbprint`；发布者必须与证书 Subject 完全一致。脚本不会创建、导出私钥或自动导入信任。签名后调用 SignTool 验证证书信任链；开发证书未获测试机信任时验证会失败。
 
 目前没有正式证书条件，签名分支尚未实测。签名服务/时间戳、secret 管理以及到期和撤销策略仍待配置；不得把私钥或密码加入仓库。当前 CI 不读取签名凭据；EXE 明确保持未签名状态。

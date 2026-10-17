@@ -59,11 +59,28 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/set-release-version.ps1 -Version $env:RELEASE_VERSION
+      - name: Validate optional Microsoft Store identity
+        id: store
+        env:
+          STORE_PACKAGE_NAME: ${{ vars.STORE_PACKAGE_NAME }}
+          STORE_PUBLISHER: ${{ vars.STORE_PUBLISHER }}
+          STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.STORE_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          . ./scripts/store-common.ps1
+          if ($env:STORE_PACKAGE_NAME -or $env:STORE_PUBLISHER -or $env:STORE_PUBLISHER_DISPLAY_NAME) {
+            $null = Get-FrameTrailStoreIdentity $env:STORE_PACKAGE_NAME $env:STORE_PUBLISHER $env:STORE_PUBLISHER_DISPLAY_NAME
+            'enabled=true' >> $env:GITHUB_OUTPUT
+          } else {
+            'enabled=false' >> $env:GITHUB_OUTPUT
+            Write-Output 'Store identity not configured; GitHub installers remain available. Use Build Microsoft Store MSIX for test packages.'
+          }
       - uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
       - name: Validate release version rules
-        run: ./scripts/test-release.ps1
+        run: |
+          ./scripts/test-release.ps1
+          ./scripts/test-store.ps1
       - name: Prepare pinned Android and installer tools
         run: |
           ./scripts/setup-android.ps1
@@ -77,6 +94,26 @@ jobs:
           ./scripts/verify-package.ps1 -PackageDirectory artifacts/packages/release
       - name: Verify current-user installation and uninstall
         run: ./scripts/verify-installer.ps1 -PackageDirectory artifacts/packages/release -InstallDirectory "$env:RUNNER_TEMP/FrameTrail-install-test"
+      - name: Build unsigned Microsoft Store submission MSIX
+        if: steps.store.outputs.enabled == 'true'
+        shell: powershell
+        env:
+          STORE_PACKAGE_NAME: ${{ vars.STORE_PACKAGE_NAME }}
+          STORE_PUBLISHER: ${{ vars.STORE_PUBLISHER }}
+          STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.STORE_PUBLISHER_DISPLAY_NAME }}
+        run: ./scripts/package-store.ps1 -PackageDirectory artifacts/packages/release -OutputDirectory artifacts/store -PackageName $env:STORE_PACKAGE_NAME -Publisher $env:STORE_PUBLISHER -PublisherDisplayName $env:STORE_PUBLISHER_DISPLAY_NAME
+      - name: Preserve Microsoft Store upload package
+        if: steps.store.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameTrail-Microsoft-Store-${{ steps.version.outputs.version }}
+          path: |
+            artifacts/store/*.msix
+            artifacts/store/store-manifest.json
+            artifacts/store/STORE-SUBMISSION.md
+            artifacts/store/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Prepare public assets (exclude unsigned MSIX)
         run: ./scripts/prepare-release.ps1 -PackageDirectory artifacts/packages/release -OutputDirectory artifacts/release -VersionStampedAtBuild
       - uses: actions/upload-artifact@v4

@@ -24,12 +24,8 @@ $version = [string]$versions.Project.PropertyGroup.FileVersion
 [xml] $executableManifest = Get-Content (Join-Path $ProjectRoot 'src\FrameTrail.App\app.manifest') -Raw -Encoding UTF8
 if ($manifest.Package.Identity.Version -ne $version -or $executableManifest.assembly.assemblyIdentity.version -ne $version) { throw 'Version mismatch: version.props, app.manifest and AppxManifest.xml must agree.' }
 if (!$SkipBuild) { & "$PSScriptRoot\build.ps1" -Configuration Release -NativeBuildDirectory $NativeBuildDirectory -ToolchainRoot $ToolchainRoot -LockedRestore }
-$sdkTools = @()
-foreach ($sdkRoot in @((Join-Path $env:USERPROFILE '.nuget\packages\microsoft.windows.sdk.buildtools'), "${env:ProgramFiles(x86)}\Windows Kits\10\bin", (Join-Path $DefaultToolchainRoot 'msvc\Windows Kits\10\bin'))) {
-    if (Test-Path -LiteralPath $sdkRoot) { $sdkTools += Get-ChildItem -LiteralPath $sdkRoot -Filter makeappx.exe -Recurse | Where-Object FullName -Match '[\\/]x64[\\/]' | Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName }
-}
-$makeappx = if ($sdkTools.Count -gt 0) { $sdkTools[0] } else { Resolve-FrameTrailTool 'makeappx.exe' }
-$makepri = Resolve-FrameTrailTool 'makepri.exe' @((Join-Path (Split-Path $makeappx) 'makepri.exe'))
+$packagingTools = Get-FrameTrailPackagingTools
+$makeappx = $packagingTools.MakeAppx; $makepri = $packagingTools.MakePri
 $dotnet = Resolve-FrameTrailTool 'dotnet'
 $payload = Join-Path $OutputDirectory 'app'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null

@@ -25,3 +25,5 @@
 - [ ] 上一版本升级、干净稳定 Windows 和代码签名矩阵
 
 操作说明见 [distribution.md](distribution.md)，执行证据见 [验证记录](validation/github-releases.md)。本任务不将硬件、长时同步或签名验收视为已完成。
+
+Microsoft Store 提交需求由 [0020](0020-microsoft-store.md) 补充：配置真实商店身份后，发版工作流额外生成单独的 Store Actions 附件；尚未注册时由独立工作流/CI 生成明确标记的测试包。它不进入普通用户安装附件，也不需要自购签名证书。
