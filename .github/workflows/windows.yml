@@ -3,6 +3,8 @@ on:
   push:
     branches: ['**']
   pull_request:
+permissions:
+  contents: read
 jobs:
   build:
     runs-on: windows-2022
@@ -20,6 +22,14 @@ jobs:
           ./scripts/test-release.ps1
           ./scripts/test-store.ps1
           ./scripts/setup-installer-tool.ps1
+      - name: Verify release preflight exits successfully in the Actions shell
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A per-run probe avoids depending on the existence of a real release.
+          $probeVersion = "65534.$([long]$env:GITHUB_RUN_ID % 65535).$([long]$env:GITHUB_RUN_ATTEMPT % 65535)"
+          ./scripts/publish-release.ps1 -Repository $env:GITHUB_REPOSITORY -Version $probeVersion -ExpectedCommit (git rev-parse HEAD) -CheckOnly
       - name: Build native engine, WinUI app, and run CPU tests
         shell: pwsh
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore
