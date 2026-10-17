@@ -25,4 +25,7 @@ foreach ($failure in @('identity','version','inventory','signature')) {
     if (!$rejected) { throw "Accepted a conflicting Store package: $failure" }
     $checks++
 }
+# The original MSIX is retained in its own artifact; avoid uploading a second
+# 100 MiB copy with the intentionally invalid metadata fixtures in test-results.
+Remove-Item -LiteralPath (Join-Path $fixture $manifest.packageFile)
 Write-Output "PASS: $checks Store archive tamper checks (including rehashed metadata). Fixture: $fixture"
