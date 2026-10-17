@@ -4,13 +4,14 @@ param([Parameter(Mandatory=$true)][string] $AssetDirectory, [Parameter(Mandatory
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $publisher = Join-Path $PSScriptRoot 'publish-release.ps1'
-$global:FrameTrailPublishFixture = @{ existing = $null; reference = $null; annotated = $null; failUpload = $false; writes = [Collections.Generic.List[string]]::new() }
+$global:FrameTrailPublishFixture = @{ existing = $null; reference = $null; annotated = $null; apiFailure = $null; failUpload = $false; writes = [Collections.Generic.List[string]]::new() }
 # All GitHub calls in this test are an in-process fake. No network or release writes.
 function global:gh {
     param([Parameter(ValueFromRemainingArguments=$true)][string[]] $Arguments)
     $global:LASTEXITCODE = 0
     $state = $global:FrameTrailPublishFixture
     if ($Arguments[0] -eq 'api') {
+        if ($state.apiFailure) { $global:LASTEXITCODE = 1; return "gh: API request failed (HTTP $($state.apiFailure))" }
         $value = switch -Regex ($Arguments[1]) {
             '/releases/tags/' { $state.existing; break }
             '/git/ref/tags/' { $state.reference; break }
@@ -27,9 +28,9 @@ function global:gh {
 }
 $checks = 0
 try {
-    foreach ($scenario in @('first-version','lightweight','annotated','wrong-tag','public','matching-draft','wrong-draft')) {
+    foreach ($scenario in @('first-version','lightweight','annotated','wrong-tag','public','matching-draft','wrong-draft','unauthorized','forbidden','server-error')) {
         $state = $global:FrameTrailPublishFixture
-        $state.existing = $null; $state.reference = $null; $state.annotated = $null; $state.writes.Clear()
+        $state.existing = $null; $state.reference = $null; $state.annotated = $null; $state.apiFailure = $null; $state.writes.Clear()
         switch ($scenario) {
             'lightweight' { $state.reference = @{ object = @{ type = 'commit'; sha = $ExpectedCommit } } }
             'annotated' { $state.reference = @{ object = @{ type = 'tag'; sha = ('a' * 40) } }; $state.annotated = @{ object = @{ type = 'commit'; sha = $ExpectedCommit } } }
@@ -37,12 +38,19 @@ try {
             'public' { $state.existing = @{ draft = $false; target_commitish = $ExpectedCommit } }
             'matching-draft' { $state.existing = @{ draft = $true; target_commitish = $ExpectedCommit } }
             'wrong-draft' { $state.existing = @{ draft = $true; target_commitish = ('c' * 40) } }
+            'unauthorized' { $state.apiFailure = 401 }
+            'forbidden' { $state.apiFailure = 403 }
+            'server-error' { $state.apiFailure = 503 }
         }
         $failed = $false
         try { & $publisher -Repository fixture/test -Version 0.0.1 -ExpectedCommit $ExpectedCommit -CheckOnly | Out-Null } catch { $failed = $true }
-        if ($failed -ne ($scenario -in @('wrong-tag','public','wrong-draft')) -or $state.writes.Count) { throw "Publish preflight failed scenario: $scenario" }
+        if ($failed -ne ($scenario -in @('wrong-tag','public','wrong-draft','unauthorized','forbidden','server-error')) -or $state.writes.Count) { throw "Publish preflight failed scenario: $scenario" }
+        # GitHub's pwsh wrapper exits with LASTEXITCODE even when the script did
+        # not throw. Expected 404 lookups must not leave a failure in the caller.
+        if (!$failed -and $global:LASTEXITCODE -ne 0) { throw "Successful preflight left a nonzero process exit code: $scenario" }
         $checks++
     }
+    $state.apiFailure = $null
     foreach ($draft in @($false,$true)) {
         $state.existing = $null; $state.reference = $null; $state.writes.Clear()
         & $publisher -Repository fixture/test -Version 0.0.1 -ExpectedCommit $ExpectedCommit -AssetDirectory $AssetDirectory -Draft:$draft | Out-Null

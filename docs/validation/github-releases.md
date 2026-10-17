@@ -20,3 +20,14 @@
 首轮云端 [39015769914](https://github.com/lucasx001/frametrail/actions/runs/39015769914) 的工具准备、新发布脚本、原生 7 组和应用构建通过，但原有缓存逐出单测依赖连续写入文件的时间差，在 hosted CI 同一时钟刻度下出现排序并列。已为测试中的旧/活动/新文件设置明确时间戳，保留原有容量和保护断言；产品缓存逻辑未改动。修复后的 CI 状态以 PR 检查为准。
 
 运行环境为当前 Windows 11 build 26300 开发机。GitHub 云端执行、正式指定版本的公开 Release、浏览器下载、上一版升级、干净稳定 Windows 安装和 SmartScreen/商业签名行为分别记录，不能由本地构建结果推断通过。当前 EXE 安装器未签名，MSIX 仅供开发验证；公开附件默认不含未签名 MSIX。
+
+## 2026-10-17：首次发版预检退出码修复
+
+[首次手动发版 39023768645](https://github.com/lucasx001/frametrail/actions/runs/39023768645) 在源提交 `2f8aa92`、版本 `0.0.1` 上打印预检通过后仍以 1 退出。原因是查不到尚未创建的 Release/tag 时，`gh api` 返回 404 和退出码 1；脚本将结果处理为不存在，却没有清除 `$LASTEXITCODE`。GitHub 的 PowerShell shell 会把该变量作为最终进程退出码。
+
+- 在已处理的 404 分支把调用方的 `$global:LASTEXITCODE` 归零；真正的 API 错误继续抛出异常。
+- 成功预检场景现在同时检查异常与调用方退出码。增加 401、403、503 场景，共 14 个发布/预检检查通过；既有 32 项版本/附件检查通过。
+- 使用真实 GitHub CLI，在独立 `pwsh` 进程中执行与 Actions 相同的末尾退出码检查：旧脚本退出 1，修复脚本退出 0，两个版本均打印同一 `v0.0.1 @ 2f8aa92` 预检通过信息。结果保留在 `artifacts/test-results/release-preflight-process.json`，全程只读。
+- Windows CI 新增真实 `GITHUB_TOKEN` + `-CheckOnly` 步骤，用单次运行的探测版本校验实际 Actions shell 退出状态，不创建 tag 或 Release。
+
+修复合并后应通过 **Run workflow** 从包含修复的新提交发起 `0.0.1`，不要直接 Re-run 原失败记录；重新运行旧记录沿用原来的 SHA 和工作流代码。[GitHub 重跑规则](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)。

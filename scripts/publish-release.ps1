@@ -14,7 +14,12 @@ $release = ConvertTo-FrameTrailReleaseVersion $Version
 function Read-GitHubObject([string] $Endpoint) {
     $output = & gh api $Endpoint 2>&1
     if ($LASTEXITCODE -eq 0) { return ($output | Out-String | ConvertFrom-Json) }
-    if (($output | Out-String) -match 'HTTP 404') { return $null }
+    if (($output | Out-String) -match 'HTTP 404') {
+        # Missing releases/tags are expected during first publication. The pwsh
+        # Actions wrapper uses the caller's LASTEXITCODE after this script returns.
+        $global:LASTEXITCODE = 0
+        return $null
+    }
     throw "GitHub API request failed: $Endpoint"
 }
 function Invoke-Gh([string[]] $Arguments) { & gh @Arguments; if ($LASTEXITCODE -ne 0) { throw 'GitHub release operation failed.' } }
