@@ -4,7 +4,8 @@ $ErrorActionPreference = 'Stop'
 function ConvertTo-FrameTrailReleaseVersion([string] $Value) {
     if ($Value -notmatch '^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Version must be X.Y.Z or vX.Y.Z, for example 0.0.1. Prerelease suffixes and leading zeros are not supported.' }
     $parts = @($Matches[1], $Matches[2], $Matches[3])
-    foreach ($part in $parts) { $number = 0; if (![int]::TryParse($part, [ref]$number) -or $number -gt 65535) { throw 'Each version component must be 0..65535.' } }
+    # .NET assembly metadata reserves UInt16.MaxValue; use the shared lower limit.
+    foreach ($part in $parts) { $number = 0; if (![int]::TryParse($part, [ref]$number) -or $number -gt 65534) { throw 'Each version component must be 0..65534.' } }
     $version = $parts -join '.'
     if ($version -eq '0.0.0') { throw 'The first release version must be greater than 0.0.0.' }
     [pscustomobject]@{ Version = $version; FileVersion = "$version.0"; Tag = "v$version" }

@@ -24,7 +24,7 @@ git tag v0.0.1
 git push origin v0.0.1
 ```
 
-下一版使用新的版本号，例如 `0.0.2` / `v0.0.2`。每段数字为 0–65535，不接受 0.0.0、前导零或预发布后缀。工作流把输入统一写入构建副本：应用/原生引擎使用 `X.Y.Z`，程序集、可执行文件和 MSIX 使用 `X.Y.Z.0`，附件文件名使用 `X.Y.Z`。仓库中的开发版本不会因此自动提交或改变。
+下一版使用新的版本号，例如 `0.0.2` / `v0.0.2`。每段数字为 0–65534，不接受 0.0.0、前导零或预发布后缀。工作流把输入统一写入构建副本：应用/原生引擎使用 `X.Y.Z`，程序集、可执行文件和 MSIX 使用 `X.Y.Z.0`，附件文件名使用 `X.Y.Z`。仓库中的开发版本不会因此自动提交或改变。
 
 构建步骤包含锁依赖测试、自包含打包、安装/卸载校验与 SHA-256 校验；发布步骤先建立草稿，再上传完整附件，最后公开，失败不会公开半套附件。Release 附件包括：
 
@@ -83,6 +83,11 @@ MSIX 由 Windows 安装到受管理目录；用户工程保持在用户视频目
 正式候选发布检查还包括：稳定 Windows 11 干净机器、签名信任、首次安装和启动、真实媒体流程、上一版升级、失败提示、工程与偏好保留、卸载、SmartScreen 行为、许可与校验留存、0010 发布阻断关闭。当前均不能仅依据开发机启动标记完成。
 
 ## 技术依据
+
+- [GitHub：工作流语法与权限](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)
+- [GitHub CLI：创建 Release](https://cli.github.com/manual/gh_release_create)
+- [Inno Setup：每用户权限](https://jrsoftware.org/ishelp/topic_setup_privilegesrequired.htm) / [运行中应用保护](https://jrsoftware.org/ishelp/topic_setup_appmutex.htm)
+- [Microsoft：AssemblyVersion 的各段上限为 UInt16.MaxValue - 1](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.assemblyversionattribute)
 
 - [Microsoft：创建包签名证书](https://learn.microsoft.com/windows/msix/package/create-certificate-package-signing)
 - [Microsoft：MSIX 签名](https://learn.microsoft.com/en-us/windows/msix/package/sign-msix-package-guide)

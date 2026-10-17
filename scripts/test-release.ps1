@@ -6,7 +6,7 @@ $fixture = Join-Path $root ('artifacts\test-results\release-metadata-' + [guid]:
 New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 $checks = 0
 function Assert-Release([bool] $Condition, [string] $Message) { if (!$Condition) { throw $Message }; $script:checks++ }
-foreach ($invalid in @('','0.0.0','01.0.1','1.2','v1.2.3-beta','65536.0.1','1.2.3;echo bad','1.2.3.4','9999999999999999.0.1')) {
+foreach ($invalid in @('','0.0.0','01.0.1','1.2','v1.2.3-beta','65536.0.1','65535.0.1','1.65535.1','1.1.65535','1.2.3;echo bad','1.2.3.4','9999999999999999.0.1')) {
     $rejected = $false; try { $null = ConvertTo-FrameTrailReleaseVersion $invalid } catch { $rejected = $true }
     Assert-Release $rejected "Accepted invalid version: $invalid"
 }
@@ -14,7 +14,7 @@ foreach ($path in @('version.props','src\FrameTrail.App\app.manifest','packaging
     $target = Join-Path $fixture $path; New-Item -ItemType Directory -Path (Split-Path $target) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $root $path) -Destination $target
 }
-foreach ($value in @('v0.0.1','0.0.2','65535.65535.65535')) {
+foreach ($value in @('v0.0.1','0.0.2','65534.65534.65534')) {
     $release = Set-FrameTrailReleaseVersion $fixture $value
     [xml] $props = Get-Content (Join-Path $fixture 'version.props') -Raw -Encoding UTF8
     [xml] $manifest = Get-Content (Join-Path $fixture 'packaging\AppxManifest.xml') -Raw -Encoding UTF8
