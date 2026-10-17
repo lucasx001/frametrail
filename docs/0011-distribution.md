@@ -1,6 +1,6 @@
 # 0011 — 安装更新与发布准备
 
-状态：待验收（2026-10-16，开发候选分发链路已实现；正式签名与安装/升级/卸载矩阵未完成）。依赖：0010。规格依据：[spec.md](spec.md)。进度入口：[progress.md](progress.md)。
+状态：待验收（2026-10-17，开发候选分发链路已实现；新增每用户 EXE 安装器与 GitHub Release 工作流见 [0019](0019-github-releases.md)，正式签名与干净机器/跨版本安装矩阵未完成）。依赖：0010。规格依据：[spec.md](spec.md)。进度入口：[progress.md](progress.md)。
 
 ## Task 整体描述
 

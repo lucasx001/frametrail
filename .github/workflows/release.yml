@@ -1,0 +1,122 @@
+name: Release Windows application
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.0.1 (or v0.0.1)'
+        required: true
+        type: string
+      draft:
+        description: 'Keep the release as a draft instead of making it public'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frametrail-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ steps.version.outputs.source_sha }}
+      draft: ${{ steps.version.outputs.draft }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve and validate version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_DRAFT: ${{ inputs.draft }}
+        run: |
+          . ./scripts/release-common.ps1
+          $value = if ($env:GITHUB_EVENT_NAME -eq 'push') { $env:GITHUB_REF_NAME } else { $env:RELEASE_VERSION }
+          $release = ConvertTo-FrameTrailReleaseVersion $value
+          "version=$($release.Version)" >> $env:GITHUB_OUTPUT
+          "source_sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+          "draft=$($env:RELEASE_DRAFT -eq 'true')".ToLowerInvariant() >> $env:GITHUB_OUTPUT
+      - name: Reject existing public releases and mismatched tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_SHA: ${{ steps.version.outputs.source_sha }}
+        run: ./scripts/publish-release.ps1 -Repository $env:GITHUB_REPOSITORY -Version $env:RELEASE_VERSION -ExpectedCommit $env:SOURCE_SHA -CheckOnly
+      - name: Stamp build version and local project lock metadata
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/set-release-version.ps1 -Version $env:RELEASE_VERSION
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Validate release version rules
+        run: ./scripts/test-release.ps1
+      - name: Prepare pinned Android and installer tools
+        run: |
+          ./scripts/setup-android.ps1
+          ./scripts/setup-installer-tool.ps1
+      - name: Build and test Release
+        run: ./scripts/build.ps1 -Configuration Release -LockedRestore
+      - name: Package self-contained application and installer
+        shell: powershell
+        run: |
+          ./scripts/package.ps1 -SkipBuild -BuildInstaller -OutputDirectory artifacts/packages/release
+          ./scripts/verify-package.ps1 -PackageDirectory artifacts/packages/release
+      - name: Verify current-user installation and uninstall
+        run: ./scripts/verify-installer.ps1 -PackageDirectory artifacts/packages/release -InstallDirectory "$env:RUNNER_TEMP/FrameTrail-install-test"
+      - name: Prepare public assets (exclude unsigned MSIX)
+        run: ./scripts/prepare-release.ps1 -PackageDirectory artifacts/packages/release -OutputDirectory artifacts/release -VersionStampedAtBuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FrameTrail-release-${{ steps.version.outputs.version }}
+          path: artifacts/release/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrameTrail-release-validation-${{ github.run_id }}
+          path: |
+            artifacts/test-results/**
+            artifacts/packages/release/installer-validation/**
+            artifacts/packages/release/*.log
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: FrameTrail-release-${{ needs.build.outputs.version }}
+          path: artifacts/release
+      - name: Upload assets and publish the version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+          SOURCE_SHA: ${{ needs.build.outputs.source_sha }}
+          RELEASE_DRAFT: ${{ needs.build.outputs.draft }}
+        run: |
+          ./scripts/publish-release.ps1 -Repository $env:GITHUB_REPOSITORY -Version $env:RELEASE_VERSION -ExpectedCommit $env:SOURCE_SHA -AssetDirectory artifacts/release -Draft:($env:RELEASE_DRAFT -eq 'true')
