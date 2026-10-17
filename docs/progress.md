@@ -4,6 +4,8 @@
 
 ## 当前状态
 
+- 2026-10-17：修复 Release runner 已迁移到 VS2026、构建却固定选择 VS2022 的问题：新目录默认 Ninja，自动发现并导入已安装的 MSVC x64；保留 portable、显式生成器和已有 CMake 缓存。CI 增加 windows-2025 完整构建/打包/Store 测试包与安装卸载验证，见 [发布验证](validation/github-releases.md)。
+
 - 2026-10-17：修复首次发版预检打印通过却以 1 退出的问题：已处理的 GitHub 404 现在清除原生命令退出码。增加成功预检的调用方退出码断言、401/403/503 拒绝场景和 Actions 中的只读真实预检；本机真实 gh + Actions 式进程封装已确认旧脚本退出 1、修复后退出 0，见 [发布验证](validation/github-releases.md)。
 
 - 2026-10-17：新增 [0020 Microsoft Store MSIX](0020-microsoft-store.md)，独立未签名提交包、商店身份配置、版本映射及 CI 测试包已实现；本机 19 项身份/版本、4 项篡改拒绝和 597 文件打包校验通过，实现提交 ec82949 的云端构建、校验及 Store 附件上传也通过。用户尚未注册商店应用，正式身份、安装版 MSIX、WACK 和认证待验收。

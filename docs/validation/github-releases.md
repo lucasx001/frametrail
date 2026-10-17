@@ -31,3 +31,12 @@
 - Windows CI 新增真实 `GITHUB_TOKEN` + `-CheckOnly` 步骤，用单次运行的探测版本校验实际 Actions shell 退出状态，不创建 tag 或 Release。
 
 修复合并后应通过 **Run workflow** 从包含修复的新提交发起 `0.0.1`，不要直接 Re-run 原失败记录；重新运行旧记录沿用原来的 SHA 和工作流代码。[GitHub 重跑规则](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)。
+
+## 2026-10-17：Release runner 的 Visual Studio 版本修复
+
+[第二次手动发版 39024748097](https://github.com/lucasx001/frametrail/actions/runs/39024748097) 已通过预检，但在 CMake 配置阶段失败。该次 runner 实际为 `windows-2025-vs2026`、镜像 `20261007.264.1`，内含 VS2026 18.10；脚本在没有预加载 cl 时固定选 `Visual Studio 17 2022`，因此找不到 VS 实例。[GitHub 镜像迁移说明](https://github.blog/changelog/2026-05-14-github-actions-upcoming-image-migrations/)。
+
+- 新构建目录默认 Ninja；保留已有 cl/portable 环境，否则使用 vswhere 查找最新已安装 C++ 工具链并通过 VsDevCmd 加载 x64 环境。显式 VS 生成器保持可用，已有目录沿用缓存中的生成器。
+- 普通 CI 同时运行 windows-2022 与 windows-2025，执行锁依赖 Release 构建、原生/托管测试、EXE/ZIP/MSIX 打包及 Store 测试包校验。windows-2025 额外执行与 Release 相同的安装、覆盖安装、运行中阻止安装/卸载、载荷和卸载验证。
+- 各镜像的附件与测试结果分别命名，保留安装器日志。真实 runner 的执行结果以该修复 PR 的检查为准；不将本机 portable 构建视为 VS2026 验证。
+- 本机 Windows PowerShell 5.1 + portable MSVC/Ninja 的锁依赖 Release 构建通过，0 警告/错误、原生 7 组和托管 201 项通过；actionlint 与 PowerShell Parser 通过。日志：`artifacts/toolchain-fix-build.log`。

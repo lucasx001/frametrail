@@ -46,6 +46,29 @@ function Resolve-FrameTrailTool([string] $Name, [string[]] $Candidates = @()) {
     throw "Required tool '$Name' was not found. Portable toolchain directory: '$script:ActiveToolchainRoot'. Run .\scripts\doctor.cmd to check directory and tool visibility. See docs/toolchain.md."
 }
 
+function Import-FrameTrailMsvc {
+    # Preserve a portable toolchain or an existing developer-shell environment.
+    if (Get-Command cl.exe -ErrorAction SilentlyContinue) { return }
+    $vswhere = Resolve-FrameTrailTool 'vswhere.exe' @("${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe")
+    $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    if ($LASTEXITCODE -ne 0) { throw "Visual Studio discovery failed with code $LASTEXITCODE." }
+    if (!$installation) { throw 'No MSVC x64 toolchain found. Install the Visual Studio C++ desktop workload or configure -ToolchainRoot; see docs/toolchain.md.' }
+    $setup = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
+    if (!(Test-Path -LiteralPath $setup -PathType Leaf)) { throw "Visual Studio environment setup was not found: $setup" }
+    Write-Host "Loading MSVC x64 from $installation"
+    $lines = & $env:ComSpec /d /s /c "`"`"$setup`" -no_logo -arch=x64 -host_arch=x64 >nul && set`""
+    if ($LASTEXITCODE -ne 0) { throw 'Visual Studio x64 environment setup failed.' }
+    foreach ($line in $lines) {
+        if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
+    }
+    # VS ships these alongside the C++ workload even when they are not on PATH.
+    foreach ($folder in @('Ninja', 'CMake\bin')) {
+        $candidate = Join-Path $installation "Common7\IDE\CommonExtensions\Microsoft\CMake\$folder"
+        if (Test-Path -LiteralPath $candidate -PathType Container) { $env:PATH += [IO.Path]::PathSeparator + $candidate }
+    }
+    if (!(Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw 'Visual Studio setup did not expose the MSVC compiler.' }
+}
+
 function Invoke-Checked([string] $Tool, [string[]] $Arguments) {
     & $Tool @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Tool exited with code $LASTEXITCODE" }

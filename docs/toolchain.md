@@ -14,10 +14,10 @@
 | Windows App SDK | NuGet Microsoft.WindowsAppSDK 1.8.260921001（1.8.12 stable） |
 | SDK BuildTools NuGet | Microsoft.Windows.SDK.BuildTools 10.0.26100.4948 |
 | Native SDK | Windows SDK 10.0.26100.0 |
-| Native compiler | MSVC v143；本机验证版本14.44.35207（cl19.44） |
+| Native compiler | MSVC x64；本机 portable 基线 v143 14.44.35207（cl19.44），CI 同时验证 VS2022 / VS2026 |
 | CMake | 最低3.25；本机工具版本3.31.6 |
 | Ninja | 本机工具版本1.11.1（Python distribution1.11.1.4） |
-| CI | GitHub hosted windows-2022 / VS2022；实际云端执行结果另记 |
+| CI | GitHub hosted windows-2022 / VS2022 与 windows-2025 / VS2026；后者同时覆盖 Release 的安装器验证，执行证据见发布验证记录 |
 
 Windows App SDK 1.8 本身支持更早系统；本项目有意缩小为 Windows 11。所有 26100 专有能力都必须运行时检测或在此提高最低 build，不能仅依靠编译通过。任务0003会记录设备与采集 API 能力。
 
@@ -25,7 +25,7 @@ Windows App SDK 1.8 本身支持更早系统；本项目有意缩小为 Windows 
 
 ## 开发环境
 
-标准环境：Visual Studio 2022 Build Tools，包含 C++ desktop workload、MSVC v143、Windows11 SDK26100与CMake；另安装.NET SDK8.0.426。WinUI C#项目可由dotnet build调用包内XAML编译器，不依赖IDE模板。
+标准环境：Visual Studio 2022 或 2026（含 Build Tools），包含 C++ desktop workload、MSVC x64、Windows11 SDK26100、CMake 与 Ninja；另安装.NET SDK8.0.426。WinUI C#项目可由dotnet build调用包内XAML编译器，不依赖IDE模板。
 
 本机也支持 portable 工具链。优先使用工程内的 `.tools\toolchain`，其布局如下；也兼容用户目录 `%LOCALAPPDATA%\FrameTrail\Toolchain`：
 
@@ -61,13 +61,13 @@ Windows App SDK 1.8 本身支持更早系统；本项目有意缩小为 Windows 
 .\scripts\run.cmd
 ```
 
-只有Visual Studio生成器时：
+需要显式使用 Visual Studio 生成器时（名称必须与已安装版本和 CMake 支持一致）：
 
 ```powershell
 .\scripts\build.cmd -Configuration Release -Generator "Visual Studio 17 2022"
 ```
 
-已初始化cl环境或使用portable工具链时默认Ninja。不同生成器或不同Configuration用不同`-NativeBuildDirectory`，避免复用CMake缓存。可以传入`-NativeOnly`只构建原生引擎。已提交packages.lock.json后，CI使用`-LockedRestore`拒绝未审阅的依赖解析变化。
+新构建目录默认使用 Ninja。脚本优先保留 portable / 开发者终端中的 cl 环境；没有 cl 时，使用 Visual Studio 自带的 vswhere 查找已安装的最新 C++ 工具链，通过 VsDevCmd 加载 x64 编译环境，仅修改当前进程。不会按年份猜测 Visual Studio 生成器。Ninja/CMake 不在 PATH 时也会检查选中 VS 的内置工具目录。已有构建目录默认沿用 CMakeCache 中的生成器，显式 `-Generator` 仍然优先。不同生成器或不同Configuration用不同`-NativeBuildDirectory`，避免复用CMake缓存。可以传入`-NativeOnly`只构建原生引擎。已提交packages.lock.json后，CI使用`-LockedRestore`拒绝未审阅的依赖解析变化。
 
 ### PowerShell 禁止运行脚本
 
@@ -101,7 +101,7 @@ WinUI应用采用unpackaged + WindowsAppSDKSelfContained，构建时复制FrameT
 
 CPU测试验证ABI、取消、1000次生命周期、重复销毁与并发。WinUI窗口、WGC采集、真实音频设备、摄像头和GPU效果必须在登录的Windows桌面上单独验收；CI成功不能替代这些证据。
 
-托管设备测试使用 `Category=Hardware`，默认脚本和 hosted CI 排除，实机通过 `-IncludeHardware` 明确执行。TRX 使用各测试项目独立文件名，避免覆盖。CI 的 `-LockedRestore` 同时约束 App 和测试依赖；实际云端 CI 尚未执行。
+托管设备测试使用 `Category=Hardware`，默认脚本和 hosted CI 排除，实机通过 `-IncludeHardware` 明确执行。TRX 使用各测试项目独立文件名，避免覆盖。CI 的 `-LockedRestore` 同时约束 App 和测试依赖；实际云端结果以对应 PR 检查为准。
 
 ## 技术依据
 
