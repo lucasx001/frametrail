@@ -1,5 +1,8 @@
 # 0002 领域模型验证记录
 
+> 历史执行快照。后续集成/修复见 [m0-m1-review.md](m0-m1-review.md)；当前任务状态以 [progress.md](../progress.md) 和 [待办](../todo.md) 为准。本页未勾选项仅反映记录当日范围。
+
+
 日期：2026-10-14。系统：本次 Windows x64 工作区。工程路径：`C:\Users\lucas\Desktop\project\frametrail`。
 
 ## 已执行

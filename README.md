@@ -2,7 +2,7 @@
 
 面向 Windows 11 的原生录屏与演示视频编辑软件。
 
-项目以 DogSC 的产品能力和领域模型为参考，在 Windows 上独立实现采集、编辑、预览和导出。当前已实现 M0 工程基础与 M1 录制原型：屏幕、独立音轨、光标、标记、分段保存和工程恢复。M2 已接入原生预览、非破坏性时间线编辑与 MP4/M4A 导出；扩展实机验收仍待完成，见 [M2 验证记录](docs/validation/m2-editor-export.md)。
+项目以 DogSC 的产品能力和领域模型为参考，在 Windows 上独立实现采集、编辑、预览和导出。M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的本机闭环；M4 已提供可靠性修复和开发候选包。长时同步、跨硬件和正式分发验收仍待完成，当前任务以 [进度](docs/progress.md) 和 [待办](docs/todo.md) 为准。
 
 移动设备录屏方向为 [通过 USB 数据线连接 Android 手机](docs/0012-android-usb-recording.md)，M5 的本地实现与自动媒体验证已完成；USB 真机、长时同步与安装矩阵待验收，见 [M5 验证记录](docs/validation/0012-android-usb-validation.md)。
 
@@ -12,6 +12,8 @@
 
 - [产品规格](docs/spec.md)
 - [实现进度与任务顺序](docs/progress.md)
+- [当前待办与验收入口](docs/todo.md)
+- [媒体缓存、光标、连续缩略图与预设管理](docs/validation/editor-polish.md)
 - [工具链与构建](docs/toolchain.md)
 - [M0/M1 主 agent 审阅与验证](docs/validation/m0-m1-review.md)
 - [M2 编辑与导出验证](docs/validation/m2-editor-export.md)

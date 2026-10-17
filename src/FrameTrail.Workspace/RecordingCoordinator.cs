@@ -39,6 +39,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     private readonly IRecordingDriver driver;
     private readonly Action<ProjectSnapshot>? validator;
     private readonly Action<string, bool>? mediaProbe;
+    private readonly Func<VisualPresetLibrary>? presetLibrary;
     private readonly List<MediaAsset> media = new();
     private readonly List<RecordingSegment> segments = new();
     private readonly List<RecordingMarker> markers = new();
@@ -63,8 +64,8 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     public Guid RunId => runId;
     public ProjectWorkspace? Workspace => workspace;
 
-    public RecordingCoordinator(IRecordingDriver? driver = null, Action<ProjectSnapshot>? validator = null, Action<string, bool>? mediaProbe = null)
-    { this.driver = driver ?? new NativeRecordingDriver(); this.validator = validator; this.mediaProbe = mediaProbe; }
+    public RecordingCoordinator(IRecordingDriver? driver = null, Action<ProjectSnapshot>? validator = null, Action<string, bool>? mediaProbe = null, Func<VisualPresetLibrary>? presetLibrary = null)
+    { this.driver = driver ?? new NativeRecordingDriver(); this.validator = validator; this.mediaProbe = mediaProbe; this.presetLibrary = presetLibrary; }
 
     public async Task StartAsync(RecordingPlan requested, CancellationToken cancellationToken = default)
     {
@@ -209,6 +210,10 @@ public sealed class RecordingCoordinator : IAsyncDisposable
         segments.Add(new() { Id = "segment-" + Guid.NewGuid().ToString("N"), SourceStart = MediaTime.FromTicks(sourceTicks), SourceDuration = MediaTime.FromTicks(result.DurationTicks), Rate = new() });
         sourceTicks += result.DurationTicks;
         var checkpoint = MakeSnapshot();
+        if (workspace!.Snapshot is null && presetLibrary is not null) {
+            try { var library = presetLibrary(); var catalog = await library.ListAsync(); if (catalog.DefaultId is string id) checkpoint = await library.ApplyAsync(id, checkpoint, workspace.DirectoryPath); }
+            catch (Exception error) { AddWarning("默认场景预设未应用，录制素材已保留：" + error.Message); }
+        }
         if (plan!.AutomaticZoom && plan.RecordPointer && plan.Android is null && media.Any(m => m.Kind == MediaKind.PointerEvents))
         {
             try
@@ -235,7 +240,8 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             SourceDuration = MediaTime.FromTicks(sourceTicks), Media = media.ToArray(), Segments = segments.ToArray(),
             Effects = workspace.Snapshot?.Effects ?? Array.Empty<SourceEffect>(),
             Markers = markers.Where(m => m.Time.Ticks <= sourceTicks).ToArray(),
-            Canvas = new() { Width = main.Width, Height = main.Height, Camera = new() { Enabled = plan!.Camera is not null } },
+            Canvas = workspace.Snapshot?.Canvas ?? new() { Width = main.Width, Height = main.Height, Camera = new() { Enabled = plan!.Camera is not null } },
+            Editor = workspace.Snapshot?.Editor,
             Export = new() { Fps = new() { Numerator = (int)plan!.Fps }, VideoCodec = plan.VideoCodec } };
     }
     private string? createdProjectId;

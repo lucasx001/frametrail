@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "frametrail/core/cursor.hpp"
 #include "frametrail/core/mockup.hpp"
 #include "visual_gpu.hpp"
 #include <d2d1_1helper.h>
@@ -106,29 +107,55 @@ void Renderer::layer(const Project& p, const MediaFrame& frame, float radius, bo
                         auto t = normalized_ticks({event.at("ticks").get<int64_t>(), event.at("timescale").get<int32_t>()});
                         float x = event.at("x").get<float>(), y = event.at("y").get<float>();
                         if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || x > 1 || y < 0 || y > 1) throw ValidationError("pointer", "invalid coordinates");
-                        track.points.push_back({t, x, y, event.value("shape", 0u), event.value("visible", false) && event.value("inside", false)});
+                        track.points.push_back({t, x, y, event.value("shape", 0u), event.value("visible", false) && event.value("inside", false), event.value("kind", 0u)});
                     }
                 }
-                std::stable_sort(track.points.begin(), track.points.end(), [](auto& a, auto& b) { return a.ticks < b.ticks; }); pointers[m.id] = std::move(track);
+                std::stable_sort(track.points.begin(), track.points.end(), [](auto& a, auto& b) { return a.ticks < b.ticks; });
+                for(size_t i=0;i<track.points.size();++i) {
+                    auto& point=track.points[i];
+                    point.activity = i==0 || point.kind!=0 || point.visible!=track.points[i-1].visible || std::abs(point.x-track.points[i-1].x)>0.000001f || std::abs(point.y-track.points[i-1].y)>0.000001f ? point.ticks : track.points[i-1].activity;
+                    track.smooth_points.push_back({point.ticks,point.x,point.y});
+                }
+                pointers[m.id] = std::move(track);
             }
-            auto& track = pointers.at(m.id); auto it = std::upper_bound(track.points.begin(), track.points.end(), global - local, [](auto t, auto& e) { return t < e.ticks; });
+            const auto cursor_ticks=global-local+static_cast<int64_t>(std::llround(settings.value("cursorTimeOffset",0.0)*time_scale));
+            if(cursor_ticks<0 || cursor_ticks>=normalized_ticks(m.duration))continue;
+            auto& track = pointers.at(m.id); auto it = std::upper_bound(track.points.begin(), track.points.end(), cursor_ticks, [](auto t, auto& e) { return t < e.ticks; });
             if (it == track.points.begin()) continue; --it; if (!it->visible) continue;
-            if(track.smooth_points.empty())for(auto& point:track.points)track.smooth_points.push_back({point.ticks,point.x,point.y});
-            auto point=smooth_pointer(track.smooth_points,global-local,settings.value("cursorSmoothing",0.08));
+            auto point=smooth_pointer(track.smooth_points,cursor_ticks,settings.value("cursorSmoothing",0.08));
             const float x = rect.left + (float(point[0]) * asset->width - src.left) / (src.right - src.left) * (rect.right - rect.left);
             const float y = rect.top + (float(point[1]) * asset->height - src.top) / (src.bottom - src.top) * (rect.bottom - rect.top);
             auto found = track.shapes.find(it->shape); const auto scale = static_cast<float>(settings.value("cursorScale", 1.0)) * (rect.right - rect.left) / (src.right - src.left);
-            if (found != track.shapes.end()) {
+            const auto opacity=static_cast<float>(cursor_idle_opacity(cursor_ticks,it->activity,settings.value("cursorHideWhenIdle",false),settings.value("cursorIdleDelay",1.2)));
+            const auto click_style=settings.value("cursorClickStyle",std::string("none"));
+            if(click_style!="none")for(auto click=std::make_reverse_iterator(it+1);click!=track.points.rend() && cursor_ticks-click->ticks<5500000;++click) {
+                if(!click->visible || (click->kind!=1 && click->kind!=3 && click->kind!=5))continue;
+                auto progress=static_cast<float>(cursor_click_progress(cursor_ticks,click->ticks));
+                float cx=rect.left+(click->x*asset->width-src.left)/(src.right-src.left)*(rect.right-rect.left);
+                float cy=rect.top+(click->y*asset->height-src.top)/(src.bottom-src.top)*(rect.bottom-rect.top);
+                auto color=settings.value("cursorClickColor",Json{{"r",0.35},{"g",0.68},{"b",1.0},{"a",1.0}});
+                brush->SetColor(D2D1::ColorF(color["r"].get<float>(),color["g"].get<float>(),color["b"].get<float>(),color.value("a",1.0f)));
+                brush->SetOpacity(static_cast<float>(settings.value("cursorClickOpacity",0.8))*(1-progress));
+                float click_radius=(click_style=="ripple"?8+22*progress:18)*scale*static_cast<float>(settings.value("cursorClickScale",1.0));
+                auto ellipse=D2D1::Ellipse(D2D1::Point2F(cx,cy),click_radius,click_radius);
+                if(click_style=="ripple")d2->DrawEllipse(ellipse,brush.Get(),std::max(1.0f,2*scale));else d2->FillEllipse(ellipse,brush.Get());
+            }
+            auto style=settings.value("cursorStyle",std::string("recorded"));
+            if(style=="dot" || style=="crosshair") {
+                brush->SetOpacity(opacity); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                if(style=="dot") {auto circle=D2D1::Ellipse(D2D1::Point2F(x,y),5*scale,5*scale);d2->FillEllipse(circle,brush.Get());brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));d2->DrawEllipse(circle,brush.Get(),scale);}
+                else {d2->DrawLine(D2D1::Point2F(x-9*scale,y),D2D1::Point2F(x+9*scale,y),brush.Get(),3*scale);d2->DrawLine(D2D1::Point2F(x,y-9*scale),D2D1::Point2F(x,y+9*scale),brush.Get(),3*scale);brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));d2->DrawLine(D2D1::Point2F(x-9*scale,y),D2D1::Point2F(x+9*scale,y),brush.Get(),scale);d2->DrawLine(D2D1::Point2F(x,y-9*scale),D2D1::Point2F(x,y+9*scale),brush.Get(),scale);}
+            } else if (style=="recorded" && found != track.shapes.end()) {
                 auto rel = winrt::to_string((std::filesystem::path(winrt::to_hstring(m.path).c_str()).parent_path() / std::filesystem::path(winrt::to_hstring(found->second.file).c_str())).generic_wstring());
                 auto icon = image(safe_path(root, rel)); auto size = icon->GetSize(); auto shape = found->second;
                 auto dest = D2D1::RectF(x - shape.x * scale, y - shape.y * scale, x + (size.width - shape.x) * scale, y + (size.height - shape.y) * scale);
-                d2->DrawBitmap(icon.Get(), dest);
+                d2->DrawBitmap(icon.Get(), dest, opacity);
             } else {
                 // Explicit default pointer when capture could not persist a shape.
                 ComPtr<ID2D1PathGeometry> arrow; FT_MEDIA_CHECK(factory->CreatePathGeometry(&arrow)); ComPtr<ID2D1GeometrySink> sink; FT_MEDIA_CHECK(arrow->Open(&sink));
                 sink->BeginFigure(D2D1::Point2F(x, y), D2D1_FIGURE_BEGIN_FILLED);
                 sink->AddLine(D2D1::Point2F(x + 2 * scale, y + 20 * scale)); sink->AddLine(D2D1::Point2F(x + 7 * scale, y + 15 * scale)); sink->AddLine(D2D1::Point2F(x + 14 * scale, y + 15 * scale)); sink->EndFigure(D2D1_FIGURE_END_CLOSED); FT_MEDIA_CHECK(sink->Close());
-                brush->SetOpacity(1); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); d2->FillGeometry(arrow.Get(), brush.Get()); brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black)); d2->DrawGeometry(arrow.Get(), brush.Get(), scale);
+                brush->SetOpacity(opacity); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); d2->FillGeometry(arrow.Get(), brush.Get()); brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black)); d2->DrawGeometry(arrow.Get(), brush.Get(), scale);
             }
         }
     }

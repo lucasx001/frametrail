@@ -1,5 +1,8 @@
 # 0005 多轨工作区实现与验证
 
+> 历史执行快照。后续集成/修复见 [capture-continuity-performance.md](capture-continuity-performance.md)；当前任务状态以 [progress.md](../progress.md) 和 [待办](../todo.md) 为准。本页未勾选项仅反映记录当日范围。
+
+
 日期：2026-10-14。实现范围为录制会话、摄像头/光标原生桥接、项目工作区和恢复入口。主 agent 负责统一 review、根构建集成与阶段状态；本文区分实际验证和仍待验收事项。
 
 2026-10-15 补充：摄像头拍摄、持续源 checkpoint 与产品联合短测已通过，本页下方“未拍摄 / 独占重启间隙”描述保留为历史边界；当前证据及未完成项以 [连续性与性能记录](capture-continuity-performance.md) 为准。29.97 FPS、外设中断和长时音画同步仍待验收。

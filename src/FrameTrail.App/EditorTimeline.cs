@@ -37,7 +37,7 @@ internal sealed class EditorTimeline : Grid
     internal event Action? BeginEdit;
     internal event Action<object>? PreviewEdit;
     internal event Action<bool>? EndEdit;
-    internal event Action<long>? ThumbnailNeeded;
+    internal event Action<IReadOnlyList<long>>? ThumbnailsNeeded;
     internal double PixelsPerSecond { get => scale; set { scale = Math.Clamp(value, 0.05, 1000); Draw(); } }
     internal bool EditingEnabled { get; set; } = true;
     internal bool ThumbnailsEnabled { get; set; } = true;
@@ -64,7 +64,7 @@ internal sealed class EditorTimeline : Grid
     internal void AddThumbnail(long ticks, string path)
     {
         if (thumbnails.Count >= 160 && !thumbnails.ContainsKey(ticks)) { var first = thumbnails.Keys.First(); thumbnails.Remove(first); staleThumbnails.Remove(first); }
-        thumbnails[ticks] = new BitmapImage(new Uri(path)); staleThumbnails.Remove(ticks); Draw();
+        thumbnails[ticks] = new BitmapImage(new Uri(path)) { DecodePixelWidth = 384 }; staleThumbnails.Remove(ticks); Draw();
     }
     internal void CancelDrag() { if (dragging) { Finish(false); canvas.ReleasePointerCaptures(); } }
     private double X(long ticks) => 16 + ticks / 10_000_000.0 * EffectiveScale;
@@ -74,6 +74,7 @@ internal sealed class EditorTimeline : Grid
     private void At(UIElement element, double x, double y) { Canvas.SetLeft(element, x); Canvas.SetTop(element, y); canvas.Children.Add(element); }
     private void Draw()
     {
+        var requested = new List<long>();
         canvas.Children.Clear(); if (timeline is null) return;
         canvas.Width = Math.Max(ActualWidth - 4, X(timeline.Duration) + 32); double left = scroll.HorizontalOffset, right = left + Math.Max(320, ActualWidth);
         double step = 1; while (step * EffectiveScale < 72) step *= 2; if (step * EffectiveScale > 180) step /= 2;
@@ -89,15 +90,16 @@ internal sealed class EditorTimeline : Grid
             double start = X(clip.OutputStart), end = X(clip.OutputStart + clip.OutputDuration); double x = Math.Max(start, left), w = Math.Max(1, Math.Min(end, right) - x - 2);
             if (w < 3 && clip.Id != selected) { if (x < lastDenseClip + 3) continue; lastDenseClip = x; }
             var body = new Grid { Width = w, Height = 60, CornerRadius = new CornerRadius(6), Background = RecorderTheme.Brush(this, "EditorClip"), IsHitTestVisible = false };
-            // The first tick of an entrance can be transparent. An interior sample
-            // keeps the filmstrip useful without increasing its bounded cache.
-            long representative = clip.OutputStart + Math.Min(5_000_000, clip.OutputDuration / 2);
-            bool exact = thumbnails.TryGetValue(representative, out var thumbnail);
-            var nearest = exact ? thumbnail : thumbnails.Count > 0 ? thumbnails.MinBy(item => Math.Abs(item.Key - representative)).Value : null;
-            if ((!exact || staleThumbnails.Contains(representative)) && ThumbnailsEnabled && !waveformMode && w >= 14) ThumbnailNeeded?.Invoke(representative);
-            if (nearest is not null && !waveformMode && w >= 6) {
-                int count = Math.Min(24, (int)Math.Ceiling(w / 82)); var strip = new Grid { Height = 46, VerticalAlignment = VerticalAlignment.Top, CornerRadius = new CornerRadius(5) };
-                for (int tile = 0; tile < count; tile++) { strip.ColumnDefinitions.Add(new ColumnDefinition()); var image = new Image { Source = nearest, Stretch = Stretch.UniformToFill }; Grid.SetColumn(image, tile); strip.Children.Add(image); }
+            if (ThumbnailsEnabled && !waveformMode && w >= 6) {
+                var strip = new Canvas { Width = w, Height = 46, VerticalAlignment = VerticalAlignment.Top };
+                foreach (var tile in FilmstripSampling.Visible(clip.OutputStart, clip.OutputDuration, EffectiveScale, left, right)) {
+                    bool exact = thumbnails.TryGetValue(tile.Ticks, out var picture);
+                    // Fallbacks stay within this clip; they disappear as exact samples arrive.
+                    picture ??= thumbnails.Where(t => t.Key >= clip.OutputStart && t.Key < clip.OutputStart + clip.OutputDuration)
+                        .DefaultIfEmpty().MinBy(t => Math.Abs(t.Key - tile.Ticks)).Value;
+                    if ((!exact || staleThumbnails.Contains(tile.Ticks)) && requested.Count < 128) requested.Add(tile.Ticks);
+                    if (picture is not null) { var image = new Image { Source = picture, Width = tile.Width, Height = 46, Stretch = Stretch.UniformToFill }; Canvas.SetLeft(image, tile.Left); strip.Children.Add(image); }
+                }
                 body.Children.Add(strip);
             }
             if (w > 26) {
@@ -135,6 +137,7 @@ internal sealed class EditorTimeline : Grid
             At(body, x, EffectY(effect.Kind));
         }
         playLine.Height = canvas.Height - 14; At(playLine, X(playhead), 14); At(playHandle, X(playhead) - 3.5, 6);
+        ThumbnailsNeeded?.Invoke(requested);
     }
     private IEnumerable<ResolvedClip> VisibleClips(double left, double right)
     {

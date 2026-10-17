@@ -1,5 +1,6 @@
 #include "frametrail/core/editor.hpp"
 #include "frametrail/core/scene.hpp"
+#include "frametrail/core/cursor.hpp"
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
@@ -14,6 +15,11 @@ template<class F>void rejects(F&& fn,const char* name){++checks;try{fn();}catch(
 Effect effect(std::string id,std::string kind,Json parameters,int64_t start=0,int64_t duration=30'000'000){return {id,kind,canonical_time(start),canonical_time(duration),parameters.dump()};}
 }
 int main(){try{
+    expect(cursor_idle_opacity(10'000'000,0,true,1.2)==1,"cursor must remain visible before idle delay");
+    expect(std::abs(cursor_idle_opacity(13'000'000,0,true,1.2)-0.5)<1e-9,"idle hide must fade using media time");
+    expect(cursor_idle_opacity(20'000'000,0,true,1.2)==0,"stationary cursor must hide");
+    expect(cursor_idle_opacity(20'000'000,0,false,1.2)==1,"disabled idle hide must preserve legacy output");
+    expect(cursor_click_progress(8'000'000,2'500'000)==1,"click feedback must end deterministically");
     std::ifstream file(std::string(FRAMETRAIL_FIXTURES)+"/project-v1.json");std::string text((std::istreambuf_iterator<char>(file)),{});auto p=parse_project(text);p.effects.clear();
     Json events=Json::array({{{"ticks",10'000'000},{"x",0.3},{"y",0.4},{"kind",1}},{{"ticks",12'000'000},{"x",0.35},{"y",0.45},{"kind",3}},{{"ticks",15'000'000},{"x",0.36},{"y",0.46},{"kind",0}},{{"ticks",20'000'000},{"x",0.5},{"y",0.5},{"kind",0}},{{"ticks",25'000'000},{"x",0.6},{"y",0.5},{"kind",0}},{{"ticks",30'000'000},{"x",0.75},{"y",0.5},{"kind",0}},{{"ticks",34'000'000},{"x",0.8},{"y",0.6},{"kind",1}}});
     Json command{{"op","autoZoom"},{"events",events}};auto a=edit_project(p,command.dump());

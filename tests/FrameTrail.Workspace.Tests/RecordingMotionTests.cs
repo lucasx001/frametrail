@@ -140,4 +140,16 @@ public sealed class RecordingMotionTests : IAsyncLifetime
         await recorder.StartAsync(Plan); await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Single(recorder.Workspace!.Snapshot!.Effects);
     }
+    [Fact] public async Task DefaultVisualPresetAppliesOnceAndSurvivesRecordingSegments()
+    {
+        var library = new VisualPresetLibrary(Path.Combine(root, "presets"));
+        var saved = await library.SaveAsync("default", new ProjectSnapshot { Canvas = new() { Width = 1280, Height = 720 }, Editor = new() { CursorStyle = "crosshair", Shadow = 0.8 } }, root);
+        await library.SetDefaultAsync(saved.Id);
+        await using var recorder = new RecordingCoordinator(new Driver(_ => Stationary()), EngineSession.ValidateProject, (_, _) => { }, () => library);
+        await recorder.StartAsync(Plan); await recorder.PauseAsync();
+        Assert.Equal("crosshair", recorder.Workspace!.Snapshot!.Editor!.CursorStyle);
+        await library.SetDefaultAsync(null); await recorder.ResumeAsync(); var snapshot = (await recorder.StopAsync())!;
+        Assert.Equal(2, snapshot.Segments.Count); Assert.Equal("crosshair", snapshot.Editor!.CursorStyle); Assert.Equal(1280u, snapshot.Canvas.Width);
+        Assert.Equal(2, snapshot.Effects.Count); // Each separated click group keeps its own automatic motion.
+    }
 }
