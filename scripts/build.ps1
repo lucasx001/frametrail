@@ -10,9 +10,21 @@ param(
 )
 . "$PSScriptRoot\common.ps1"
 Import-FrameTrailToolchain $ToolchainRoot
-if (!$Generator) { $Generator = if (Get-Command cl -ErrorAction SilentlyContinue) { 'Ninja' } else { 'Visual Studio 17 2022' } }
 if (!$NativeBuildDirectory) { $NativeBuildDirectory = Join-Path $ProjectRoot 'artifacts\native' }
+if (!$Generator) {
+    # Keep existing build directories usable; fresh builds use version-independent Ninja.
+    $cache = Join-Path $NativeBuildDirectory 'CMakeCache.txt'
+    if (Test-Path -LiteralPath $cache) {
+        $entry = Select-String -LiteralPath $cache -Pattern '^CMAKE_GENERATOR:INTERNAL=(.+)$' | Select-Object -First 1
+        if ($entry) { $Generator = $entry.Matches[0].Groups[1].Value }
+    }
+    if (!$Generator) { $Generator = 'Ninja' }
+}
+if ($Generator -notlike 'Visual Studio*') { Import-FrameTrailMsvc }
+if ($Generator -like 'Ninja*') { $null = Resolve-FrameTrailTool 'ninja' }
 $cmake = Resolve-FrameTrailTool 'cmake' @("$ProjectRoot\.tools\cmake\bin\cmake.exe")
+Write-Host "Native generator: $Generator; CMake: $cmake"
+if ($compiler = Get-Command cl.exe -ErrorAction SilentlyContinue) { Write-Host "Native compiler: $($compiler.Source)" }
 $configureArgs = @('-S', $ProjectRoot, '-B', $NativeBuildDirectory, '-G', $Generator, '-DBUILD_TESTING=ON')
 if ($Generator -like 'Visual Studio*') { $configureArgs += @('-A', 'x64') }
 else { $configureArgs += "-DCMAKE_BUILD_TYPE=$Configuration" }

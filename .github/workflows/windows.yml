@@ -7,7 +7,12 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: windows-2022
+    name: Build and package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -19,6 +24,9 @@ jobs:
       - name: Test release metadata and prepare pinned installer compiler
         shell: pwsh
         run: |
+          ./scripts/test-toolchain.ps1
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-toolchain.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell compiler environment checks failed.' }
           ./scripts/test-release.ps1
           ./scripts/test-store.ps1
           ./scripts/setup-installer-tool.ps1
@@ -38,6 +46,10 @@ jobs:
         run: |
           ./scripts/package.ps1 -SkipBuild -BuildInstaller -OutputDirectory artifacts/packages/ci-candidate
           ./scripts/verify-package.ps1 -PackageDirectory artifacts/packages/ci-candidate
+      - name: Verify installer on the Release runner OS
+        if: matrix.os == 'windows-2025'
+        shell: powershell
+        run: ./scripts/verify-installer.ps1 -PackageDirectory artifacts/packages/ci-candidate -InstallDirectory "$env:RUNNER_TEMP\FrameTrail-CI-install"
       - name: Build and verify Microsoft Store test MSIX
         shell: powershell
         run: |
@@ -46,7 +58,7 @@ jobs:
       - name: Preserve Store test package (not for submission)
         uses: actions/upload-artifact@v4
         with:
-          name: FrameTrail-Microsoft-Store-TEST-ONLY
+          name: FrameTrail-Microsoft-Store-TEST-ONLY-${{ matrix.os }}
           path: |
             artifacts/store/*.msix
             artifacts/store/store-manifest.json
@@ -57,18 +69,19 @@ jobs:
       - name: Preserve distribution candidate
         uses: actions/upload-artifact@v4
         with:
-          name: FrameTrail-x64-development-candidate
+          name: FrameTrail-x64-development-candidate-${{ matrix.os }}
           path: |
             artifacts/packages/ci-candidate/*.msix
             artifacts/packages/ci-candidate/*-Setup.exe
             artifacts/packages/ci-candidate/*.zip
             artifacts/packages/ci-candidate/*.json
             artifacts/packages/ci-candidate/*.txt
+            artifacts/packages/ci-candidate/installer-validation/**
       - name: Preserve test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: test-results-${{ matrix.os }}
           path: artifacts/test-results
       # Interactive capture, GPU correctness, and device tests require a logged-on
       # dedicated Windows desktop; hosted CI does not provide that acceptance.
