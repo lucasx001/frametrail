@@ -17,7 +17,7 @@ public sealed partial class MainWindow : Window
 {
     private const int SetupWidth = 462;
     private EngineSession? session;
-    private RecordingCoordinator coordinator = new();
+    private RecordingCoordinator coordinator = new(presetLibrary: () => new VisualPresetLibrary());
     private ProjectWorkspace? opened;
     private MemoWindow? memo;
     private RecordingCompletionWindow? completion;
@@ -109,6 +109,7 @@ public sealed partial class MainWindow : Window
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m4-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--mockup-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--fullscreen-self-test");
+                    if (testIndex < 0) testIndex = Array.IndexOf(args, "--editor-polish-self-test");
                     PresentEditor(opened, testIndex >= 0 && args.Length > testIndex + 1 ? args[testIndex + 1] : null);
                 }); return;
             }
@@ -560,7 +561,7 @@ public sealed partial class MainWindow : Window
     private async Task ResetWorkspaceAsync()
     {
         await coordinator.DisposeAsync(); coordinator.StatusChanged -= UpdateStatus;
-        coordinator = new(); coordinator.StatusChanged += UpdateStatus;
+        coordinator = new(presetLibrary: () => new VisualPresetLibrary()); coordinator.StatusChanged += UpdateStatus;
         if (opened is not null) { await opened.DisposeAsync(); opened = null; }
         surface = ""; SetupPanel.Visibility = Visibility.Visible; RecordingPanel.Visibility = ProgressPanel.Visibility = Visibility.Collapsed;
         RecorderRoot.CornerRadius = new CornerRadius(28); RecorderWindowChrome.Resize(this, SetupWidth, 56, 28);

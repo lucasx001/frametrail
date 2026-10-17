@@ -55,7 +55,7 @@ struct VideoReader {
     ComPtr<ID3D11Texture2D> frame(int64_t ticks, ID3D11Device* device, ID3D11DeviceContext* context);
     ComPtr<ID3D11Texture2D> to_rgb(ID3D11Device* device, ID3D11DeviceContext* context);
 };
-struct PointerSample { int64_t ticks; float x, y; uint32_t shape; bool visible; };
+struct PointerSample { int64_t ticks; float x, y; uint32_t shape; bool visible; uint32_t kind{}; int64_t activity{}; };
 struct PointerTrack {
     std::vector<PointerSample> points;
     std::vector<FocusPoint> smooth_points;

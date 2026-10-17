@@ -115,7 +115,13 @@
       "frametrail.interop": {
         "type": "Project",
         "dependencies": {
-          "FrameTrail.Domain": "[1.0.0, )"
+          "FrameTrail.Domain": "[0.4.0, )"
+        }
+      },
+      "frametrail.workspace": {
+        "type": "Project",
+        "dependencies": {
+          "FrameTrail.Interop": "[0.4.0, )"
         }
       }
     }

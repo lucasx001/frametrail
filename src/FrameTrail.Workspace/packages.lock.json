@@ -8,7 +8,7 @@
       "frametrail.interop": {
         "type": "Project",
         "dependencies": {
-          "FrameTrail.Domain": "[1.0.0, )"
+          "FrameTrail.Domain": "[0.4.0, )"
         }
       }
     }

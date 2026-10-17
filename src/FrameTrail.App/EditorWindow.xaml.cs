@@ -19,10 +19,9 @@ public sealed partial class EditorWindow : Window
     private readonly EditorTimeline timeline = new();
     private readonly Stopwatch playbackClock = new();
     private EngineSession mapper = new();
-    private CancellationTokenSource assetsCancellation = new(), exportCancellation = new();
+    private CancellationTokenSource exportCancellation = new();
     private Channel<long>? thumbnails;
     private readonly HashSet<long> pendingThumbnails = new();
-    private Task assetWorker = Task.CompletedTask;
     private long position, playbackStart;
     private string? selected, preparedAudio;
     private SdrColor background = new();
@@ -47,6 +46,10 @@ public sealed partial class EditorWindow : Window
         editor = new EditorSession(workspace); this.validationDirectory = validationDirectory;
         this.openProject = openProject;
         this.deleteProject = deleteProject;
+        var launchArguments = Environment.GetCommandLineArgs();
+        int presetTestIndex = Array.IndexOf(launchArguments, "--preset-library");
+        if (launchArguments.Contains("--inspect-ui") && presetTestIndex >= 0 && launchArguments.Length > presetTestIndex + 1)
+            presetLibrary = new VisualPresetLibrary(launchArguments[presetTestIndex + 1]);
         InitializeComponent(); Title = "FrameTrail · 编辑器";
         ProjectTitle.Text = Path.GetFileNameWithoutExtension(workspace.DirectoryPath);
         PreviewMount.Children.Add(preview); TimelineMount.Children.Add(timeline);
@@ -68,7 +71,7 @@ public sealed partial class EditorWindow : Window
             if (working || editor.IsExporting) return;
             if (commit) await PerformAsync(editor.CommitTransactionAsync); else { editor.CancelTransaction(); RefreshTimeline(); }
         };
-        timeline.ThumbnailNeeded += RequestThumbnail;
+        timeline.ThumbnailsNeeded += RequestThumbnails;
         preview.Failed += (_, error) => ShowNotice("预览需要重新加载", error.Message + "，可通过播放控件重试。", InfoBarSeverity.Warning);
         AppWindow.Changed += async (_, args) => {
             if (AppWindow.Presenter is OverlappedPresenter p && p.State == OverlappedPresenterState.Minimized) Pause();
@@ -82,7 +85,8 @@ public sealed partial class EditorWindow : Window
             PlayButton.Focus(FocusState.Programmatic);
             startup.TrySetResult(initialized);
             if (this.validationDirectory is not null) {
-                if (Environment.GetCommandLineArgs().Contains("--fullscreen-self-test")) await RunFullscreenValidationAsync(this.validationDirectory);
+                if (Environment.GetCommandLineArgs().Contains("--editor-polish-self-test")) await RunEditorPolishValidationAsync(this.validationDirectory);
+                else if (Environment.GetCommandLineArgs().Contains("--fullscreen-self-test")) await RunFullscreenValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--mockup-self-test")) await RunMockupValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--m4-self-test")) await RunM4ValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--m3-self-test")) await RunM3ValidationAsync(this.validationDirectory);
@@ -99,18 +103,18 @@ public sealed partial class EditorWindow : Window
     internal async Task RequestCloseAsync()
     {
         if (allowClose || closing || flushingPictureInputs) return;
-        if (showingExport || showingDeleteConfirmation) return;
+        if (showingExport || showingDeleteConfirmation || showingPresets) return;
         if (working || editor.IsExporting) { ShowNotice("正在完成操作", "请等待操作完成，或先取消导出。"); return; }
         await FlushVisualChangesAsync();
         await FlushPictureInputsAsync();
         closing = true;
-        try { Pause(); timeline.CancelDrag(); ValidationTrace("closing: flush"); await editor.FlushAsync(); ValidationTrace("closing: assets"); assetsCancellation.Cancel(); await assetWorker; ValidationTrace("closing: preview"); await preview.DisposeAsync(); mapper.Dispose(); settingsWindow?.Close(); ValidationTrace("closing: complete"); allowClose = true; Close(); }
+        try { Pause(); timeline.CancelDrag(); ValidationTrace("closing: flush"); await editor.FlushAsync(); ValidationTrace("closing: assets"); await StopAssetsAsync(); ValidationTrace("closing: preview"); await preview.DisposeAsync(); mapper.Dispose(); settingsWindow?.Close(); ValidationTrace("closing: complete"); allowClose = true; Close(); }
         catch (Exception error) { closing = false; ShowNotice("保存未完成", error.Message + "。内存编辑仍保留，请重试保存。", InfoBarSeverity.Error); }
     }
     internal async Task DiscardWindowAsync()
     {
         // Only used for an unopened destination; it has no user edits to save.
-        Pause(); closing = true; assetsCancellation.Cancel(); await assetWorker;
+        Pause(); closing = true; await StopAssetsAsync();
         await preview.DisposeAsync(); mapper.Dispose(); settingsWindow?.Close(); allowClose = true; Close();
     }
     internal void SetProjectTransition(bool value) { projectTransition = value; UpdateState(); }
@@ -174,7 +178,7 @@ public sealed partial class EditorWindow : Window
     private async Task EditAsync(object command) => await PerformAsync(() => editor.ExecuteAsync(command));
     private async Task ReloadAsync()
     {
-        Pause(); assetsCancellation.Cancel(); await assetWorker; assetsCancellation.Dispose(); assetsCancellation = new();
+        Pause(); await StopAssetsAsync(); audioCacheKey = null; mediaCache?.Unpin(preparedAudio);
         preparedAudio = null; thumbnails = Channel.CreateBounded<long>(128); pendingThumbnails.Clear(); timeline.ClearAssets();
         mapper.Dispose(); mapper = new EngineSession(); mapper.LoadProject(editor.Snapshot);
         if (!editor.Timeline.Clips.Any(c => c.Id == selected)) selected = editor.Timeline.Clips.First().Id;
@@ -184,39 +188,7 @@ public sealed partial class EditorWindow : Window
         SizePreview(); await preview.RenderAsync(position);
         LoadInspector(); RefreshTimeline(); UpdateClock(); UpdateState();
         if (!fittedTimeline && TimelineMount.ActualWidth > 0) { FitTimeline_Click(this, new RoutedEventArgs()); fittedTimeline = true; }
-        var snapshot = editor.Snapshot; var queue = thumbnails; var token = assetsCancellation.Token;
-        assetWorker = Task.Run(() => BuildAssetsAsync(snapshot, queue, token));
-    }
-    private void RequestThumbnail(long ticks)
-    {
-        if (thumbnails is null || !pendingThumbnails.Add(ticks)) return;
-        if (!thumbnails.Writer.TryWrite(ticks)) pendingThumbnails.Remove(ticks);
-    }
-    private async Task BuildAssetsAsync(ProjectSnapshot snapshot, Channel<long> requests, CancellationToken token, bool prepareAudio = true)
-    {
-        var cache = Path.Combine(editor.DirectoryPath, "cache"); Directory.CreateDirectory(cache);
-        var prefix = "editor-" + snapshot.Revision + "-";
-        try {
-            // Bound only our rebuildable files; never delete source media or other caches.
-            var old = new DirectoryInfo(cache).EnumerateFiles("editor-*").Where(f => !f.Name.StartsWith(prefix, StringComparison.Ordinal) && !string.Equals(f.FullName, preparedAudio, StringComparison.OrdinalIgnoreCase)).OrderByDescending(f => f.LastWriteTimeUtc).Skip(160);
-            foreach (var file in old) { token.ThrowIfCancellationRequested(); try { file.Delete(); } catch (IOException) { } }
-            using var media = new MediaSession(snapshot, editor.DirectoryPath); using var registration = token.Register(media.Cancel);
-            var hasAudio = snapshot.Media.Any(m => m.Kind is MediaKind.SystemAudio or MediaKind.Microphone or MediaKind.AndroidAudio);
-            if (hasAudio && prepareAudio) {
-                var wav = Path.Combine(cache, prefix + "mix.wav"); media.PrepareAudio(wav); token.ThrowIfCancellationRequested();
-                var peaks = await ReadWaveformAsync(wav, token);
-                DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { preparedAudio = wav; timeline.SetWaveform(peaks); UpdateState(); } });
-            } else if (!hasAudio) DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) timeline.SetWaveform(Array.Empty<float>()); });
-            var files = new Queue<string>();
-            while (await requests.Reader.WaitToReadAsync(token)) while (requests.Reader.TryRead(out var ticks)) {
-                token.ThrowIfCancellationRequested(); var path = Path.Combine(cache, prefix + ticks + ".png");
-                media.Render(ticks, 0, path); token.ThrowIfCancellationRequested();
-                files.Enqueue(path); while (files.Count > 160) { var stale = files.Dequeue(); try { File.Delete(stale); } catch (IOException) { } }
-                DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { pendingThumbnails.Remove(ticks); timeline.AddThumbnail(ticks, path); if (ticks == position || BackgroundPreview.Source is null) BackgroundPreview.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path)); } });
-                await Task.Delay(30, token);
-            }
-        } catch (OperationCanceledException) { }
-        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) ShowNotice("媒体缓存未完成", error.Message, InfoBarSeverity.Warning); }); }
+        await StartAssetsAsync(true, true);
     }
     private static async Task<float[]> ReadWaveformAsync(string path, CancellationToken token)
     {
@@ -248,6 +220,7 @@ public sealed partial class EditorWindow : Window
     }
     private void LoadInspector()
     {
+        LoadCursor();
         loadingInspector = true;
         try {
         var p = editor.Snapshot; var settings = p.Editor ?? new(); background = p.Canvas.Background;
@@ -283,7 +256,7 @@ public sealed partial class EditorWindow : Window
         if (editor.IsExporting || preview.Session is null) return;
         if (position >= editor.Timeline.Duration - 1) position = 0;
         if (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio)) {
-            if (preparedAudio is null) { ShowNotice("正在准备声音", "混音缓存完成后即可播放带声音的预览。"); return; }
+            if (preparedAudio is null) { if (audioWorker.IsCompleted) await StartAssetsAsync(true, false); ShowNotice("正在准备声音", "混音缓存完成后即可播放带声音的预览。"); return; }
             await Task.Run(() => preview.Session.PlayAudio(preparedAudio, position));
         }
         playbackStart = position; playbackClock.Restart(); playbackFrames.Reset(); playing = true; PlayGlyph.Kind = "Pause";
@@ -420,7 +393,7 @@ public sealed partial class EditorWindow : Window
             e.Handled = true; await SafeAsync(TogglePreviewFullscreenAsync); return;
         }
         var source = e.OriginalSource as DependencyObject;
-        if (InputAncestor<TextBox>(source) is not null || InputAncestor<NumberBox>(source) is not null || InputAncestor<Slider>(source) is not null || InputAncestor<ToggleButton>(source) is not null || InputAncestor<ComboBox>(source) is not null || working || switchingProjects || showingDeleteConfirmation || editor.IsExporting || showingExport) return;
+        if (InputAncestor<TextBox>(source) is not null || InputAncestor<NumberBox>(source) is not null || InputAncestor<Slider>(source) is not null || InputAncestor<ToggleButton>(source) is not null || InputAncestor<ComboBox>(source) is not null || working || switchingProjects || showingDeleteConfirmation || showingPresets || editor.IsExporting || showingExport) return;
         if (previewFullscreen && e.Key is not (VirtualKey.Space or VirtualKey.Left or VirtualKey.Right)) return;
         bool control = (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
         if (control && e.Key == VirtualKey.Z) { e.Handled = true; await PerformAsync(editor.UndoAsync); }

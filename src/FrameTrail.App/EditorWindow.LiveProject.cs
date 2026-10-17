@@ -33,13 +33,5 @@ public sealed partial class EditorWindow
             if (audioChanged || pictureChanged) await RestartProjectAssetsAsync(audioChanged, pictureChanged);
         } finally { updatedMapper?.Dispose(); }
     }
-    private async Task RestartProjectAssetsAsync(bool prepareAudio, bool updateThumbnails)
-    {
-        assetsCancellation.Cancel(); await assetWorker; assetsCancellation.Dispose(); assetsCancellation = new();
-        if (prepareAudio) preparedAudio = null;
-        thumbnails = System.Threading.Channels.Channel.CreateBounded<long>(128); pendingThumbnails.Clear();
-        var snapshot = editor.Snapshot; var queue = thumbnails; var token = assetsCancellation.Token;
-        assetWorker = Task.Run(() => BuildAssetsAsync(snapshot, queue, token, prepareAudio));
-        if (updateThumbnails) timeline.InvalidateThumbnails();
-    }
+    private Task RestartProjectAssetsAsync(bool prepareAudio, bool updateThumbnails) => StartAssetsAsync(prepareAudio, updateThumbnails);
 }

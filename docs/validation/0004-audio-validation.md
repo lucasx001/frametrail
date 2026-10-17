@@ -1,5 +1,8 @@
 # 0004 音频采集与共同 QPC 时钟验证
 
+> 历史执行快照。后续集成/修复见 [capture-continuity-performance.md](capture-continuity-performance.md)；当前任务状态以 [progress.md](../progress.md) 和 [待办](../todo.md) 为准。本页未勾选项仅反映记录当日范围。
+
+
 日期：2026-10-14。此记录区分已实现代码、已运行检查和仍需实机验收项目；任务与总进度由主 agent 统一更新。
 
 ## 实现与集成约定

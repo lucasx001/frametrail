@@ -86,4 +86,14 @@ public sealed partial class EditorSession
         var visual = saved with { SystemGain = prior.SystemGain, MicrophoneGain = prior.MicrophoneGain, SystemMuted = prior.SystemMuted, MicrophoneMuted = prior.MicrophoneMuted, ClipAudio = prior.ClipAudio };
         await ExecuteAsync(new { op = "settings", canvas = json.RootElement.GetProperty("canvas"), editor = visual });
     }
+    public async Task ApplyLibraryPresetAsync(VisualPresetLibrary library, string id)
+    {
+        await gate.WaitAsync();
+        try {
+            EnsureEditable(); if (transaction is not null) throw new InvalidOperationException("请先完成当前拖动。");
+            var applied = await library.ApplyAsync(id, Snapshot, DirectoryPath);
+            var candidate = EngineSession.Edit(Snapshot, new { op = "settings", canvas = applied.Canvas, editor = applied.Editor });
+            Push(undo, Snapshot); redo.Clear(); await AcceptAsync(candidate);
+        } finally { gate.Release(); }
+    }
 }

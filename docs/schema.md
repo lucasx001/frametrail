@@ -170,3 +170,12 @@ schema 1 的允许字段、枚举和桌面序列化保持兼容；不能在 sche
 当前每段手机/麦克风录制共享首个关键帧的逻辑零点；手机音频按相对 PTS 裁去负时间样本，并对有界的正偏移补静音。检查点可有少量物理重叠，manifest 的有效 duration 限定逻辑边界。暂停期间不写入任何 writer，恢复时建立新的关键帧分段。恢复 manifest 自己的格式号仍为 1，其内嵌工程快照可以是 schema 2；二者不是同一个协议。
 
 `ProjectJson.UpgradeToCurrent` 可显式将旧桌面快照升级为 schema 2，保留媒体、剪辑、效果、标记、声音设置和 revision，并填充 `primarySource.kind=desktop`。打开旧工程不会强制改写格式。C# DTO 与 C++ Core 对新字段实行严格校验，原生命令序列化必须保留来源信息；共用 `project-v2-android.json` 验证往返与旧格式拒绝策略。
+
+
+## 2026-10-17 光标编辑扩展
+
+`editor` 可选字段：`cursorStyle`（recorded/arrow/dot/crosshair，默认 recorded）、`cursorHideWhenIdle`（默认 false）、`cursorIdleDelay`（0.2–8 秒，默认 1.2）、`cursorTimeOffset`（-2–2 秒，默认 0）、`cursorClickStyle`（none/ripple/highlight，默认 none）、`cursorClickOpacity`（0–1）、`cursorClickScale`（0.4–3）、`cursorClickColor`（SDR RGBA）。正时间偏移读取较晚的指针样本，使光标提前；不修改原始 JSONL。
+
+原生层校验并通过共享 Renderer 求值。旧 schema 1/2 工程省略字段时保持旧效果。严格旧版读取器不承诺能读取新增加的 editor 字段。
+
+用户预设库有自己的 version 1 JSON，位于当前 Windows 用户目录，不改变工程 schema。工程仍携带应用预设时复制的背景；媒体缓存和预设库不属于工程权威状态。

@@ -1,5 +1,8 @@
 # M0/M1 主 agent 统一审阅与验证
 
+> 历史执行快照。后续集成/修复见 [capture-continuity-performance.md](capture-continuity-performance.md)；当前任务状态以 [progress.md](../progress.md) 和 [待办](../todo.md) 为准。本页未勾选项仅反映记录当日范围。
+
+
 日期：2026-10-14。工作目录：`C:\Users\lucas\Desktop\project\frametrail`。
 
 ## 范围与结论

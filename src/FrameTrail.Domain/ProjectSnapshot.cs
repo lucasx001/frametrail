@@ -140,6 +140,14 @@ public sealed record EditorSettings
     public double CursorScale { get; init; } = 1;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public NormalizedRect? Crop { get; init; }
     public double CursorSmoothing { get; init; } = 0.08;
+    public string CursorStyle { get; init; } = "recorded";
+    public bool CursorHideWhenIdle { get; init; }
+    public double CursorIdleDelay { get; init; } = 1.2;
+    public double CursorTimeOffset { get; init; }
+    public string CursorClickStyle { get; init; } = "none";
+    public double CursorClickOpacity { get; init; } = 0.8;
+    public double CursorClickScale { get; init; } = 1;
+    public SdrColor CursorClickColor { get; init; } = new() { R = 0.35, G = 0.68, B = 1 };
     public string FrameStyle { get; init; } = "none";
     public double FrameScale { get; init; } = 1;
     public double FrameToolbarScale { get; init; } = 1;

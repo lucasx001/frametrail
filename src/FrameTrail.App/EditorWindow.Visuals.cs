@@ -93,6 +93,7 @@ public sealed partial class EditorWindow
         openingSettings.Children.Add(VisualTile(introStyle, introDuration, VisualButton("应用开场动画", () => ApplyOpeningAsync(false), "editor.intro.apply"), VisualButton("移除开场动画", async () => { if (editor.Snapshot.Effects.Any(e => e.Id == "opening-screen")) await editor.DeleteEffectAsync("opening-screen"); }, "editor.intro.remove")));
         openingSettings.Children.Add(VisualTile(VisualButton("添加摄像头出入场", () => ApplyOpeningAsync(true), "editor.camera.animation")));
         CursorSettings.Children.Add(VisualTile(VisualLabel("光标平滑"), cursorSmooth));
+        InitializeCursor();
         cursorSmooth.Committed += async (_, _) => { if (!loadingVisuals && ready) await PerformAsync(() => editor.ExecuteAsync(new { op = "settings", editor = (editor.Snapshot.Editor ?? new()) with { CursorSmoothing = cursorSmooth.Value } })); };
         CameraSettings.Children.Add(VisualTile(cameraShape));
         cameraShape.SelectionChanged += async (_, _) => { if (!loadingVisuals && ready && !working) await PerformAsync(() => editor.ExecuteAsync(new { op = "settings", editor = (editor.Snapshot.Editor ?? new()) with { CameraShape = new[] { "rounded", "rectangle", "circle" }[Math.Max(0, cameraShape.SelectedIndex)] } })); };
@@ -201,7 +202,8 @@ public sealed partial class EditorWindow
     private void ScenePreset_Click(object sender, RoutedEventArgs e)
     {
         var menu = new MenuFlyout(); foreach (var (title, preset) in new[] { ("简洁", "clean"), ("演示工作室", "studio"), ("设备展示", "device") }) { var item = new MenuFlyoutItem { Text = title }; item.Click += async (_, _) => await PerformAsync(() => editor.ApplyPresetAsync(preset)); menu.Items.Add(item); }
-        menu.Items.Add(new MenuFlyoutSeparator()); var save = new MenuFlyoutItem { Text = "保存当前预设" }; save.Click += async (_, _) => await SafeAsync(editor.SaveVisualPresetAsync); menu.Items.Add(save);
+        menu.Items.Add(new MenuFlyoutSeparator()); var manage = new MenuFlyoutItem { Text = "管理场景预设…" }; manage.Click += ManagePresets_Click; menu.Items.Add(manage);
+        var save = new MenuFlyoutItem { Text = "保存到当前工程（兼容旧版）" }; save.Click += async (_, _) => await SafeAsync(editor.SaveVisualPresetAsync); menu.Items.Add(save);
         var load = new MenuFlyoutItem { Text = "应用已保存预设", IsEnabled = File.Exists(Path.Combine(editor.DirectoryPath, "assets", "presets", "saved.json")) }; load.Click += async (_, _) => await PerformAsync(editor.LoadVisualPresetAsync); menu.Items.Add(load); menu.ShowAt((FrameworkElement)sender);
     }
     private void FrameMockup_Click(object sender, RoutedEventArgs e) { ShowInspector(0); mockupPage = true; UpdateFrameNavigation(); _ = SafeAsync(async () => { await FlushVisualChangesAsync(); QueueMockupPoster(); }); }

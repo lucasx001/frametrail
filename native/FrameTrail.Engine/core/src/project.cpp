@@ -225,7 +225,17 @@ Project parse_project(std::string_view text) {
 
 void validate_project(const Project& project) {
     const auto editor = Json::parse(project.editor_json);
-    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "backdrop"});
+    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "cursorStyle", "cursorHideWhenIdle", "cursorIdleDelay", "cursorTimeOffset", "cursorClickStyle", "cursorClickOpacity", "cursorClickScale", "cursorClickColor", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "backdrop"});
+    if(editor.contains("cursorStyle")) { auto value=string_value(editor["cursorStyle"],"editor.cursorStyle",16); if(value!="recorded" && value!="arrow" && value!="dot" && value!="crosshair")invalid("editor.cursorStyle","invalid cursor style"); }
+    if(editor.contains("cursorClickStyle")) { auto value=string_value(editor["cursorClickStyle"],"editor.cursorClickStyle",16); if(value!="none" && value!="ripple" && value!="highlight")invalid("editor.cursorClickStyle","invalid click style"); }
+    if(editor.contains("cursorHideWhenIdle") && !editor["cursorHideWhenIdle"].is_boolean())invalid("editor.cursorHideWhenIdle","must be boolean");
+    for(const auto* key:{"cursorIdleDelay","cursorTimeOffset","cursorClickOpacity","cursorClickScale"})if(editor.contains(key)) {
+        auto value=number(editor[key],std::string("editor.")+key);std::string_view k=key;
+        double low=k=="cursorTimeOffset"?-2:k=="cursorIdleDelay"?0.2:k=="cursorClickScale"?0.4:0;
+        double high=k=="cursorTimeOffset"?2:k=="cursorIdleDelay"?8:k=="cursorClickScale"?3:1;
+        if(value<low || value>high)invalid(std::string("editor.")+key,"cursor parameter outside allowed range");
+    }
+    if(editor.contains("cursorClickColor")) {auto c=read_color(editor["cursorClickColor"],"editor.cursorClickColor");for(auto v:{c.r,c.g,c.b,c.a})if(v<0 || v>1)invalid("editor.cursorClickColor","invalid color");}
     if(editor.contains("cursorSmoothing")) { auto v=number(editor["cursorSmoothing"],"editor.cursorSmoothing"); if(v<0 || v>0.5)invalid("editor.cursorSmoothing","must be 0..0.5 seconds"); }
     if(editor.contains("frameStyle")) { auto s=editor["frameStyle"].get<std::string>(); if(s!="none" && s!="window" && s!="browser" && s!="device" && s!="windowLight" && s!="windowDark" && s!="browserLight" && s!="browserDark" && s!="devicePhone")invalid("editor.frameStyle","unsupported frame"); }
     for (const auto* key : {"frameScale", "frameToolbarScale", "frameOuterCornerRadius"}) if(editor.contains(key)) {
