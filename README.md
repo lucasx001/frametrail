@@ -2,7 +2,11 @@
 
 面向 Windows 11 的原生录屏与演示视频编辑软件。
 
-项目以 DogSC 的产品能力和领域模型为参考，在 Windows 上独立实现采集、编辑、预览和导出。M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的本机闭环；M4 已提供可靠性修复和开发候选包。长时同步、跨硬件和正式分发验收仍待完成，当前任务以 [进度](docs/progress.md) 和 [待办](docs/todo.md) 为准。
+> **项目来源说明：FrameTrail 改编自 [DogSC](https://github.com/laogou717/dogsc)，原作者为 [laogou717](https://github.com/laogou717)。**
+>
+> 本项目以 DogSC 的产品设计、界面布局和编辑领域模型为基础，将其录屏与编辑体验移植到 Windows，采集、编辑、预览和导出采用 Windows 原生技术重写。感谢原作者开源分享；来源、原项目 MIT 许可及相关版权声明见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+
+M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的本机闭环；M4 已提供可靠性修复和开发候选包。长时同步、跨硬件和正式分发验收仍待完成，当前任务以 [进度](docs/progress.md) 和 [待办](docs/todo.md) 为准。
 
 移动设备录屏方向为 [通过 USB 数据线连接 Android 手机](docs/0012-android-usb-recording.md)，M5 的本地实现与自动媒体验证已完成；USB 真机、长时同步与安装矩阵待验收，见 [M5 验证记录](docs/validation/0012-android-usb-validation.md)。
 
