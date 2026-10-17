@@ -11,4 +11,6 @@
 
 产品版本维持 0.4.0，测试 Store 版本 1.4.0.0。包内/外元数据均标记测试身份；未创建或导入证书，未安装 MSIX，未注册应用、配置 Partner Center 或上传审核。
 
+云端实现提交 `ec82949` 的 [PR CI](https://github.com/lucasx001/frametrail/actions/runs/39017559326) 与 [push CI](https://github.com/lucasx001/frametrail/actions/runs/39017556308) 均通过：完整构建/默认测试、原有分发候选、Store 测试 MSIX、篡改拒绝及附件上传均成功。可从运行详情下载 `FrameTrail-Microsoft-Store-TEST-ONLY`，包含 MSIX、清单、说明和 SHA-256；保留 14 天。独立手动 Store 工作流和真实身份提交尚未运行。
+
 真实商店身份、已安装 MSIX 的采集/编辑/导出及升级、稳定干净 Windows、WACK 和商店认证仍待验收；没有把本机结构/归档校验作为这些项目的完成证据。云端执行结果以 [PR #4](https://github.com/lucasx001/frametrail/pull/4) 的最新检查与 Actions 的 Store 附件为准。

@@ -17,7 +17,7 @@
 - [x] 19 项身份/版本检查及 4 项重算校验后的身份/版本/清单/签名篡改拒绝
 - [x] 本地生成测试 MSIX，并验证 597 文件和新身份的 PRI
 - [x] 独立工作流和现有发版工作流接入，actionlint 通过
-- [ ] 最新 GitHub CI 的 Store 打包执行（结果以 PR #4 检查为准）
+- [x] Store MSIX 云端构建、校验和上传（实现提交 ec82949，[CI 记录](https://github.com/lucasx001/frametrail/actions/runs/39017559326)）
 - [ ] 注册商店应用，按实际身份生成提交包
 - [ ] 已安装 MSIX 的功能/升级、WACK、Partner Center 上传及认证
 

@@ -20,7 +20,7 @@
 - [x] 工作流通过 actionlint，脚本通过 PowerShell 语法检查
 - [x] 本机生成 Setup.exe，完成载荷校验、安装、启动与卸载
 - [x] 同版本覆盖安装、运行标记阻止安装/卸载、外部文件保留
-- [ ] GitHub Actions 执行记录
+- [x] GitHub Actions 候选构建、校验和上传（独立 Release 公开流程仍待首次执行）
 - [ ] 首次正式指定版本的 Release 公开及附件下载验证
 - [ ] 上一版本升级、干净稳定 Windows 和代码签名矩阵
 
