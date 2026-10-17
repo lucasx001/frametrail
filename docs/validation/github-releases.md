@@ -40,3 +40,4 @@
 - 普通 CI 同时运行 windows-2022 与 windows-2025，执行锁依赖 Release 构建、原生/托管测试、EXE/ZIP/MSIX 打包及 Store 测试包校验。windows-2025 额外执行与 Release 相同的安装、覆盖安装、运行中阻止安装/卸载、载荷和卸载验证。
 - 各镜像的附件与测试结果分别命名，保留安装器日志。真实 runner 的执行结果以该修复 PR 的检查为准；不将本机 portable 构建视为 VS2026 验证。
 - 本机 Windows PowerShell 5.1 + portable MSVC/Ninja 的锁依赖 Release 构建通过，0 警告/错误、原生 7 组和托管 201 项通过；actionlint 与 PowerShell Parser 通过。日志：`artifacts/toolchain-fix-build.log`。
+- 编译环境加载统一通过 `cmd /c call` 调用，避免 PowerShell 7 对含空格的 VS 安装路径进行双重引号处理。`test-toolchain.ps1` 在 PowerShell 5.1/7 中实际启动 batch，检查带空格路径、x64 参数、含等号环境值和失败 setup 不得导入环境；本机均通过，CI 同时执行两种 shell。

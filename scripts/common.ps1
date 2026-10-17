@@ -13,6 +13,16 @@ if (!$script:DefaultToolchainRoot) { $script:DefaultToolchainRoot = $script:Tool
 $script:ActiveToolchainRoot = $script:DefaultToolchainRoot
 $script:ToolchainBinFolders = @('python-packages\bin','python-packages\ninja\data\bin','python-packages\cmake\data\bin','dotnet')
 
+function Import-FrameTrailCompilerEnvironment([string] $Setup, [string] $Arguments = '') {
+    # CALL keeps the quoted path away from cmd's special leading-quote parsing.
+    # Arguments are fixed compiler-setup flags supplied by the callers below.
+    $lines = & $env:ComSpec /d /s /c "call `"$Setup`" $Arguments >nul && set"
+    if ($LASTEXITCODE -ne 0) { throw "Native toolchain environment setup failed: $Setup (exit $LASTEXITCODE)." }
+    foreach ($line in $lines) {
+        if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
+    }
+}
+
 function Import-FrameTrailToolchain([string] $ToolchainRoot) {
     if ($ToolchainRoot -and !(Test-Path -LiteralPath $ToolchainRoot -PathType Container)) {
         throw "Toolchain directory '$ToolchainRoot' does not exist or is not accessible. Check -ToolchainRoot; see docs/toolchain.md."
@@ -25,11 +35,7 @@ function Import-FrameTrailToolchain([string] $ToolchainRoot) {
     $setup = Join-Path $ToolchainRoot 'msvc\setup_x64.bat'
     if (Test-Path -LiteralPath $setup) {
         # Read the environment from the compiler setup process; no global PATH mutation.
-        $lines = & $env:ComSpec /d /s /c "`"`"$setup`" >nul && set`""
-        if ($LASTEXITCODE -ne 0) { throw 'Native toolchain environment setup failed.' }
-        foreach ($line in $lines) {
-            if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
-        }
+        Import-FrameTrailCompilerEnvironment $setup
     }
     foreach ($folder in $script:ToolchainBinFolders) {
         $candidate = Join-Path $ToolchainRoot $folder
@@ -56,11 +62,7 @@ function Import-FrameTrailMsvc {
     $setup = Join-Path $installation 'Common7\Tools\VsDevCmd.bat'
     if (!(Test-Path -LiteralPath $setup -PathType Leaf)) { throw "Visual Studio environment setup was not found: $setup" }
     Write-Host "Loading MSVC x64 from $installation"
-    $lines = & $env:ComSpec /d /s /c "`"`"$setup`" -no_logo -arch=x64 -host_arch=x64 >nul && set`""
-    if ($LASTEXITCODE -ne 0) { throw 'Visual Studio x64 environment setup failed.' }
-    foreach ($line in $lines) {
-        if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process') }
-    }
+    Import-FrameTrailCompilerEnvironment $setup '-no_logo -arch=x64 -host_arch=x64'
     # VS ships these alongside the C++ workload even when they are not on PATH.
     foreach ($folder in @('Ninja', 'CMake\bin')) {
         $candidate = Join-Path $installation "Common7\IDE\CommonExtensions\Microsoft\CMake\$folder"

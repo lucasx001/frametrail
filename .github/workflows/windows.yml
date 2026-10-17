@@ -24,6 +24,9 @@ jobs:
       - name: Test release metadata and prepare pinned installer compiler
         shell: pwsh
         run: |
+          ./scripts/test-toolchain.ps1
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-toolchain.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Windows PowerShell compiler environment checks failed.' }
           ./scripts/test-release.ps1
           ./scripts/test-store.ps1
           ./scripts/setup-installer-tool.ps1
