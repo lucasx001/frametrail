@@ -17,7 +17,8 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
     private ulong generation;
     private bool disposed;
     internal MediaSession? Session => media;
-    internal PreviewQuality Quality { get; private set; }
+    // Keep editor detail independent of the window size, including before fullscreen.
+    internal PreviewQuality Quality { get; private set; } = PreviewQuality.UltraHd;
     internal event EventHandler<Exception>? Failed;
     internal PreviewSurface()
     {

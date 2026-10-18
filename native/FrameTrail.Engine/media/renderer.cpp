@@ -233,6 +233,7 @@ void Renderer::present() {
     d2->SetTarget(target.Get()); d2->SetTransform(D2D1::Matrix3x2F::Identity()); d2->BeginDraw();
     auto size = target->GetSize(); d2->Clear(D2D1::ColorF(0.055f, 0.06f, 0.07f)); auto src = source->GetSize(); const auto scale = std::min(size.width / src.width, size.height / src.height);
     auto rect = D2D1::RectF((size.width - src.width * scale) / 2, (size.height - src.height * scale) / 2, (size.width + src.width * scale) / 2, (size.height + src.height * scale) / 2);
-    d2->DrawBitmap(source.Get(), rect); FT_MEDIA_CHECK(d2->EndDraw()); d2->SetTarget(nullptr); FT_MEDIA_CHECK(swapchain->Present(0, 0));
+    // Prefilter when fitting a UHD composition into a smaller editor viewport.
+    d2->DrawBitmap(source.Get(), rect, 1.0f, D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC); FT_MEDIA_CHECK(d2->EndDraw()); d2->SetTarget(nullptr); FT_MEDIA_CHECK(swapchain->Present(0, 0));
 }
 }

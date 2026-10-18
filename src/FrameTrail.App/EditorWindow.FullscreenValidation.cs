@@ -17,6 +17,9 @@ public sealed partial class EditorWindow
         try {
             await Task.Delay(300); Root.UpdateLayout();
             var original = ProjectJson.Serialize(editor.Snapshot);
+            await ValidateWindowedPreviewAsync(directory, checks);
+            // Also retain coverage of the optional viewport-matched mode.
+            await preview.SetQualityAsync(PreviewQuality.Automatic, position);
             var session = preview.Session!; var chain = session.AcquireSwapChain();
             try {
                 position = Math.Min(5_000_000, editor.Timeline.Duration / 4);
@@ -107,6 +110,48 @@ public sealed partial class EditorWindow
             await File.WriteAllTextAsync(Path.Combine(directory, "fullscreen-validation.json"), JsonSerializer.Serialize(new { success, checks, failure }, new JsonSerializerOptions { WriteIndented = true }));
             Environment.ExitCode = success ? 0 : 1; working = false; closing = false; await RequestCloseAsync();
         }
+    }
+
+    private async Task ValidateWindowedPreviewAsync(string directory, List<string> checks)
+    {
+        if (previewFullscreen || preview.Quality != PreviewQuality.UltraHd)
+            throw new IOException("The editor did not open with 4K preview enabled by default.");
+        var expected = PreviewSize(editor.Snapshot, 8192, 8192);
+        async Task CaptureAsync(string name)
+        {
+            Root.UpdateLayout(); await preview.ResizeAsync();
+            string png = Path.Combine(directory, name + ".png");
+            await preview.RenderAsync(position, true, png);
+            var size = MediaSession.ProbeVisual(png, false);
+            if ((size.Width, size.Height) != expected)
+                throw new IOException($"Windowed {name} rendered {size.Width}x{size.Height} instead of {expected}.");
+        }
+        var bounds = (AppWindow.Position, AppWindow.Size);
+        int zoom = CanvasZoom.SelectedIndex;
+        try {
+            CanvasZoom.SelectedIndex = 0;
+            await CaptureAsync("windowed-default-4k");
+            AppWindow.Resize(new(Math.Min(bounds.Item2.Width, 1100), Math.Min(bounds.Item2.Height, 760)));
+            await Task.Delay(150);
+            await CaptureAsync("windowed-small-4k");
+            CanvasZoom.SelectedIndex = 3;
+            await CaptureAsync("windowed-zoom-4k");
+            await TogglePreviewFullscreenAsync();
+            await CaptureAsync("windowed-to-fullscreen-4k");
+            await TogglePreviewFullscreenAsync();
+            await CaptureAsync("windowed-restored-4k");
+            await preview.LoadAsync(editor.Snapshot, editor.DirectoryPath);
+            await CaptureAsync("windowed-reloaded-4k");
+            if (preview.Quality != PreviewQuality.UltraHd) throw new IOException("Reload lost 4K preview quality.");
+            if (!(await File.ReadAllBytesAsync(Path.Combine(directory, "windowed-default-4k.png"))).SequenceEqual(await File.ReadAllBytesAsync(Path.Combine(directory, "windowed-reloaded-4k.png"))))
+                throw new IOException("Window resize, zoom or reload changed the UHD composition.");
+        } finally {
+            if (previewFullscreen) SetPreviewFullscreen(false);
+            CanvasZoom.SelectedIndex = zoom;
+            AppWindow.MoveAndResize(new(bounds.Item1.X, bounds.Item1.Y, bounds.Item2.Width, bounds.Item2.Height));
+            Root.UpdateLayout(); await preview.ResizeAsync();
+        }
+        checks.Add($"The editor defaults to {expected.Width}x{expected.Height} 4K before fullscreen; resizing, 200% zoom, fullscreen round-trip and reload preserve UHD pixels.");
     }
 
     private static (uint Width, uint Height) PreviewSize(ProjectSnapshot snapshot, double width, double height)

@@ -189,7 +189,7 @@ public sealed partial class EditorWindow
         var menu = new MenuFlyout(); foreach (var (label, index) in new[] { ("适合窗口", 0), ("125%", 1), ("150%", 2), ("200%", 3) }) { int choice = index; var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = CanvasZoom.SelectedIndex == choice }; item.Click += (_, _) => CanvasZoom.SelectedIndex = choice; menu.Items.Add(item); }
         menu.Items.Add(new MenuFlyoutSeparator());
         var qualityMenu = new MenuFlyoutSubItem { Text = "预览清晰度" };
-        foreach (var (label, quality) in new[] { ("自动 · 匹配屏幕", PreviewQuality.Automatic), ("4K · 高清预览", PreviewQuality.UltraHd) }) {
+        foreach (var (label, quality) in new[] { ("4K · 高清预览（默认）", PreviewQuality.UltraHd), ("自动 · 匹配屏幕", PreviewQuality.Automatic) }) {
             var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = preview.Quality == quality };
             item.Click += async (_, _) => {
                 try { await preview.SetQualityAsync(quality, position); }
