@@ -129,7 +129,9 @@ internal static class RecorderWindowChrome
             // ancestry so pressing an icon or label never starts a window drag.
             for (var node = args.OriginalSource as DependencyObject; node is not null && node != surface; node = VisualTreeHelper.GetParent(node))
                 if (node is Control) { trace?.Invoke($"control {node.GetType().Name}"); return; }
-            var press = args.GetCurrentPoint(surface).Position;
+            // A grip may be inset inside a toolbar. Anchor in window-content
+            // coordinates so its margin does not cause a jump on the first move.
+            var press = args.GetCurrentPoint(window.Content as UIElement ?? surface).Position;
             origin = window.AppWindow.Position;
             double scale = surface.XamlRoot?.RasterizationScale ?? Scale(window);
             // Use the press event's coordinates: queued mouse input may already

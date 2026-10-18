@@ -52,10 +52,11 @@ public sealed partial class MainWindow : Window
     {
         procedure = WindowProcedure;
         projects = projectLocations.RecordingDirectory;
+        RememberCatalogFolder(projects);
         InitializeComponent();
         RecorderRoot.RequestedTheme = EditorAppearance.Current;
         EditorAppearance.Changed += SetAppearance;
-        Closed += (_, _) => { EditorAppearance.Changed -= SetAppearance; settingsWindow?.Close(); };
+        Closed += (_, _) => { EditorAppearance.Changed -= SetAppearance; settingsWindow?.Close(); projectLibraryWindow?.Close(); };
         hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         flyouts.AddRange(new[] { MicrophoneFlyout, CameraFlyout, SystemFlyout, MoreFlyout, RecordingMoreFlyout, MarkerFlyout, FeedbackFlyout, RecoveryFlyout });
         foreach (var flyout in flyouts) flyout.ShouldConstrainToRootBounds = false;
@@ -78,12 +79,13 @@ public sealed partial class MainWindow : Window
             busy = true; closing = true;
             try
             {
+                if (memo is { } activeMemo && !await activeMemo.RequestCloseAsync()) throw new IOException("备忘录尚未完成保存，请重试收起备忘录后再退出。");
                 selection?.Dispose(); selection = null;
                 if (androidWindow is { } activeAndroid) await activeAndroid.ShutdownAsync();
                 HideFlyouts();
                 await coordinator.DisposeAsync();
                 if (opened is not null) await opened.DisposeAsync();
-                completion?.Close(); editorWindow?.Close(); memo?.Close(); UnregisterHotkeys();
+                completion?.Close(); editorWindow?.Close(); UnregisterHotkeys();
                 if (previousProcedure != 0) SetWindowLongPtr(hwnd, -4, previousProcedure);
                 session?.Dispose(); allowClose = true; Close();
             }
@@ -100,6 +102,16 @@ public sealed partial class MainWindow : Window
             if (args.Contains("--inspect-ui")) ExcludeControl.IsChecked = false;
             var smokeIndex = Array.IndexOf(args, "--smoke-test");
             if (smokeIndex >= 0) { await RunSmokeTestAsync(args.Length > smokeIndex + 1 ? args[smokeIndex + 1] : Path.Combine(AppContext.BaseDirectory, "smoke-result.json")); return; }
+            var memoTest = Array.IndexOf(args, "--memo-self-test");
+            var memoPreview = Array.IndexOf(args, "--memo-preview");
+            if ((memoTest >= 0 || memoPreview >= 0) && args.Length > Math.Max(memoTest, memoPreview) + 1) {
+                string directory = Path.GetFullPath(args[Math.Max(memoTest, memoPreview) + 1]); Directory.CreateDirectory(directory);
+                var note = new MemoWindow(Path.Combine(directory, "memo.txt"), line => File.AppendAllText(Path.Combine(directory, "memo-drag.log"), line + Environment.NewLine));
+                memo = note; note.Activate(); AppWindow.Hide();
+                if (memoTest >= 0) { await note.ValidateAsync(directory); allowClose = true; closing = true; await coordinator.DisposeAsync(); session?.Dispose(); Close(); Application.Current.Exit(); }
+                else note.Closed += async (_, _) => { memo = null; if (closing) return; await InitializeRecorderAsync(); AppWindow.Show(); Activate(); };
+                return;
+            }
             var editorIndex = Array.IndexOf(args, "--editor");
             if (editorIndex >= 0 && args.Length > editorIndex + 1) {
                 await ExecuteAsync(async () => {
@@ -114,6 +126,13 @@ public sealed partial class MainWindow : Window
                 }); return;
             }
             await InitializeRecorderAsync();
+            var libraryTest = Array.IndexOf(args, "--project-library-self-test");
+            if (libraryTest >= 0 && args.Length > libraryTest + 2) { await RunProjectLibraryValidationAsync(args[libraryTest + 1], args[libraryTest + 2]); return; }
+            var libraryPreview = Array.IndexOf(args, "--project-library-preview");
+            if (libraryPreview >= 0 && args.Length > libraryPreview + 1) {
+                var folder = Path.GetFullPath(args[libraryPreview + 1]); projectCatalog = new ProjectCatalog(Path.Combine(folder, "preferences", "catalog.json"));
+                ShowProjectLibrary([folder]); return;
+            }
             var projectTest = Array.IndexOf(args, "--project-open-self-test");
             if (projectTest >= 0 && args.Length > projectTest + 2) { await RunProjectOpenValidationAsync(args[projectTest + 1], args[projectTest + 2]); return; }
             var androidUiIndex = Array.IndexOf(args, "--android-ui-self-test");
@@ -298,7 +317,9 @@ public sealed partial class MainWindow : Window
         {
             using var picker = new ProjectFolderPicker(projectLocations.OpenDirectory(), "选择项目保存文件夹", "保存到此文件夹");
             var folder = picker.Pick(hwnd); if (folder is null) return;
+            RememberCatalogFolder(projects);
             projectLocations.SetRecordingDirectory(folder);
+            RememberCatalogFolder(folder);
             projects = folder; DestinationName.Text = Path.GetFileName(folder); ToolTipService.SetToolTip(DestinationButton, projects);
             var candidates = await ProjectWorkspace.ScanRecoveryAsync(projects);
             RecoveryPicker.ItemsSource = candidates; RecoveryPicker.SelectedIndex = candidates.Count > 0 ? 0 : -1; RecoverButton.IsEnabled = candidates.Count > 0;
@@ -467,16 +488,7 @@ public sealed partial class MainWindow : Window
         completion.Closed += (_, _) => { if (!closing) { AppWindow.Show(); } };
         completion.Activate(); AppWindow.Hide();
     }
-    private async void Open_Click(object sender, RoutedEventArgs e)
-    {
-        HideFlyouts();
-        await ExecuteAsync(async () =>
-        {
-            using var picker = new ProjectFolderPicker(projectLocations.OpenDirectory());
-            var folder = picker.Pick(hwnd); if (folder is null) return;
-            await OpenExistingProjectAsync(folder);
-        });
-    }
+    private void Open_Click(object sender, RoutedEventArgs e) => ShowProjectLibrary();
     private async Task OpenExistingProjectAsync(string path)
     {
         if (coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("请先结束当前录制，再打开其他项目。");
@@ -575,7 +587,8 @@ public sealed partial class MainWindow : Window
     }
     private EditorWindow CreateEditor(ProjectWorkspace workspace, string? validation = null)
     {
-        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync);
+        RememberCatalogProject(workspace.DirectoryPath);
+        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync, ShowProjectLibrary);
         window.Closed += async (_, _) => {
             if (!ReferenceEquals(editorWindow, window)) return;
             editorWindow = null;
@@ -584,10 +597,10 @@ public sealed partial class MainWindow : Window
         };
         return window;
     }
-    private void Memo_Click(object sender, RoutedEventArgs e)
+    private async void Memo_Click(object sender, RoutedEventArgs e)
     {
         HideFlyouts();
-        if (memo is not null) { memo.Close(); memo = null; MemoMenuButton.Content = "打开备忘录"; return; }
+        if (memo is not null) { await memo.RequestCloseAsync(); return; }
         memo = new MemoWindow(); memo.Closed += (_, _) => { memo = null; MemoMenuButton.Content = "打开备忘录"; };
         memo.Activate(); MemoMenuButton.Content = "收起备忘录"; ApplyExclusion();
     }

@@ -34,6 +34,7 @@ public sealed partial class EditorWindow : Window
     private readonly TaskCompletionSource<bool> startup = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Func<string, Task>? openProject;
     private readonly Func<string, Task>? deleteProject;
+    private readonly Action? browseProjects;
     private bool switchingProjects;
     private bool projectTransition;
     private bool showingDeleteConfirmation;
@@ -41,11 +42,12 @@ public sealed partial class EditorWindow : Window
     internal Task<bool> Startup => startup.Task;
     internal bool HasClosed => allowClose;
 
-    internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null)
+    internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null, Action? browseProjects = null)
     {
         editor = new EditorSession(workspace); this.validationDirectory = validationDirectory;
         this.openProject = openProject;
         this.deleteProject = deleteProject;
+        this.browseProjects = browseProjects;
         var launchArguments = Environment.GetCommandLineArgs();
         int presetTestIndex = Array.IndexOf(launchArguments, "--preset-library");
         if (launchArguments.Contains("--inspect-ui") && presetTestIndex >= 0 && launchArguments.Length > presetTestIndex + 1)
@@ -121,10 +123,8 @@ public sealed partial class EditorWindow : Window
     private async void OpenProject_Click(object sender, RoutedEventArgs e) => await SafeAsync(async () =>
     {
         if (switchingProjects || closing || working || showingExport || showingDeleteConfirmation || editor.IsExporting || flushingPictureInputs || openProject is null) return;
-        var locations = new ProjectLocations();
-        using var picker = new ProjectFolderPicker(locations.OpenDirectory(editor.DirectoryPath), "切换 FrameTrail 项目", "切换项目");
-        var folder = picker.Pick(WinRT.Interop.WindowNative.GetWindowHandle(this));
-        if (folder is not null) await SwitchSelectedProjectAsync(folder);
+        Pause(); await FlushVisualChangesAsync(); await FlushPictureInputsAsync();
+        browseProjects?.Invoke();
     });
     internal async Task SwitchSelectedProjectAsync(string path)
     {

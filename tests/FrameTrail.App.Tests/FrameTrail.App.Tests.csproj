@@ -8,6 +8,7 @@
     <Compile Include="..\..\src\FrameTrail.App\PlaybackFrameGate.cs" Link="PlaybackFrameGate.cs" />
     <Compile Include="..\..\src\FrameTrail.App\SafeDiagnostics.cs" Link="SafeDiagnostics.cs" />
     <Compile Include="..\..\src\FrameTrail.App\ProjectLocations.cs" Link="ProjectLocations.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\ProjectCatalog.cs" Link="ProjectCatalog.cs" />
     <Compile Include="..\..\src\FrameTrail.App\EditorMediaCache.cs" Link="EditorMediaCache.cs" />
     <Compile Include="..\..\src\FrameTrail.App\FilmstripSampling.cs" Link="FilmstripSampling.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

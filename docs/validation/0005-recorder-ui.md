@@ -41,6 +41,16 @@ Windows Computer Use 本轮可以读取可访问控件树，但激活窗口持�
 
 仍待人工验收：真实鼠标命中、握柄拖动、屏幕/窗口选择与区域拖框、多显示器负坐标、DPI 切换、Esc/外部点击关闭面板、完整中文输入、录制栏排除视觉效果，以及与运行中的 macOS DogSC 的逐像素对照。已有保存失败重试/损坏 manifest 的 review 问题不在本次 UI 修改范围内。
 
+## 2026-10-18 — 备忘录拖动与指针修复
+
+- 旧备忘录通过发送原生标题栏消息移动，无显式移动指针；现在顶部透明拖动区使用胶囊已验证的 `RecorderWindowChrome.EnableDragging`，以指针捕获、物理桌面坐标差和释放 / 取消事件处理移动。`MoveSurface` 的 `ProtectedCursor` 明确设置为 `InputSystemCursorShape.SizeAll`，标题及空白区可拖动，正文和右侧按钮保留各自交互。
+- 共享拖动代码使用窗口内容坐标建立锚点，处理备忘录拖动区左侧 6 DIP 内边距。胶囊原有根元素的坐标保持不变。
+- 初轮专项验证发现程序直接 `Window.Close()` 会绕过原来的 `AppWindow.Closing` 保存逻辑，导致收起按钮没有创建便笺文件。现统一为 `MemoWindow.RequestCloseAsync`，供窗口收起按钮、胶囊切换、系统关闭及主程序退出调用；文件被占用时保留窗口、正文和错误提示，解除占用后可重试。
+- Release 构建 0 警告 / 0 错误。`artifacts/validation/memo-drag-20261018/self-test-02/memo-validation.json` 为 `success: true`：真实 WinUI 工具栏 Invoke 验证字号、阅读 / 编辑模式切换和窗口位置 / 尺寸；检查 SizeAll 配置、40 DIP 拖动区及无残留原生边框；锁定测试便笺文件时关闭失败保留内容，解锁后真实关闭保存成功。测试只读写独立目录，不接触用户的 `LocalAppData/FrameTrail/memo.txt`。
+- 已检查 `memo-light.png` / `memo-dark.png` 的应用渲染布局。Computer Use 能读取备忘录窗口、拖动区和正文；自动拖动请求检测到窗口中有用户输入而中止。应用日志随后记录了两次实际指针捕获 / 连续窗口移动 / 捕获释放：`(834,380) → (1751,767)` 与 `(1751,767) → (1766,573)`，第一轮首个移动位置仍为原点，未出现起拖跳动。原始证据为 `preview/memo-drag.log`，解析结果 `preview/independent-drag-verification.json` 为 `success: true`；这里不将被中止的 Computer Use 请求算作完成的自动拖动。
+
+复验：`FrameTrail.App.exe --memo-self-test <新输出目录> --inspect-ui` 自动检查；`--memo-preview <独立测试目录> --inspect-ui` 打开可人工拖动的测试便笺并记录指针日志。CursorShape 已由实际控件属性验证，未独立读取系统当前鼠标句柄；跨显示器 DPI、触摸和手写笔矩阵仍待验收。开发版已构建，未替换安装版。
+
 ## 复现入口
 
 普通产品启动：`scripts/run.cmd -Configuration Release`。
