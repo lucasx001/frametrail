@@ -28,12 +28,13 @@ public sealed partial class EditorWindow
             if (!thumbnails.Writer.TryWrite(value)) pendingThumbnails.Remove(value);
     }
     private async Task StopAssetsAsync()
-    { thumbnailCancellation.Cancel(); audioCancellation.Cancel(); await assetWorker; mediaCache?.Unpin(pinnedAudio); pinnedAudio = null; }
+    { thumbnailCancellation.Cancel(); audioCancellation.Cancel(); await Task.WhenAll(assetWorker,audioStopWork); mediaCache?.Unpin(pinnedAudio); pinnedAudio = null; }
 
     private async Task StartAssetsAsync(bool prepareAudio, bool updateThumbnails)
     {
         mediaCache ??= new EditorMediaCache(editor.DirectoryPath);
         var snapshot = editor.Snapshot;
+        mediaCache.ProtectSources(snapshot.Media.Select(m=>m.Path).Concat(FrameTrail.Workspace.VisualResources.Paths(snapshot)));
         if (updateThumbnails) {
             thumbnailCancellation.Cancel(); await thumbnailWorker; thumbnailCancellation.Dispose(); thumbnailCancellation = new();
             thumbnails = Channel.CreateBounded<long>(128); pendingThumbnails.Clear();
@@ -46,7 +47,7 @@ public sealed partial class EditorWindow
             if (audioCacheKey != key || audioWorker.IsCompleted && preparedAudio is null) {
                 audioCancellation.Cancel(); await audioWorker; audioCancellation.Dispose(); audioCancellation = new();
                 mediaCache.Unpin(pinnedAudio); preparedAudio = null; timeline.SetWaveform(null); audioCacheKey = key;
-                pinnedAudio = mediaCache.FilePath(key, "mix.wav");
+                pinnedAudio = mediaCache.FilePath(key, "peaks.json");
                 var token = audioCancellation.Token;
                 audioWorker = Task.Run(() => BuildAudioAsync(snapshot, key, token));
             }
@@ -54,39 +55,41 @@ public sealed partial class EditorWindow
     }
     private async Task BuildAudioAsync(ProjectSnapshot snapshot, string key, CancellationToken token)
     {
-        string? partial = null, wav = null;
+        string? partial = null, pinned = null;
         try {
             if (audioPreparationBarrier is not null) await audioPreparationBarrier.WaitAsync(token);
             if (!snapshot.Media.Any(m => m.Kind is MediaKind.SystemAudio or MediaKind.Microphone or MediaKind.AndroidAudio)) {
-                DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) timeline.SetWaveform(Array.Empty<float>()); }); return;
+                DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { timeline.SetWaveform(Array.Empty<float>()); AudioPreparationLabel.Text = ""; } }); return;
             }
-            var cache = mediaCache!; wav = cache.FilePath(key, "mix.wav"); cache.Pin(wav);
-            long duration = EngineSession.ResolveTimeline(snapshot).Duration;
-            long frames = duration / TimeSpan.TicksPerSecond * 48000 + duration % TimeSpan.TicksPerSecond * 48000 / TimeSpan.TicksPerSecond;
-            if (!cache.Use(wav) || new FileInfo(wav).Length != frames * 4 + 44) {
-                partial = wav + ".partial"; cache.Pin(partial);
+            var cache = mediaCache!; string path = cache.FilePath(key, "peaks.json"); float[]? peaks = null;
+            cache.Pin(path); pinned = path;
+            async Task<float[]> ReadPeaksAsync() {
+                if (new FileInfo(path).Length > 1024 * 1024) throw new IOException("声音波形缓存过大。");
+                var data=JsonSerializer.Deserialize<float[]>(await File.ReadAllTextAsync(path,token));
+                if(data is null || data.Length is 0 or > 24000 || data.Any(p=>!float.IsFinite(p)||p<0||p>1))throw new IOException("声音波形缓存无效。");
+                return data;
+            }
+            if(cache.Use(path)) {try {peaks=await ReadPeaksAsync();}catch(Exception error) when(error is IOException or JsonException) { }}
+            if (peaks is null) {
+                partial = path + ".partial"; cache.Pin(partial);
                 using var media = new MediaSession(snapshot, editor.DirectoryPath); using var registration = token.Register(media.Cancel);
                 Interlocked.Increment(ref audioPreparationCount);
-                media.PrepareAudio(partial); token.ThrowIfCancellationRequested(); File.Move(partial, wav, true);
+                var job = Task.Run(() => media.PreparePeaks(partial), token);
+                while (!job.IsCompleted) {
+                    var status = media.Status;
+                    int percent = status.Total == 0 ? 0 : (int)(100.0 * status.Completed / status.Total);
+                    DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) AudioPreparationLabel.Text = $"声音波形 {percent}% · 可立即播放"; });
+                    await Task.WhenAny(job, Task.Delay(250));
+                }
+                await job; token.ThrowIfCancellationRequested(); File.Move(partial, path, true);
             }
-            string peaksPath = cache.FilePath(key, "peaks.json"); float[] peaks;
-            try {
-                if (!cache.Use(peaksPath) || new FileInfo(peaksPath).Length > 1024 * 1024) throw new IOException();
-                peaks = JsonSerializer.Deserialize<float[]>(await File.ReadAllTextAsync(peaksPath, token)) ?? throw new IOException();
-                if (peaks.Length is 0 or > 24000 || peaks.Any(p => !float.IsFinite(p) || p < 0 || p > 1)) throw new IOException();
-            } catch (Exception error) when (error is IOException or JsonException) {
-                peaks = await ReadWaveformAsync(wav, token);
-                await File.WriteAllTextAsync(peaksPath, JsonSerializer.Serialize(peaks), token);
-            }
+            peaks ??= await ReadPeaksAsync();
             token.ThrowIfCancellationRequested();
-            DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { preparedAudio = wav; timeline.SetWaveform(peaks); UpdateState(); } });
+            DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { preparedAudio = path; timeline.SetWaveform(peaks); AudioPreparationLabel.Text = ""; UpdateState(); } });
             cache.Trim();
         } catch (OperationCanceledException) { }
-        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) ShowNotice("声音准备未完成", error.Message, Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning); }); }
-        finally {
-            if (partial is not null) { mediaCache!.Unpin(partial); try { File.Delete(partial); } catch (IOException) { } }
-            if (token.IsCancellationRequested) mediaCache!.Unpin(wav);
-        }
+        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { AudioPreparationLabel.Text = "声音波形未完成 · 可继续播放"; ShowNotice("声音波形准备未完成", error.Message, Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning); } }); }
+        finally { mediaCache?.Unpin(pinned); if (partial is not null) { mediaCache!.Unpin(partial); try { File.Delete(partial); } catch (IOException) { } } }
     }
     private async Task BuildThumbnailsAsync(ProjectSnapshot snapshot, Channel<long> requests, CancellationToken token)
     {

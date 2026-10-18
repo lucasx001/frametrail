@@ -3,6 +3,8 @@ using FrameTrail.Domain;
 using FrameTrail.Interop;
 using FrameTrail.Workspace;
 
+if (args.Length >= 3 && args[0] == "--p1-media") return await P1MediaValidation.RunAsync(args[1], args[2], args.Contains("--camera"));
+
 if (args.Length is 2 or 3 && args[0] == "--video-codecs") return await VideoCodecValidation.RunAsync(args[1], args.Length == 3 ? args[2] : null);
 if (args.Length == 3 && args[0] == "--video-codec-matrix") return await VideoCodecMatrixValidation.RunAsync(args[1], args[2]);
 
@@ -12,6 +14,7 @@ if (args.Length >= 3 && args[0] == "--m2") return await M2Validation.RunAsync(ar
 if (args.Length == 3 && args[0] == "--m3") return await M3Validation.RunAsync(args[1], args[2]);
 if (args.Length == 3 && args[0] == "--recording-motion") return await RecordingMotionValidation.RunAsync(args[1], args[2]);
 if (args.Length == 2 && args[0] == "--camera-continuity") return await CameraContinuityValidation.RunAsync(args[1]);
+if (args.Length == 2 && args[0] == "--checkpoint-timeline") return await CheckpointTimelineValidation.RunAsync(args[1]);
 
 if (args.Length < 1) { Console.Error.WriteLine("Usage: FrameTrail.Workspace.Smoke <new.frametrailproject> [--camera] [--checkpoint] [--fixture] [--fps60] | --camera-continuity <new-directory> | <existing.frametrailproject> --recover"); return 2; }
 var path = Path.GetFullPath(args[0]); string output = path + ".result.json";

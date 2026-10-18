@@ -18,6 +18,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -129,6 +130,9 @@ struct Session {
     void check_cancel() { if (cancelled) winrt::throw_hresult(cancelled_hr); }
     void progress(uint64_t n, uint64_t all) { completed = n; total = all; last_progress = GetTickCount64(); }
     void stop_audio();
+    void stream_audio(int64_t ticks);
+    void mix_pcm(int64_t first, int64_t frames, const std::function<void(const float*, size_t)>& emit);
+    void prepare_peaks(const std::filesystem::path& output);
     void mix_audio(const std::filesystem::path& output);
     void export_file(const std::filesystem::path& target, bool audio_only);
 };

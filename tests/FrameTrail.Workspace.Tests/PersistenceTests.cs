@@ -218,16 +218,18 @@ public sealed class CoordinatorTests : IAsyncLifetime
     private sealed class FakeDriver : IRecordingDriver
     {
         internal int Started, Disposed; internal bool Fail, BackdateFirst, FailCheckpoint;
+        internal int BackdatedSegments, CheckpointsBeforeSignal = 1;
+        internal long DurationTicks = 10_000_000;
         internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Events = new();
         internal readonly TaskCompletionSource CheckpointFinished = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<IRecordingSegment> StartAsync(RecordingPlan plan, SegmentPaths paths, CancellationToken token)
-        { if (Fail || (FailCheckpoint && Started > 0)) throw new IOException("Fake acquisition failed"); Started++; Events.Enqueue($"start-{Started}"); return Task.FromResult<IRecordingSegment>(new Segment(this, paths, Started)); }
-        private sealed class Segment(FakeDriver driver, SegmentPaths paths, int index) : IRecordingSegment
+        { if (Fail || (FailCheckpoint && Started > 0)) throw new IOException("Fake acquisition failed"); Started++; Events.Enqueue($"start-{Started}"); return Task.FromResult<IRecordingSegment>(new Segment(this, paths, Started, plan.CheckpointSeconds)); }
+        private sealed class Segment(FakeDriver driver, SegmentPaths paths, int index, int checkpointSeconds) : IRecordingSegment
         {
-            public SegmentStart Start { get; } = new(Stopwatch.GetTimestamp() - (driver.BackdateFirst && index == 1 ? Stopwatch.Frequency * 6 : 0), Stopwatch.Frequency, 640, 360);
+            public SegmentStart Start { get; } = new(Stopwatch.GetTimestamp() - ((driver.BackdateFirst && index == 1) || index <= driver.BackdatedSegments ? Stopwatch.Frequency * (checkpointSeconds + 1) : 0), Stopwatch.Frequency, 640, 360);
             public RecordingHealth Poll() => new(false, null, Array.Empty<string>(), 0.5);
             public async Task<CompletedCapture> FinishAsync(long boundary)
-            { driver.Events.Enqueue($"finish-{index}"); await File.WriteAllBytesAsync(paths.Screen, PersistenceTests.FinalizedMp4Header); if (index == 1) driver.CheckpointFinished.TrySetResult(); return new(10_000_000, new[] { new CompletedTrack(MediaKind.Screen, paths.Screen, 10_000_000, Width: 640, Height: 360) }, Array.Empty<string>()); }
+            { driver.Events.Enqueue($"finish-{index}"); await File.WriteAllBytesAsync(paths.Screen, PersistenceTests.FinalizedMp4Header); if (index == driver.CheckpointsBeforeSignal) driver.CheckpointFinished.TrySetResult(); return new(driver.DurationTicks, new[] { new CompletedTrack(MediaKind.Screen, paths.Screen, driver.DurationTicks, Width: 640, Height: 360) }, Array.Empty<string>()); }
             public ValueTask DisposeAsync() { driver.Disposed++; driver.Events.Enqueue($"dispose-{index}"); return ValueTask.CompletedTask; }
         }
     }
@@ -265,7 +267,83 @@ public sealed class CoordinatorTests : IAsyncLifetime
         await driver.CheckpointFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var result = await coordinator.StopAsync();
         Assert.Equal(new[] { "start-1", "start-2", "finish-1", "dispose-1", "finish-2", "dispose-2" }, driver.Events.ToArray());
-        Assert.Equal(2, result!.Segments.Count);
+        Assert.Single(result!.Segments);
+        Assert.Equal(2, result.Media.Count(m => m.Kind == MediaKind.Screen));
+    }
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task AutomaticCheckpointsKeepOneEditableClipAcrossMediaFiles(int checkpoints)
+    {
+        const long minute = 600_000_000;
+        var driver = new FakeDriver { BackdatedSegments = checkpoints, CheckpointsBeforeSignal = checkpoints, DurationTicks = minute };
+        ProjectSnapshot checkpoint;
+        await using (var coordinator = new RecordingCoordinator(driver, EngineSession.ValidateProject, (_, _) => { }))
+        {
+            await coordinator.StartAsync(Plan with { CheckpointSeconds = 60 });
+            await driver.CheckpointFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = (await coordinator.StopAsync())!;
+            var clip = Assert.Single(result.Segments);
+            Assert.Equal(0, clip.SourceStart.Ticks);
+            Assert.Equal((checkpoints + 1) * minute, clip.SourceDuration.Ticks);
+            Assert.Equal(result.SourceDuration.Ticks, clip.SourceDuration.Ticks);
+            Assert.Equal(checkpoints + 1, result.Media.Count);
+            Assert.Equal(Enumerable.Range(0, checkpoints + 1).Select(i => i * minute), result.Media.Select(m => m.StartOffset.Ticks));
+            checkpoint = ProjectJson.Deserialize(await File.ReadAllTextAsync(coordinator.Workspace!.Resolve("project.previous.json")));
+            Assert.Equal(clip.Id, Assert.Single(checkpoint.Segments).Id);
+            Assert.Equal(checkpoints * minute, checkpoint.SourceDuration.Ticks);
+            Assert.Equal(checkpoints, checkpoint.Media.Count);
+            using var engine = new EngineSession(); engine.LoadProject(result);
+            foreach (var boundary in Enumerable.Range(1, checkpoints).Select(i => i * minute))
+            {
+                var before = engine.EvaluateScene(boundary - 1)!;
+                var after = engine.EvaluateScene(boundary)!;
+                Assert.Equal(clip.Id, before.SegmentId); Assert.Equal(clip.Id, after.SegmentId);
+                Assert.NotEqual(before.Screen.MediaId, after.Screen.MediaId);
+                Assert.Equal(0, after.Screen.LocalTicks);
+            }
+        }
+        await using (var reopened = await ProjectWorkspace.OpenAsync(Plan.ProjectPath, EngineSession.ValidateProject, (_, _) => { }))
+        {
+            var editor = new EditorSession(reopened); var clip = Assert.Single(editor.Timeline.Clips);
+            Assert.Equal((checkpoints + 1) * minute, editor.Timeline.Duration);
+            await editor.ExecuteAsync(new { op = "split", segmentId = clip.Id, sourceTicks = minute, newId = "manual-cut" });
+            Assert.Equal(2, editor.Timeline.Clips.Count);
+            await editor.UndoAsync(); Assert.Single(editor.Timeline.Clips);
+            await editor.ExecuteAsync(new { op = "trim", segmentId = clip.Id, sourceStart = minute - 1, sourceEnd = minute + 1 });
+            Assert.Equal(2, editor.Timeline.Duration);
+        }
+        // Simulate a crash with only the last completed checkpoint and an unfinished tail.
+        var recoveryPath = Path.Combine(directory, "interrupted.frametrailproject");
+        await using (var recoverable = ProjectWorkspace.Create(recoveryPath, checkpoint.ProjectId, EngineSession.ValidateProject, (_, _) => { }))
+        {
+            foreach (var asset in checkpoint.Media) File.Copy(Path.Combine(Plan.ProjectPath, asset.Path), recoverable.Resolve(asset.Path));
+            await recoverable.SaveAsync(checkpoint, recoverable.SessionEpoch);
+            await recoverable.WriteManifestAsync(new() {
+                ProjectId = checkpoint.ProjectId, Status = "recording", CheckpointJson = ProjectJson.Serialize(checkpoint), PendingFiles = new[] { "media/unfinished.mp4" }
+            });
+        }
+        var recovery = await ProjectWorkspace.RecoverAsync(recoveryPath, EngineSession.ValidateProject, (_, _) => { });
+        await using var recovered = recovery.Workspace;
+        Assert.Single(new EditorSession(recovered).Timeline.Clips);
+        Assert.Equal(checkpoints * minute, recovered.Snapshot!.SourceDuration.Ticks);
+        Assert.Equal(checkpoints, recovered.Snapshot.Media.Count);
+        Assert.Contains(recovery.Warnings, warning => warning.Contains("unfinished.mp4"));
+    }
+    [Fact] public async Task PauseAfterCheckpointKeepsOnlyTheIntentionalCut()
+    {
+        var driver = new FakeDriver { BackdateFirst = true };
+        await using var coordinator = new RecordingCoordinator(driver, EngineSession.ValidateProject, (_, _) => { });
+        await coordinator.StartAsync(Plan);
+        await driver.CheckpointFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.PauseAsync();
+        var first = Assert.Single(coordinator.Workspace!.Snapshot!.Segments);
+        Assert.Equal(20_000_000, first.SourceDuration.Ticks);
+        await coordinator.ResumeAsync(); var result = (await coordinator.StopAsync())!;
+        Assert.Equal(3, result.Media.Count); Assert.Equal(2, result.Segments.Count);
+        Assert.Equal(first, result.Segments[0]);
+        Assert.Equal(20_000_000, result.Segments[1].SourceStart.Ticks);
+        Assert.NotEqual(first.Id, result.Segments[1].Id);
     }
     [Fact] public async Task FailedCameraCheckpointKeepsActiveTakeRunning()
     {

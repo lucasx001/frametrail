@@ -14,6 +14,8 @@ M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的
 
 编辑器、六项检查器、通栏时间线、导出与设置界面也已按 DogSC 截图及设计源码重做，支持统一的明暗外观。M3 已接通点击自动运镜、手动缩放/透视、聚焦与遮挡、贴图、开场/摄像头动画、工程内背景和场景预设，见 [M3 验证](docs/validation/m3-motion-effects.md)；参考来源与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
+P1 体验补充已接入画布对象与裁切框直接编辑、共享摄像头实时预览、无需整片缓存的有声播放，以及 RF64 与缓存管理。实现与验收边界见 [P1 验证](docs/validation/p1-editor-recording.md)。
+
 - [产品规格](docs/spec.md)
 - [实现进度与任务顺序](docs/progress.md)
 - [当前待办与验收入口](docs/todo.md)
@@ -30,9 +32,9 @@ M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的
 
 ## 下载、安装与发布
 
-版本安装包位于 [GitHub Releases](https://github.com/lucasx001/frametrail/releases)。选择 `FrameTrail-X.Y.Z-x64-Setup.exe` 即可按当前用户安装；也可下载便携 ZIP，完整解压后运行。安装包包含运行时，无需开发工具，支持 Windows 11 x64（最低 build 22621）。首次公开发布前该页面可能暂无版本；当前 EXE 未签名，Windows 可能显示未知发布者或 SmartScreen 提示。
+版本安装包位于 [GitHub Releases](https://github.com/lucasx001/frametrail/releases)。选择 `FrameTrail-X.Y.Z-x64-Setup.exe` 即可按当前用户安装；也可下载便携 ZIP，完整解压后运行。安装包包含运行时，无需开发工具，支持 Windows 11 x64（最低 build 22621）。当前已公开 v0.0.1；当前 EXE 未签名，Windows 可能显示未知发布者或 SmartScreen 提示。
 
-维护者可在 **Actions → Release Windows application → Run workflow** 输入 `0.0.1`，或推送 `v0.0.1` tag，自动构建、测试、打包并发布对应版本。支持先保留草稿，已公开版本不会被覆盖；下一版使用 `0.0.2`。首次使用前需将工作流合并到默认分支。操作与更新说明见 [分发文档](docs/distribution.md)，执行状态见 [0019](docs/0019-github-releases.md)。
+维护者可在 **Actions → Release Windows application → Run workflow** 输入 `0.0.1`，或推送 `v0.0.1` tag，自动构建、测试、打包并发布对应版本。支持先保留草稿，已公开版本不会被覆盖；下一版使用 `0.0.2`。工作流已完成 v0.0.1 公开与附件验证。操作与更新说明见 [分发文档](docs/distribution.md)，执行状态见 [0019](docs/0019-github-releases.md)。
 
 也提供 **Build Microsoft Store MSIX** 工作流：注册商店应用并配置三个身份变量后生成提交包，由 Microsoft 在通过认证后签名，无需自购代码签名证书。尚未注册可开启 `test_only` 生成打包测试 MSIX。配置、版本映射和上传步骤见 [Microsoft Store 分发](docs/microsoft-store.md)。
 

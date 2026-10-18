@@ -41,3 +41,9 @@
 - 各镜像的附件与测试结果分别命名，保留安装器日志。真实 runner 的执行结果以该修复 PR 的检查为准；不将本机 portable 构建视为 VS2026 验证。
 - 本机 Windows PowerShell 5.1 + portable MSVC/Ninja 的锁依赖 Release 构建通过，0 警告/错误、原生 7 组和托管 201 项通过；actionlint 与 PowerShell Parser 通过。日志：`artifacts/toolchain-fix-build.log`。
 - 编译环境加载统一通过 `cmd /c call` 调用，避免 PowerShell 7 对含空格的 VS 安装路径进行双重引号处理。`test-toolchain.ps1` 在 PowerShell 5.1/7 中实际启动 batch，检查带空格路径、x64 参数、含等号环境值和失败 setup 不得导入环境；本机均通过，CI 同时执行两种 shell。
+
+## 2026-10-18：公开版本及附件复核
+
+实时 GitHub API/CLI 核查：[FrameTrail v0.0.1](https://github.com/lucasx001/frametrail/releases/tag/v0.0.1) 为公开正式版本（非草稿/预发布），2026-10-17 18:48:52（UTC+8）发布，来源 `4bc0beafebc85043f115b157ae29968d7fb00cbd`。
+
+本机从公开 Release 下载全部 7 个附件。便携 ZIP 104610296 bytes、Setup.exe 75204067 bytes；六个文件均与 SHA256SUMS.txt 匹配，校验表自身与 GitHub 提供的 SHA-256 digest 匹配。证据：`artifacts/validation/p1/public-release-v0.0.1/download-validation.json`。本轮没有执行旧安装器、修改已有安装或发布新版本；跨版本升级、干净稳定 Windows 和 Store 认证仍保持待验收。

@@ -1,4 +1,5 @@
 #include "internal.hpp"
+#include "pcm_wave.hpp"
 #include "../codecs/video_codec.hpp"
 #include <algorithm>
 #include <array>
@@ -105,7 +106,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         mix_audio(wav);
     }
     check_cancel(); FT_MEDIA_CHECK(writer->BeginWriting()); stage = 2; progress(0, audio_only ? static_cast<uint64_t>(audio_frames) : frame_count);
-    std::ifstream audio; if (has_audio) { audio.open(wav, std::ios::binary); audio.seekg(44); }
+    std::ifstream audio; if (has_audio) { audio.open(wav, std::ios::binary); audio.seekg(static_cast<std::streamoff>(pcm_data_offset(audio))); }
     int64_t audio_position = 0;
     auto write_audio = [&](int64_t until) {
         if (!has_audio) return;

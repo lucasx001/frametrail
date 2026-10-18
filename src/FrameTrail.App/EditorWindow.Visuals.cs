@@ -128,7 +128,7 @@ public sealed partial class EditorWindow
             if (opening is not null) { introStyle.SelectedIndex = Array.IndexOf(introStyles, StringValue(opening.Parameters, "style", "fade")); introDuration.Value = NumberValue(opening.Parameters, "enter", 0.7); }
         }
         finally { loadingVisuals = false; }
-        LoadSelectedVisual(); timeline.SelectVisual(selectedEffect); UpdateBackdropTabs();
+        LoadSelectedVisual(); timeline.SelectVisual(selectedEffect); UpdateBackdropTabs(); QueueCanvasGeometry();
     }
     private static double NumberValue(JsonElement p, string key, double fallback) => p.TryGetProperty(key, out var value) && value.TryGetDouble(out var number) ? number : fallback;
     private static string StringValue(JsonElement p, string key, string fallback) => p.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString()! : fallback;

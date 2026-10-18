@@ -26,6 +26,7 @@ public struct MediaStatus
 internal static class MediaNative
 {
     private const string Dll = "FrameTrail.Media.dll";
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_edit_geometry(MediaHandle handle, long ticks, uint crop, [Out] byte[]? output, uint capacity, out uint required);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_probe_visual(string path, uint video, out uint width, out uint height, out long duration);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_create(byte[] json, uint length, string root, out ulong handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_media_destroy(ulong handle);
@@ -42,6 +43,8 @@ internal static class MediaNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_audio_prepare(MediaHandle handle, string wav);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_audio_play(MediaHandle handle, string wav, long ticks);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_audio_stop(MediaHandle handle);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_audio_stream(MediaHandle handle, long ticks);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_audio_peaks(MediaHandle handle, string json);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_error(StringBuilder text, uint capacity);
     internal static void Check(int result)
     {
@@ -83,8 +86,19 @@ public sealed class MediaSession : IDisposable
     public MediaStatus Status { get { var s = new MediaStatus { Size = (uint)Marshal.SizeOf<MediaStatus>() }; MediaNative.Check(MediaNative.ft_media_status_get(handle, ref s)); return s; } }
     public void PrepareAudio(string wav) => MediaNative.Check(MediaNative.ft_media_audio_prepare(handle, Path.GetFullPath(wav)));
     public void PlayAudio(string wav, long ticks) => MediaNative.Check(MediaNative.ft_media_audio_play(handle, wav, ticks));
+    public void StreamAudio(long ticks) => MediaNative.Check(MediaNative.ft_media_audio_stream(handle, ticks));
+    public IReadOnlyList<CanvasEditItem> EditGeometry(long ticks, bool cropMode = false)
+    {
+        MediaNative.Check(MediaNative.ft_media_edit_geometry(handle, ticks, cropMode ? 1u : 0u, null, 0, out var required));
+        var bytes = new byte[required];
+        MediaNative.Check(MediaNative.ft_media_edit_geometry(handle, ticks, cropMode ? 1u : 0u, bytes, required, out _));
+        return JsonSerializer.Deserialize<CanvasEditItem[]>(bytes.AsSpan(0, bytes.Length - 1), new JsonSerializerOptions { PropertyNameCaseInsensitive = true })!;
+    }
+    public void PreparePeaks(string path) => MediaNative.Check(MediaNative.ft_media_audio_peaks(handle, Path.GetFullPath(path)));
     public void StopAudio() => MediaNative.Check(MediaNative.ft_media_audio_stop(handle));
     public void Export(string target, bool audioOnly = false) => MediaNative.Check(MediaNative.ft_media_export(handle, Path.GetFullPath(target), audioOnly ? 1u : 0u));
     public void Cancel() { if (!handle.IsClosed) MediaNative.Check(MediaNative.ft_media_cancel(handle)); }
     public void Dispose() => handle.Dispose();
 }
+
+public sealed record CanvasEditItem(string Id, string Kind, NormalizedRect Rect, double[][] Quad, double[][] Base, double Rotation = 0, double Aspect = 1);

@@ -19,6 +19,7 @@ public sealed partial class EditorWindow
     private async void Fullscreen_Click(object sender, RoutedEventArgs e) => await SafeAsync(TogglePreviewFullscreenAsync);
     private async void Root_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key == VirtualKey.Escape && (canvasOverlay.Dragging || cropEditing)) { e.Handled=true;if(canvasOverlay.Dragging){canvasOverlay.Finish(false);await canvasCommitWork;}else await SafeAsync(ToggleCropEditingAsync);return; }
         if (!previewFullscreen) return;
         if (e.Key is VirtualKey.Escape or VirtualKey.F11) {
             e.Handled = true; await SafeAsync(TogglePreviewFullscreenAsync);

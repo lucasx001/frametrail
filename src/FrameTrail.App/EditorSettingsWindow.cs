@@ -14,11 +14,12 @@ internal sealed class EditorSettingsWindow : Window
     private readonly StackPanel page = new() { Spacing = 16 };
     private readonly string directory;
     private readonly Action<ElementTheme> setAppearance;
+    private readonly EditorMediaCache? mediaCache;
     private readonly string[] names = ["常规", "编辑器", "录制", "权限", "关于"];
     private readonly string[] icons = ["Sliders", "Scene", "Opening", "Check", "Settings"];
-    internal EditorSettingsWindow(string directory, Action<ElementTheme> setAppearance)
+    internal EditorSettingsWindow(string directory, Action<ElementTheme> setAppearance, EditorMediaCache? mediaCache = null)
     {
-        this.directory = directory; this.setAppearance = setAppearance; Title = "FrameTrail · 设置";
+        this.directory = directory; this.setAppearance = setAppearance; this.mediaCache = mediaCache; Title = "FrameTrail · 设置";
         AppIcon.Apply(this);
         root.RequestedTheme = EditorAppearance.Current; root.Background = RecorderTheme.Brush(root, "EditorStage");
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(112) }); root.RowDefinitions.Add(new RowDefinition());
@@ -47,6 +48,19 @@ internal sealed class EditorSettingsWindow : Window
             page.Children.Add(Text("文件位置", 12, true)); var content = new StackPanel { Spacing = 12 }; content.Children.Add(Text("当前项目")); content.Children.Add(Text(directory, 11, true)); var reveal = Button("在资源管理器中显示"); reveal.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", directory) { UseShellExecute = true }); content.Children.Add(reveal); page.Children.Add(Tile(content));
             page.Children.Add(Tile(Text("编辑会自动保存到项目包中，录制素材保存在项目的 media 文件夹。", 12, true)));
         } else if (index == 1) {
+            if (mediaCache is not null) {
+                var budget = new NumberBox { Header = "媒体缓存上限 (MiB)", Minimum = 128, Maximum = 16384, Value = mediaCache.Budget / (1024*1024) };
+                var cacheStatus = Text("只清理当前工程可重建的缩略图与波形，保留源素材和使用中的缓存。",11,true);
+                Task budgetUpdates=Task.CompletedTask;
+                budget.ValueChanged += async (_, e) => {
+                    if(!double.IsFinite(e.NewValue))return;
+                    var previous=budgetUpdates;long next=(long)e.NewValue*1024*1024;
+                    async Task SaveBudgetAsync(){await previous;try{await Task.Run(()=>mediaCache.Budget=next);}catch(Exception error){cacheStatus.Text=error.Message;}}
+                    budgetUpdates=SaveBudgetAsync();await budgetUpdates;
+                };
+                var clear = Button("清理当前工程缓存"); clear.Click += async (_, _) => { clear.IsEnabled=false;try { await System.Threading.Tasks.Task.Run(mediaCache.ClearRebuildable);cacheStatus.Text="缓存已清理，正在使用的文件已保留。"; } catch(Exception error) { cacheStatus.Text=error.Message; } finally { clear.IsEnabled=true; } };
+                var cachePanel=new StackPanel {Spacing=10};cachePanel.Children.Add(budget);cachePanel.Children.Add(clear);cachePanel.Children.Add(cacheStatus);page.Children.Add(Tile(cachePanel));
+            }
             page.Children.Add(Text("外观", 12, true)); var row = new Grid { ColumnSpacing = 8 }; for (int i = 0; i < 3; i++) { var theme = new[] { ElementTheme.Light, ElementTheme.Dark, ElementTheme.Default }[i]; row.ColumnDefinitions.Add(new ColumnDefinition()); var button = Button(new[] { "浅色", "深色", "跟随系统" }[i]); button.Background = RecorderTheme.Brush(root, root.RequestedTheme == theme ? "EditorHover" : "EditorWell"); button.Click += (_, _) => applyTheme(theme); Grid.SetColumn(button, i); row.Children.Add(button); } page.Children.Add(Tile(row));
             page.Children.Add(Text("快捷操作", 12, true)); page.Children.Add(Tile(Text("空格  播放 / 暂停\n← / →  逐帧查看\nS  在播放头处分割\nCtrl+Z / Ctrl+Y  撤销 / 重做\nEsc  取消当前拖动", 12, true)));
         } else if (index == 2) {

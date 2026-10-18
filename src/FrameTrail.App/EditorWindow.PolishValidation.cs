@@ -30,6 +30,11 @@ public sealed partial class EditorWindow
             await UntilAsync(() => thumbnailRenderCount > thumbnailsBefore, "Thumbnails did not advance while audio preparation was blocked.");
             if (preparedAudio is not null) throw new InvalidOperationException("Audio barrier was not active.");
             checks.Add("Visible thumbnails render while audio preparation is deliberately held; separate sessions/cancellation paths.");
+            await StartPlaybackAsync();await UntilAsync(()=>playing && preview.Session!.Status.AudioTicks>0,"Playback waited for blocked waveform preparation.");Pause();await audioStopWork;
+            previewMuted=true;long muteStart=position;await StartPlaybackAsync();await Task.Delay(300);
+            if(!playing || position<=muteStart || preview.Session!.Status.AudioRunning!=0)throw new InvalidOperationException("Explicit silent preview did not advance without audio output.");
+            Pause();await audioStopWork;previewMuted=false;
+            checks.Add("Audible and explicitly silent preview start while waveform preparation is deliberately blocked.");
             barrier.SetResult(); audioPreparationBarrier = null;
             await UntilAsync(() => preparedAudio is not null, "Audio preparation did not complete.");
             string originalAudio = preparedAudio!; int prepared = audioPreparationCount;

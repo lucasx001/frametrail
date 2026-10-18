@@ -28,6 +28,9 @@ internal static class RecordingNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_get_status(CameraHandle handle, ref CameraStatus status);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_get_source_identity(CameraHandle handle, out ulong identity);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_camera_destroy(nint handle);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_camera_preview_start(string id, in Format format, out CameraPreviewHandle handle);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_camera_preview_copy(CameraPreviewHandle handle, [Out] byte[] bytes, uint capacity, ref long qpc, out ulong identity);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_camera_preview_destroy(nint handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_recording_probe(string path, uint video, out long duration);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_pointer_start(in PointerOptions options, out PointerHandle handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_pointer_stop_at(PointerHandle handle, long qpc);
