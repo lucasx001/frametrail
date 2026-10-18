@@ -1,6 +1,6 @@
 # 0019 — GitHub Releases 与 Windows 安装包
 
-状态：待验收（2026-10-17，本地实现与安装测试完成；云端和首次公开版本单独记录）。依赖：0011。规格依据：[spec.md](spec.md)。
+状态：待验收（2026-10-18，本地实现与安装测试完成；v0.0.1 公开及附件下载已验证，升级/干净机器仍待验收）。依赖：0011。规格依据：[spec.md](spec.md)。
 
 ## 目的与实现
 
@@ -20,8 +20,8 @@
 - [x] 工作流通过 actionlint，脚本通过 PowerShell 语法检查
 - [x] 本机生成 Setup.exe，完成载荷校验、安装、启动与卸载
 - [x] 同版本覆盖安装、运行标记阻止安装/卸载、外部文件保留
-- [x] GitHub Actions 候选构建、校验和上传（独立 Release 公开流程仍待首次执行）
-- [ ] 首次正式指定版本的 Release 公开及附件下载验证
+- [x] GitHub Actions 候选构建、校验和上传，独立 Release 公开流程已执行
+- [x] 首次正式指定版本的 Release 公开及全部附件下载/哈希验证（v0.0.1，2026-10-18 实时核查）
 - [ ] 上一版本升级、干净稳定 Windows 和代码签名矩阵
 
 操作说明见 [distribution.md](distribution.md)，执行证据见 [验证记录](validation/github-releases.md)。本任务不将硬件、长时同步或签名验收视为已完成。

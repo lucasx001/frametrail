@@ -57,6 +57,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     private double peak;
     private bool disposed;
     private bool checkpointDisabled;
+    private bool startTimelineClip;
     private IReadOnlyList<string> activePending = Array.Empty<string>();
     private readonly List<string> abandonedPending = new();
     public event EventHandler<RecordingWorkspaceStatus>? StatusChanged;
@@ -87,6 +88,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             SetState(RecordingWorkspaceState.Preparing);
             createdProjectId = Guid.NewGuid().ToString("N");
             checkpointDisabled = false; activePending = Array.Empty<string>(); abandonedPending.Clear();
+            startTimelineClip = true;
             workspace = ProjectWorkspace.Create(plan.ProjectPath, createdProjectId, validator, mediaProbe);
             await BeginSegmentAsync(cancellationToken);
             SetState(RecordingWorkspaceState.Recording);
@@ -127,6 +129,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             if (state != RecordingWorkspaceState.Paused) throw new InvalidOperationException("Recording is not paused.");
             SetState(RecordingWorkspaceState.Resuming);
             await BeginSegmentAsync(cancellationToken);
+            startTimelineClip = true;
             SetState(RecordingWorkspaceState.Recording);
         }
         catch (Exception error) { AddWarning("Resume failed: " + error.Message); SetState(RecordingWorkspaceState.Paused); throw; }
@@ -207,7 +210,13 @@ public sealed class RecordingCoordinator : IAsyncDisposable
                 StartOffset = MediaTime.FromTicks(sourceTicks + track.OffsetTicks), Width = track.Width, Height = track.Height,
                 Channels = track.Channels, SampleRate = track.SampleRate });
         }
-        segments.Add(new() { Id = "segment-" + Guid.NewGuid().ToString("N"), SourceStart = MediaTime.FromTicks(sourceTicks), SourceDuration = MediaTime.FromTicks(result.DurationTicks), Rate = new() });
+        // Recovery files are physical media boundaries, not authored timeline cuts.
+        // Extend the current take across checkpoints; only pause/resume starts another clip.
+        if (startTimelineClip)
+            segments.Add(new() { Id = "segment-" + Guid.NewGuid().ToString("N"), SourceStart = MediaTime.FromTicks(sourceTicks), SourceDuration = MediaTime.FromTicks(result.DurationTicks), Rate = new() });
+        else
+            segments[^1] = segments[^1] with { SourceDuration = MediaTime.FromTicks(checked(segments[^1].SourceDuration.Ticks + result.DurationTicks)) };
+        startTimelineClip = false;
         sourceTicks += result.DurationTicks;
         var checkpoint = MakeSnapshot();
         if (workspace!.Snapshot is null && presetLibrary is not null) {

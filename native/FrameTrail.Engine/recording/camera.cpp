@@ -49,6 +49,8 @@ struct CameraFeedState {
     int64_t anchor_qpc{}, anchor_time{}, frequency{};
     HRESULT error{S_OK};
     ComPtr<IMFSourceReader> reader;
+    ComPtr<IMFSample> latest;
+    int64_t latest_qpc{};
     std::vector<std::weak_ptr<CameraFrames>> subscribers;
 };
 class CameraCallback final : public IMFSourceReaderCallback {
@@ -71,6 +73,7 @@ public:
             if (SUCCEEDED(hr) && sample) {
                 if (!state_->anchor_qpc) { state_->anchor_qpc = now(); state_->anchor_time = timestamp; }
                 auto qpc = state_->anchor_qpc + static_cast<int64_t>((static_cast<long double>(timestamp - state_->anchor_time) * state_->frequency) / 10'000'000);
+                state_->latest = sample; state_->latest_qpc = qpc;
                 std::erase_if(state_->subscribers, [](auto const& value) { return value.expired(); });
                 for (auto const& value : state_->subscribers) if (auto sink = value.lock()) sink->receive(sample, qpc);
             }
@@ -134,6 +137,28 @@ public:
         if (state_->stopping) throw HRESULT_FROM_WIN32(ERROR_DEVICE_NOT_CONNECTED);
         state_->subscribers.push_back(frames);
     }
+    HRESULT copy(uint8_t* output,uint32_t capacity,int64_t* qpc) {
+        ComPtr<IMFSample> sample;
+        {std::lock_guard lock(state_->mutex);if(FAILED(state_->error))return state_->error;if(!state_->latest)return S_FALSE;
+            if(*qpc==state_->latest_qpc)return S_FALSE;sample=state_->latest;*qpc=state_->latest_qpc;}
+        if(capacity<uint64_t(format.width)*format.height*4)return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+        ComPtr<IMFMediaBuffer> buffer;check(sample->ConvertToContiguousBuffer(&buffer));
+        ComPtr<IMF2DBuffer> two;
+        if(SUCCEEDED(buffer.As(&two))) {
+            BYTE* row{};LONG pitch{};check(two->Lock2D(&row,&pitch));
+            for(uint32_t y=0;y<format.height;++y)memcpy(output+size_t(y)*format.width*4,row+static_cast<ptrdiff_t>(y)*pitch,size_t(format.width)*4);
+            two->Unlock2D();
+        } else {
+            BYTE* data{};DWORD length{};check(buffer->Lock(&data,nullptr,&length));
+            const LONG stride=static_cast<LONG>(MFGetAttributeUINT32(input.Get(),MF_MT_DEFAULT_STRIDE,format.width*4));
+            if(uint64_t(std::abs(stride))*format.height>length){buffer->Unlock();return MF_E_BUFFERTOOSMALL;}
+            auto row=stride<0?data+size_t(format.height-1)*std::abs(stride):data;
+            for(uint32_t y=0;y<format.height;++y)memcpy(output+size_t(y)*format.width*4,row+static_cast<ptrdiff_t>(y)*stride,size_t(format.width)*4);
+            buffer->Unlock();
+        }
+        for(size_t i=3;i<size_t(format.width)*format.height*4;i+=4)output[i]=255;
+        return S_OK;
+    }
 };
 std::mutex feeds_mutex;
 std::map<std::wstring, std::weak_ptr<CameraFeed>> feeds;
@@ -146,6 +171,22 @@ std::shared_ptr<CameraFeed> camera_feed(std::wstring const& id, ft_camera_format
     }
     auto result = std::make_shared<CameraFeed>(); result->start(id, format); feeds[id] = result; return result;
 }
+class CameraPreview {
+    std::thread worker_;std::mutex mutex_;std::condition_variable wake_;bool stop_{};
+    std::shared_ptr<CameraFeed> feed_;
+public:
+    ~CameraPreview(){ {std::lock_guard lock(mutex_);stop_=true;}wake_.notify_all();if(worker_.joinable())worker_.join(); }
+    HRESULT start(std::wstring id,ft_camera_format format) {
+        std::promise<HRESULT> ready;auto result=ready.get_future();
+        worker_=std::thread([this,id=std::move(id),format,ready=std::move(ready)]()mutable {
+            bool signaled=false;
+            try { Runtime runtime;auto feed=camera_feed(id,format);{std::lock_guard lock(mutex_);feed_=feed;}
+                ready.set_value(S_OK);signaled=true;std::unique_lock lock(mutex_);wake_.wait(lock,[&]{return stop_;});feed_.reset();lock.unlock();feed.reset();
+            } catch(HRESULT hr){if(!signaled)ready.set_value(hr);}catch(...){if(!signaled)ready.set_value(E_FAIL);}
+        });return result.get();
+    }
+    HRESULT copy(uint8_t* bytes,uint32_t capacity,int64_t* qpc,uint64_t* identity){std::lock_guard lock(mutex_);if(!feed_)return E_HANDLE;*identity=feed_->identity;return feed_->copy(bytes,capacity,qpc);}
+};
 class Camera final {
     std::shared_ptr<CameraFrames> frames_ = std::make_shared<CameraFrames>();
     using Frame = CameraFrames::Frame;
@@ -269,4 +310,13 @@ int32_t __cdecl ft_camera_stop_at(ft_camera_handle handle, int64_t qpc) { return
 int32_t __cdecl ft_camera_get_status(ft_camera_handle handle, ft_camera_status* status) { if (!handle || !status || status->size != sizeof(*status)) return E_INVALIDARG; *status = static_cast<Camera*>(handle)->status(); return S_OK; }
 int32_t __cdecl ft_camera_get_source_identity(ft_camera_handle handle, uint64_t* identity) { if (!handle || !identity) return E_INVALIDARG; *identity = static_cast<Camera*>(handle)->source_identity(); return S_OK; }
 void __cdecl ft_camera_destroy(ft_camera_handle handle) { if (handle) { auto camera = static_cast<Camera*>(handle); camera->stop(now()); delete camera; } }
+int32_t __cdecl ft_camera_preview_start(const wchar_t* id,const ft_camera_format* format,ft_camera_preview_handle* handle) {
+    return protect([&]() -> HRESULT {if(!id||!format||!handle||!format->width||!format->height||format->width>1920||format->height>1080||!format->fps_numerator||!format->fps_denominator)return E_INVALIDARG;
+        *handle=nullptr;auto p=std::make_unique<CameraPreview>();auto hr=p->start(id,*format);if(FAILED(hr))return hr;*handle=p.release();return S_OK;});
+}
+int32_t __cdecl ft_camera_preview_copy(ft_camera_preview_handle h,uint8_t* bytes,uint32_t capacity,int64_t* qpc,uint64_t* identity) {
+    return protect([&]() -> HRESULT {if(!h||!bytes||!qpc||!identity)return E_POINTER;return static_cast<CameraPreview*>(h)->copy(bytes,capacity,qpc,identity);});
+}
+void __cdecl ft_camera_preview_destroy(ft_camera_preview_handle h){delete static_cast<CameraPreview*>(h);}
+
 }

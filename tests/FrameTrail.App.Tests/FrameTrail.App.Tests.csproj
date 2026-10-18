@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\FrameTrail.App\CanvasEditGeometry.cs" Link="CanvasEditGeometry.cs" />
     <Compile Include="..\..\src\FrameTrail.App\PlaybackFrameGate.cs" Link="PlaybackFrameGate.cs" />
     <Compile Include="..\..\src\FrameTrail.App\SafeDiagnostics.cs" Link="SafeDiagnostics.cs" />
     <Compile Include="..\..\src\FrameTrail.App\ProjectLocations.cs" Link="ProjectLocations.cs" />

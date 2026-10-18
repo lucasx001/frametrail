@@ -47,4 +47,15 @@ public sealed class EditorMediaCacheTests : IDisposable
         File.WriteAllBytes(wav, new byte[100]); File.WriteAllBytes(png, new byte[40]);
         Assert.False(cache.Use(wav)); Assert.False(cache.Use(png));
     }
+    [Fact] public void UserCleanupPreservesPinnedFilesAndSourceAssets()
+    {
+        var cache=new EditorMediaCache(root);
+        string active=cache.FilePath("active","peaks.json"), old=cache.FilePath("old","peaks.json");
+        File.WriteAllText(active,"[0.1]");File.WriteAllText(old,"[0.2]");cache.Pin(active);
+        string source=cache.FilePath("source","video.mp4"),foreign=Path.Combine(root,"cache","unrelated.bin");
+        File.WriteAllText(source,"source");File.WriteAllText(foreign,"foreign");
+        cache.ProtectSources(new[]{Path.GetRelativePath(root,source)});
+        cache.ClearRebuildable();Assert.True(File.Exists(active));Assert.False(File.Exists(old));Assert.Equal("source",File.ReadAllText(source));Assert.Equal("foreign",File.ReadAllText(foreign));
+        cache.Unpin(active);cache.ClearRebuildable();Assert.False(File.Exists(active));
+    }
 }

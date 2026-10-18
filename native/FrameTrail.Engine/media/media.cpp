@@ -1,4 +1,6 @@
 #include "internal.hpp"
+#include "pcm_wave.hpp"
+#include "edit_geometry.hpp"
 #include <mmsystem.h>
 #include <array>
 #include <algorithm>
@@ -19,6 +21,16 @@ template<class F> int32_t protect(F&& function) noexcept {
 }
 }
 extern "C" {
+int32_t __cdecl ft_media_edit_geometry(ft_media_handle handle,int64_t ticks,uint32_t crop_mode,char* output,uint32_t capacity,uint32_t* required) {
+    return protect([&] {
+        if(!required)winrt::throw_hresult(E_POINTER);auto s=get(handle);std::scoped_lock lock(s->mutex);
+        auto p=s->project;
+        if(crop_mode){auto settings=Json::parse(p.editor_json);settings.erase("crop");p.editor_json=settings.dump();}
+        FrameSceneEvaluator evaluator(p);auto scene=evaluator.evaluate(ticks);if(!scene)winrt::throw_hresult(E_INVALIDARG);
+        auto result=edit_geometry(s->project,*scene,crop_mode!=0).dump();*required=static_cast<uint32_t>(result.size()+1);
+        if(!output)return;if(capacity<*required)winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER));memcpy(output,result.c_str(),*required);
+    });
+}
 int32_t __cdecl ft_media_probe_visual(const wchar_t* path,uint32_t video,uint32_t* width,uint32_t* height,int64_t* duration) {
     return protect([&] {
         if(!path || !width || !height || !duration)winrt::throw_hresult(E_INVALIDARG);
@@ -138,12 +150,17 @@ int32_t __cdecl ft_media_audio_prepare(ft_media_handle handle, const wchar_t* wa
     return protect([&] { if (!wav) winrt::throw_hresult(E_INVALIDARG); auto s = get(handle); std::scoped_lock lock(s->mutex); s->mix_audio(wav); });
 }
 int32_t __cdecl ft_media_audio_stop(ft_media_handle handle) { return protect([&] { get(handle)->stop_audio(); }); }
+int32_t __cdecl ft_media_audio_stream(ft_media_handle handle, int64_t ticks) {
+    return protect([&] { auto s = get(handle); if (ticks < 0 || ticks >= s->output_duration) winrt::throw_hresult(E_INVALIDARG); s->stream_audio(ticks); });
+}
+int32_t __cdecl ft_media_audio_peaks(ft_media_handle handle, const wchar_t* json) {
+    return protect([&] { if (!json) winrt::throw_hresult(E_INVALIDARG); auto s = get(handle); std::scoped_lock lock(s->mutex); s->prepare_peaks(json); });
+}
 int32_t __cdecl ft_media_audio_play(ft_media_handle handle, const wchar_t* wav, int64_t ticks) {
     return protect([&] {
         if (!wav || ticks < 0) winrt::throw_hresult(E_INVALIDARG); auto s = get(handle); s->stop_audio();
-        std::ifstream file(wav, std::ios::binary); std::array<char, 44> header{}; file.read(header.data(), header.size());
-        if (!file || memcmp(header.data(), "RIFF", 4) || memcmp(header.data() + 8, "WAVEfmt ", 8) || memcmp(header.data() + 36, "data", 4)) throw ValidationError("audio", "invalid prepared PCM cache");
-        file.seekg(44 + ticks_samples(ticks) * channels * 2); if (!file) throw ValidationError("audio", "seek outside prepared audio");
+        std::ifstream file(wav, std::ios::binary); const auto offset = pcm_data_offset(file);
+        file.seekg(static_cast<std::streamoff>(offset) + ticks_samples(ticks)*channels*2); if(!file) throw ValidationError("audio", "seek outside prepared audio");
         WAVEFORMATEX format{WAVE_FORMAT_PCM, channels, sample_rate, sample_rate * channels * 2, channels * 2, 16, 0}; HWAVEOUT device{};
         const auto result = waveOutOpen(&device, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL); if (result != MMSYSERR_NOERROR) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED));
         std::scoped_lock lock(s->audio_mutex); s->audio_stop = false; s->audio_ticks = ticks; s->audio_running = 1;

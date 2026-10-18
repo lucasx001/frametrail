@@ -33,6 +33,9 @@ FTM_API int32_t __cdecl ft_media_export(ft_media_handle handle, const wchar_t* t
 FTM_API int32_t __cdecl ft_media_audio_prepare(ft_media_handle handle, const wchar_t* wav);
 FTM_API int32_t __cdecl ft_media_audio_play(ft_media_handle handle, const wchar_t* wav, int64_t ticks);
 FTM_API int32_t __cdecl ft_media_audio_stop(ft_media_handle handle);
+FTM_API int32_t __cdecl ft_media_audio_stream(ft_media_handle handle, int64_t ticks);
+FTM_API int32_t __cdecl ft_media_audio_peaks(ft_media_handle handle, const wchar_t* json);
+FTM_API int32_t __cdecl ft_media_edit_geometry(ft_media_handle handle, int64_t ticks, uint32_t crop_mode, char* output, uint32_t capacity, uint32_t* required);
 FTM_API int32_t __cdecl ft_media_error(wchar_t* output, uint32_t capacity);
 FTM_API int32_t __cdecl ft_media_probe_visual(const wchar_t* path, uint32_t video, uint32_t* width, uint32_t* height, int64_t* duration);
 }

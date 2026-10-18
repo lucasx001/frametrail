@@ -16,8 +16,8 @@
      <ToggleButton x:Name="CameraEnabled" Content="摄像头" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="录制摄像头" />
      <StackPanel x:Name="CameraDevices" /><TextBlock x:Name="CameraEmpty" Text="未发现摄像头" Style="{StaticResource RecorderCaption}" Margin="10,8" />
      <StackPanel x:Name="CameraOptions" Margin="10,8" Spacing="8" Visibility="Collapsed">
-      <ComboBox x:Name="CameraFormatPicker" HorizontalAlignment="Stretch" FontSize="12" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="10" AutomationProperties.Name="摄像头采集格式" />
-      <TextBlock Text="独立保存摄像头画面；实时预览将在后续版本提供。" Style="{StaticResource RecorderCaption}" />
+      <ComboBox x:Name="CameraFormatPicker" SelectionChanged="CameraFormat_Changed" HorizontalAlignment="Stretch" FontSize="12" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="10" AutomationProperties.Name="摄像头采集格式" />
+      <Button Content="打开摄像头预览" Click="CameraPreview_Click" HorizontalAlignment="Stretch"/><TextBlock Text="打开预览检查构图；镜像仅影响预览。" Style="{StaticResource RecorderCaption}" />
      </StackPanel>
     </StackPanel>
    </Flyout>

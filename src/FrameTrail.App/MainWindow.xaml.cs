@@ -83,6 +83,7 @@ public sealed partial class MainWindow : Window
                 selection?.Dispose(); selection = null;
                 if (androidWindow is { } activeAndroid) await activeAndroid.ShutdownAsync();
                 HideFlyouts();
+                if (cameraPreview is { } cp) { await cp.StopAsync(); cp.Close(); }
                 await coordinator.DisposeAsync();
                 if (opened is not null) await opened.DisposeAsync();
                 completion?.Close(); editorWindow?.Close(); UnregisterHotkeys();
@@ -116,7 +117,8 @@ public sealed partial class MainWindow : Window
             if (editorIndex >= 0 && args.Length > editorIndex + 1) {
                 await ExecuteAsync(async () => {
                     opened = await ProjectWorkspace.OpenAsync(Path.GetFullPath(args[editorIndex + 1]));
-                    var testIndex = Array.IndexOf(args, "--m2-self-test");
+                    var testIndex = Array.IndexOf(args, "--p1-self-test");
+                    if (testIndex < 0) testIndex = Array.IndexOf(args, "--m2-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m3-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--m4-self-test");
                     if (testIndex < 0) testIndex = Array.IndexOf(args, "--mockup-self-test");
@@ -126,6 +128,8 @@ public sealed partial class MainWindow : Window
                 }); return;
             }
             await InitializeRecorderAsync();
+            int cameraPreviewTest=Array.IndexOf(args,"--p1-camera-ui-self-test");
+            if(cameraPreviewTest>=0&&args.Length>cameraPreviewTest+1){await RunCameraPreviewValidationAsync(args[cameraPreviewTest+1]);return;}
             var libraryTest = Array.IndexOf(args, "--project-library-self-test");
             if (libraryTest >= 0 && args.Length > libraryTest + 2) { await RunProjectLibraryValidationAsync(args[libraryTest + 1], args[libraryTest + 2]); return; }
             var libraryPreview = Array.IndexOf(args, "--project-library-preview");
@@ -277,6 +281,7 @@ public sealed partial class MainWindow : Window
     private async void Input_Changed(object sender, RoutedEventArgs e)
     {
         if (!viewReady) return;
+        if (ReferenceEquals(sender, CameraEnabled) && CameraEnabled.IsChecked != true && cameraPreview is { } cp) { await cp.StopAsync(); cp.Close(); }
         ApplyIcons();
         if (ReferenceEquals(sender, CameraEnabled) && CameraEnabled.IsChecked == true && camera is null && cameras.Count > 0)
             await SelectCameraAsync(cameras[0]);
@@ -343,6 +348,7 @@ public sealed partial class MainWindow : Window
     }
     private async Task BeginRecordingAsync(CaptureSource source, CaptureRegion? region, AndroidSelection? android = null, AndroidConnection? prepared = null, CancellationToken cancellationToken = default)
     {
+        await cameraPreviewWork;
         if (android is null && CodecPicker.SelectedItem is null) throw new InvalidOperationException("没有可用的视频编码器，请检查显卡驱动与系统视频扩展后刷新设备。");
         if (opened is not null) { await opened.DisposeAsync(); opened = null; }
         var audio = new List<AudioSelection>();

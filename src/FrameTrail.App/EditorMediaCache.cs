@@ -9,19 +9,24 @@ internal sealed class EditorMediaCache
 {
     internal const long DefaultBudget = 1024L * 1024 * 1024;
     private readonly string directory;
-    private readonly long budget;
+    private long budget;
     private readonly object gate = new();
     private readonly HashSet<string> pinned = new(StringComparer.OrdinalIgnoreCase);
-    internal EditorMediaCache(string project, long budget = DefaultBudget)
+    private readonly HashSet<string> sources = new(StringComparer.OrdinalIgnoreCase);
+    internal EditorMediaCache(string project, long? budget = null)
     {
         directory = Path.Combine(Path.GetFullPath(project), "cache");
         Directory.CreateDirectory(directory);
         if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException("缓存目录不能是目录联接或符号链接。");
-        this.budget = budget;
+        this.budget = budget ?? ReadBudget();
     }
     internal string FilePath(string key, string suffix) => Path.Combine(directory, "editor-v2-" + key + "-" + suffix);
     internal void Pin(string path) { lock (gate) pinned.Add(path); }
     internal void Unpin(string? path) { if (path is not null) lock (gate) pinned.Remove(path); }
+    internal void ProtectSources(IEnumerable<string> relativePaths)
+    {
+        lock(gate) {sources.Clear();foreach(var path in relativePaths)sources.Add(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(directory)!,path)));}
+    }
     internal bool Use(string path)
     {
         lock (gate) {
@@ -39,14 +44,20 @@ internal sealed class EditorMediaCache
         }
     }
     internal void Trim()
+        => Clean(false);
+    internal long Budget { get => budget; set { budget = Math.Clamp(value, 128L*1024*1024, 16L*1024*1024*1024); Directory.CreateDirectory(Path.GetDirectoryName(BudgetFile)!); File.WriteAllText(BudgetFile, budget.ToString(System.Globalization.CultureInfo.InvariantCulture)); Trim(); } }
+    private static string BudgetFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FrameTrail", "cache-budget.txt");
+    private static long ReadBudget() { try { return long.TryParse(File.ReadAllText(BudgetFile), out var value) ? Math.Clamp(value,128L*1024*1024,16L*1024*1024*1024) : DefaultBudget; } catch(IOException) { return DefaultBudget; } catch(UnauthorizedAccessException) { return DefaultBudget; } }
+    internal void ClearRebuildable() => Clean(true);
+    private void Clean(bool all)
     {
         lock (gate) {
             var files = new DirectoryInfo(directory).EnumerateFiles("editor-*", SearchOption.TopDirectoryOnly)
                 .Where(f => (f.Attributes & FileAttributes.ReparsePoint) == 0).OrderByDescending(f => f.LastWriteTimeUtc).ToArray();
             long bytes = files.Sum(f => f.Length); int count = files.Length;
             foreach (var file in files.Reverse()) {
-                if (bytes <= budget && count <= 400) break;
-                if (pinned.Contains(file.FullName)) continue;
+                if (!all && bytes <= budget && count <= 400) break;
+                if (pinned.Contains(file.FullName) || sources.Contains(file.FullName)) continue;
                 try { long size = file.Length; file.Delete(); bytes -= size; count--; } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
         }

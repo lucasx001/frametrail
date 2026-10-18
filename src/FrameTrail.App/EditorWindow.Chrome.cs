@@ -11,6 +11,7 @@ namespace FrameTrail.App;
 
 public sealed partial class EditorWindow
 {
+    private bool previewMuted;
     private bool loadingInspector;
     private int inspectorTab;
     private bool layoutPage;
@@ -102,7 +103,7 @@ public sealed partial class EditorWindow
     private void BackgroundTab_Click(object sender, RoutedEventArgs e) => SetFramePage(false);
     private void LayoutTab_Click(object sender, RoutedEventArgs e) => SetFramePage(true);
     private void RatioHud_Click(object sender, RoutedEventArgs e) { ShowInspector(0); SetFramePage(true); AspectRatio.Focus(FocusState.Programmatic); }
-    private void CropHud_Click(object sender, RoutedEventArgs e) { ShowInspector(0); SetFramePage(true); CropEnabled.StartBringIntoView(); CropEnabled.Focus(FocusState.Programmatic); }
+    private async void CropHud_Click(object sender, RoutedEventArgs e) => await SafeAsync(ToggleCropEditingAsync);
     private async Task CommitPictureAsync()
     {
         if (!ready || loadingInspector || working || closing || editor.IsExporting) return;
@@ -174,7 +175,7 @@ public sealed partial class EditorWindow
     private void Appearance_Click(object sender, RoutedEventArgs e) { Root.RequestedTheme = Root.ActualTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark; EditorAppearance.Save(Root.RequestedTheme); UpdateFrameNavigation(); timeline.RefreshAppearance(); }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; UpdateFrameNavigation(); timeline.RefreshAppearance(); }); settingsWindow.Closed += (_, _) => settingsWindow = null; }
+        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; UpdateFrameNavigation(); timeline.RefreshAppearance(); }, mediaCache); settingsWindow.Closed += (_, _) => settingsWindow = null; }
         settingsWindow.Activate();
     }
     private void Snap_Click(object sender, RoutedEventArgs e) { timeline.SnappingEnabled = !timeline.SnappingEnabled; SnapLabel.Text = timeline.SnappingEnabled ? "吸附" : "吸附已关"; SnapButton.Background = timeline.SnappingEnabled ? new SolidColorBrush(Windows.UI.Color.FromArgb(32, 90, 174, 255)) : new SolidColorBrush(Colors.Transparent); }
@@ -186,7 +187,11 @@ public sealed partial class EditorWindow
     private void ZoomIn_Click(object sender, RoutedEventArgs e) => TimelineZoom.Value *= 1.5;
     private void PreviewOptions_Click(object sender, RoutedEventArgs e)
     {
-        var menu = new MenuFlyout(); foreach (var (label, index) in new[] { ("适合窗口", 0), ("125%", 1), ("150%", 2), ("200%", 3) }) { int choice = index; var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = CanvasZoom.SelectedIndex == choice }; item.Click += (_, _) => CanvasZoom.SelectedIndex = choice; menu.Items.Add(item); }
+        var menu = new MenuFlyout();
+        var mute = new ToggleMenuFlyoutItem { Text = "静音预览", IsChecked = previewMuted };
+        mute.Click += (_, _) => { Pause(); previewMuted = mute.IsChecked; };
+        menu.Items.Add(mute);
+ foreach (var (label, index) in new[] { ("适合窗口", 0), ("125%", 1), ("150%", 2), ("200%", 3) }) { int choice = index; var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = CanvasZoom.SelectedIndex == choice }; item.Click += (_, _) => CanvasZoom.SelectedIndex = choice; menu.Items.Add(item); }
         menu.Items.Add(new MenuFlyoutSeparator());
         var qualityMenu = new MenuFlyoutSubItem { Text = "预览清晰度" };
         foreach (var (label, quality) in new[] { ("4K · 高清预览（默认）", PreviewQuality.UltraHd), ("自动 · 匹配屏幕", PreviewQuality.Automatic) }) {

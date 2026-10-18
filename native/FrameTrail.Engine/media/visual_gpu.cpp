@@ -1,4 +1,5 @@
 #include "visual_gpu.hpp"
+#include "frametrail/core/plane_projection.hpp"
 #include <d3dcompiler.h>
 #include <cmath>
 #include <numbers>
@@ -79,16 +80,7 @@ void VisualGpu::draw(ID3D11Texture2D* input,ID3D11Texture2D* target,const PlaneM
     D3D11_TEXTURE2D_DESC in{},out{};input->GetDesc(&in);target->GetDesc(&out);
     ComPtr<ID3D11ShaderResourceView> source;FT_MEDIA_CHECK(gpu_.device->CreateShaderResourceView(input,nullptr,&source));
     ComPtr<ID3D11RenderTargetView> result;FT_MEDIA_CHECK(gpu_.device->CreateRenderTargetView(target,nullptr,&result));
-    double scale=motion.scale, panx=std::clamp(cw*0.5-motion.focus_x*cw*scale,std::min(0.0,cw*(1-scale)),std::max(0.0,cw*(1-scale))), pany=std::clamp(ch*0.5-motion.focus_y*ch*scale,std::min(0.0,ch*(1-scale)),std::max(0.0,ch*(1-scale)));
-    double ax=motion.angle_x*std::numbers::pi/180,ay=motion.angle_y*std::numbers::pi/180;
-    double pivot_x=motion.fixed_anchor?motion.focus_x*cw:cw/2,pivot_y=motion.fixed_anchor?motion.focus_y*ch:ch/2;
-    if(motion.fixed_anchor){panx=(1-scale)*pivot_x;pany=(1-scale)*pivot_y;}
-    auto vertex=[&](double u,double v) {
-        double x=u*cw*scale+panx-pivot_x+motion.offset_x*cw,y=v*ch*scale+pany-pivot_y+motion.offset_y*ch;
-        double z=y*std::sin(ax), yy=y*std::cos(ax), xx=x*std::cos(ay)+z*std::sin(ay);z=-x*std::sin(ay)+z*std::cos(ay);
-        double w=1+z/(2.5*std::max(cw,ch));
-        return Vertex{float(2*xx/cw+(2*pivot_x/cw-1)*w),float(-2*yy/ch-(2*pivot_y/ch-1)*w),0,float(w),float(u),float(v)};
-    };
+    auto vertex=[&](double u,double v) { auto p=plane_vertex(u,v,motion,cw,ch);return Vertex{float(p[0]),float(p[1]),0,float(p[2]),float(u),float(v)}; };
     Vertex quad[]{vertex(0,0),vertex(1,0),vertex(0,1),vertex(0,1),vertex(1,0),vertex(1,1)};
     D3D11_MAPPED_SUBRESOURCE mapped{}; FT_MEDIA_CHECK(gpu_.context->Map(vertices_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));memcpy(mapped.pData,quad,sizeof(quad));gpu_.context->Unmap(vertices_.Get(),0);
     Constants constants{};constants.info[0]=float(in.Width);constants.info[1]=float(in.Height);constants.info[2]=float(motion.opacity);constants.info[3]=float(regions.size());

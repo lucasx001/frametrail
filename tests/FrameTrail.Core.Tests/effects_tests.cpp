@@ -1,3 +1,6 @@
+#include "frametrail/core/plane_projection.hpp"
+#include "../../native/FrameTrail.Engine/media/pcm_wave.hpp"
+#include <sstream>
 #include "frametrail/core/editor.hpp"
 #include "frametrail/core/scene.hpp"
 #include "frametrail/core/cursor.hpp"
@@ -79,5 +82,15 @@ int main(){try{
     p.effects={focus_effect};auto trimmed=edit_project(p,Json{{"op","effectAtOutput"},{"effectId","focus-keys"},{"outputTicks",60'000'000},{"edge","start"}}.dump());
     auto trimmed_start=normalized_ticks(trimmed.effects[0].source_start);auto expected_focus=evaluate_visuals({parsed},trimmed_start).screen;auto actual_focus=evaluate_visuals({parse_visual_effect(trimmed.effects[0])},trimmed_start).screen;
     expect(std::abs(expected_focus.focus_x-actual_focus.focus_x)<0.000001,"trimming must retain sampled focus at boundary");
+    {
+        std::ostringstream small;auto offset=frametrail::media::write_pcm_header(small,48000);
+        std::istringstream input(small.str());expect(offset==44 && frametrail::media::pcm_data_offset(input)==44,"RIFF PCM keeps legacy layout");
+        std::ostringstream large;offset=frametrail::media::write_pcm_header(large,7ULL*3600*48000);
+        expect(large.str().substr(0,4)=="RF64" && large.str().size()==80,"long PCM uses bounded RF64 header");
+        std::istringstream rf(large.str());expect(frametrail::media::pcm_data_offset(rf)==80 && offset==80,"RF64 data seek skips ds64");
+        auto center=plane_vertex(0.5,0.5,PlaneMotion{},1920,1080);expect(std::abs(center[0])+std::abs(center[1])<1e-10 && center[2]==1,"identity projection center");
+        PlaneMotion motion;motion.scale=2;motion.angle_x=15;motion.angle_y=-20;
+        auto point=plane_vertex(0.2,0.7,motion,1920,1080);expect(std::isfinite(point[0]) && point[2]>0,"tilted zoom has finite hit geometry");
+    }
     std::cout<<"effects checks="<<checks<<'\n';return 0;
 }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

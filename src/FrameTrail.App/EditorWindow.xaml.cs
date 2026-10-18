@@ -26,10 +26,13 @@ public sealed partial class EditorWindow : Window
     private string? selected, preparedAudio;
     private SdrColor background = new();
     private (CanvasSettings Canvas, EditorSettings Editor)? copiedPicture;
-    private bool ready, working, playing, rendering, allowClose, closing;
+    private bool ready, working, playing, rendering, allowClose, closing, streamedPlayback;
     private string? validationDirectory;
     private int renderedFrames;
     private readonly PlaybackFrameGate playbackFrames = new();
+    private readonly SemaphoreSlim audioTransport = new(1);
+    private Task audioStopWork = Task.CompletedTask;
+    private long playbackGeneration;
     private bool fittedTimeline, showingExport;
     private readonly TaskCompletionSource<bool> startup = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Func<string, Task>? openProject;
@@ -56,6 +59,7 @@ public sealed partial class EditorWindow : Window
         ProjectTitle.Text = Path.GetFileNameWithoutExtension(workspace.DirectoryPath);
         PreviewMount.Children.Add(preview); TimelineMount.Children.Add(timeline);
         InitializeChrome();
+        InitializeCanvasEditing();
         InitializeVisuals();
         var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
         AppWindow.Resize(new Windows.Graphics.SizeInt32(Math.Min(1500, area.Width), Math.Min(980, area.Height)));
@@ -87,7 +91,8 @@ public sealed partial class EditorWindow : Window
             PlayButton.Focus(FocusState.Programmatic);
             startup.TrySetResult(initialized);
             if (this.validationDirectory is not null) {
-                if (Environment.GetCommandLineArgs().Contains("--editor-polish-self-test")) await RunEditorPolishValidationAsync(this.validationDirectory);
+                if (Environment.GetCommandLineArgs().Contains("--p1-self-test")) await RunP1ValidationAsync(this.validationDirectory);
+                else if (Environment.GetCommandLineArgs().Contains("--editor-polish-self-test")) await RunEditorPolishValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--fullscreen-self-test")) await RunFullscreenValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--mockup-self-test")) await RunMockupValidationAsync(this.validationDirectory);
                 else if (Environment.GetCommandLineArgs().Contains("--m4-self-test")) await RunM4ValidationAsync(this.validationDirectory);
@@ -205,6 +210,7 @@ public sealed partial class EditorWindow : Window
     private void UpdateState()
     {
         if (!ready) return;
+        QueueCanvasGeometry();
         Root.IsHitTestVisible = !switchingProjects && !projectTransition;
         SaveStatus.Text = editor.IsExporting ? "导出中" : editor.IsDirty ? "未保存" : "已保存";
         RetrySave.Visibility = editor.IsDirty ? Visibility.Visible : Visibility.Collapsed;
@@ -246,7 +252,7 @@ public sealed partial class EditorWindow : Window
     }
     private void ShowNotice(string title, string message, InfoBarSeverity severity = InfoBarSeverity.Informational) { if (previewFullscreen) SetPreviewFullscreen(false); Notice.Title = title; Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true; }
     private static string Format(long ticks) => TimeSpan.FromTicks(ticks).ToString(ticks >= TimeSpan.TicksPerHour ? @"h\:mm\:ss\.ff" : @"mm\:ss\.ff");
-    private void UpdateClock() { ClockLabel.Text = $"{Format(position)} / {Format(editor.Timeline.Duration)}"; timeline.Position(position); QueueMockupPoster(); }
+    private void UpdateClock() { QueueCanvasGeometry(); ClockLabel.Text = $"{Format(position)} / {Format(editor.Timeline.Duration)}"; timeline.Position(position); QueueMockupPoster(); }
     private async Task SeekAsync(long ticks)
     {
         bool resume = playing; Pause(); position = Math.Clamp(ticks, 0, Math.Max(0, editor.Timeline.Duration - 1)); await preview.RenderAsync(position); UpdateClock(); if (resume) await StartPlaybackAsync();
@@ -254,26 +260,42 @@ public sealed partial class EditorWindow : Window
     private async Task StartPlaybackAsync()
     {
         if (editor.IsExporting || preview.Session is null) return;
+        if (cropEditing) await ToggleCropEditingAsync();
+        canvasOverlay.Finish(true);await canvasCommitWork;
         if (position >= editor.Timeline.Duration - 1) position = 0;
-        if (editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio)) {
-            if (preparedAudio is null) { if (audioWorker.IsCompleted) await StartAssetsAsync(true, false); ShowNotice("正在准备声音", "混音缓存完成后即可播放带声音的预览。"); return; }
-            await Task.Run(() => preview.Session.PlayAudio(preparedAudio, position));
-        }
-        playbackStart = position; playbackClock.Restart(); playbackFrames.Reset(); playing = true; PlayGlyph.Kind = "Pause";
+        var current=preview.Session;if(current is null)return;long request=++playbackGeneration;
+        await audioTransport.WaitAsync();
+        try {
+            if(request!=playbackGeneration||closing||current!=preview.Session)return;
+            streamedPlayback = !previewMuted && editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio);
+            if (streamedPlayback) await Task.Run(() => current.StreamAudio(position));
+            if(request!=playbackGeneration||closing)return;
+        } finally {audioTransport.Release();}
+        playbackStart = position; playbackClock.Restart(); playbackFrames.Reset(); playing = true; canvasOverlay.SetItems([]); PlayGlyph.Kind = "Pause";
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += PlaybackRendering;
     }
     private void Pause()
     {
+        playbackGeneration++;
         playing = false; Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering; playbackClock.Stop(); PlayGlyph.Kind = "Play";
-        if (preview.Session is not null) { try { preview.Session.StopAudio(); } catch { } }
+        if (preview.Session is { } current) audioStopWork=StopPreviewAudioAsync(current);
+        QueueCanvasGeometry();
+    }
+    private async Task StopPreviewAudioAsync(MediaSession current)
+    {
+        await audioTransport.WaitAsync();
+        try {await Task.Run(current.StopAudio);}catch(ObjectDisposedException){}catch(Exception error){SafeDiagnostics.Record(error);}
+        finally {audioTransport.Release();}
     }
     private async Task TickAsync()
     {
         if (!playing || rendering || preview.Session is null || closing) return;
         rendering = true;
         try {
-            var status = preview.Session.Status; var time = preparedAudio is not null && status.AudioTicks >= 0 ? status.AudioTicks : playbackStart + playbackClock.Elapsed.Ticks;
+            var status = preview.Session.Status;
+            if (streamedPlayback && status.AudioRunning == 3) { Pause(); ShowNotice("声音播放未完成", "可重试播放，或在预览选项中开启静音预览。"); return; }
+            var time = streamedPlayback && status.AudioTicks >= 0 ? status.AudioTicks : playbackStart + playbackClock.Elapsed.Ticks;
             if (time >= editor.Timeline.Duration - TimeSpan.TicksPerMillisecond) { Pause(); position = Math.Max(0, editor.Timeline.Duration - 1); }
             else position = Math.Max(0, time);
             await preview.RenderAsync(position, false); renderedFrames++; UpdateClock();
@@ -389,6 +411,8 @@ public sealed partial class EditorWindow : Window
     }
     private async void Root_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (e.Key == VirtualKey.Escape && canvasOverlay.Dragging) { e.Handled=true;canvasOverlay.Finish(false);await canvasCommitWork;return; }
+        if (e.Key == VirtualKey.Escape && cropEditing) { e.Handled=true;await SafeAsync(ToggleCropEditingAsync);return; }
         if (e.Key == VirtualKey.F11 || (previewFullscreen && e.Key == VirtualKey.Escape)) {
             e.Handled = true; await SafeAsync(TogglePreviewFullscreenAsync); return;
         }

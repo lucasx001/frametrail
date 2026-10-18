@@ -35,7 +35,7 @@ internal static class AndroidValidation
                 if (crash) { await File.WriteAllTextAsync(Path.Combine(directory, "crash-ready.txt"), "checkpoint finalized; process termination can now exclude pending segment"); await Task.Delay(Timeout.Infinite); }
                 await recorder.PauseAsync(); await Task.Delay(500); await recorder.ResumeAsync(); await Task.Delay(1500); await recorder.AddMarkerAsync("resumed");
                 var snapshot = await recorder.StopAsync() ?? throw new Exception("No Android project.");
-                if (snapshot.SchemaVersion != 2 || snapshot.PrimarySource?.Kind != "androidUsb" || snapshot.Media.Any(m => m.Kind is MediaKind.PointerEvents or MediaKind.SystemAudio) || snapshot.Segments.Count < 3 || snapshot.Markers.Count != 2)
+                if (snapshot.SchemaVersion != 2 || snapshot.PrimarySource?.Kind != "androidUsb" || snapshot.Media.Any(m => m.Kind is MediaKind.PointerEvents or MediaKind.SystemAudio) || snapshot.Media.Count(m => m.Kind == MediaKind.Screen) < 3 || snapshot.Segments.Count != 2 || snapshot.Markers.Count != 2)
                     throw new Exception("Android project metadata, checkpoint, marker or pointer isolation failed.");
                 if (snapshot.Media.Count(m => m.Kind == MediaKind.AndroidAudio) != snapshot.Media.Count(m => m.Kind == MediaKind.Screen)) throw new Exception("Phone audio was not saved independently in every segment.");
                 checks.Add("Real H.264/PCM: native D3D preview, checkpoint, pause/resume, markers and schema-2 independent phone audio passed.");

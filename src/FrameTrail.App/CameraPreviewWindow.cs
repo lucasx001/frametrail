@@ -1,0 +1,81 @@
+using FrameTrail.Interop;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.WindowsRuntime;
+
+namespace FrameTrail.App;
+
+internal sealed class CameraPreviewWindow : Window
+{
+    [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
+    private readonly Image picture = new() { Stretch = Stretch.Uniform };
+    private readonly TextBlock status = new() { Text = "正在连接摄像头…", TextWrapping = TextWrapping.Wrap };
+    private readonly CheckBox mirror = new() { Content = "镜像预览", IsChecked = true };
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer timer;
+    private readonly SemaphoreSlim gate = new(1);
+    private CameraPreviewSession? session;
+    private WriteableBitmap? bitmap;
+    private byte[] pixels = [];
+    private bool closed, reading;
+    private int displayedFrames;
+    internal CameraPreviewWindow()
+    {
+        Title = "FrameTrail · 摄像头预览"; AppIcon.Apply(this);
+        var root = new Grid { Padding = new Thickness(14), RowSpacing = 10, Background = RecorderTheme.Brush(new Grid(), "RecorderBase") };
+        root.RowDefinitions.Add(new RowDefinition()); root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.Children.Add(picture); Grid.SetRow(mirror, 1); root.Children.Add(mirror);
+        var details = new StackPanel { Spacing = 5 }; details.Children.Add(status);
+        details.Children.Add(new TextBlock { Text = "镜像仅影响此处预览，原始录制保持原方向。成片镜像在编辑器摄像头设置中调整。", FontSize = 11, TextWrapping = TextWrapping.Wrap });
+        Grid.SetRow(details, 2); root.Children.Add(details); Content = root;
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(440, 380));
+        SetWindowDisplayAffinity(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x11);
+        mirror.Click += (_, _) => ApplyMirror();
+        picture.SizeChanged += (_, _) => ApplyMirror();
+        timer = DispatcherQueue.CreateTimer(); timer.Interval = TimeSpan.FromMilliseconds(40); timer.Tick += async (_, _) => await ReadAsync();
+        Closed += async (_, _) => { closed = true; timer.Stop(); await StopAsync(); };
+    }
+    private void ApplyMirror() => picture.RenderTransform = new ScaleTransform { ScaleX = mirror.IsChecked == true ? -1 : 1, CenterX = picture.ActualWidth / 2 };
+    internal async Task ConnectAsync(CameraDevice device, CameraFormat format)
+    {
+        await gate.WaitAsync();
+        try {
+            timer.Stop(); if (session is not null) { var old = session; session = null; await Task.Run(old.Dispose); }
+            if (closed) return;
+            status.Text = "正在连接摄像头…";
+            var created = await Task.Run(() => CameraPreviewSession.Start(device, format));
+            if (closed) { await Task.Run(created.Dispose); return; }
+            session = created; pixels = new byte[checked((int)(format.Width * format.Height * 4))];
+            bitmap = new WriteableBitmap((int)format.Width, (int)format.Height); picture.Source = bitmap;
+            status.Text = device.Name; timer.Start();
+        } catch (Exception error) { status.Text = "摄像头不可用，请检查设备连接和 Windows 摄像头权限。\n" + error.Message; }
+        finally { gate.Release(); }
+    }
+    private async Task ReadAsync()
+    {
+        if (reading || closed || !await gate.WaitAsync(0)) return; reading = true;
+        try {
+            var current = session; if (current is null || bitmap is null) return;
+            if (await Task.Run(() => current.CopyFrame(pixels)) && !closed) {
+                using var output = bitmap.PixelBuffer.AsStream(); await output.WriteAsync(pixels); bitmap.Invalidate();displayedFrames++;
+            }
+        } catch { timer.Stop(); status.Text = "摄像头已断开或格式发生变化。重新选择设备后可重试。"; }
+        finally { reading = false; gate.Release(); }
+    }
+    internal async Task StopAsync()
+    {
+        timer.Stop(); await gate.WaitAsync();
+        try { var old = session; session = null; if (old is not null) await Task.Run(old.Dispose); }
+        finally { gate.Release(); }
+    }
+    internal async Task<object> ValidatePresentationAsync()
+    {
+        var deadline=DateTime.UtcNow.AddSeconds(10);while(displayedFrames<3&&DateTime.UtcNow<deadline)await Task.Delay(40);
+        if(displayedFrames<3)throw new IOException("Camera window did not present three frames.");
+        mirror.IsChecked=true;ApplyMirror();if((picture.RenderTransform as ScaleTransform)?.ScaleX!=-1)throw new IOException("Mirror presentation failed.");
+        mirror.IsChecked=false;ApplyMirror();if((picture.RenderTransform as ScaleTransform)?.ScaleX!=1)throw new IOException("Unmirrored presentation failed.");
+        return new {displayedFrames,sourceIdentity=session!.SourceIdentity,width=session.Format.Width,height=session.Format.Height,mirrorToggle=true};
+    }
+}

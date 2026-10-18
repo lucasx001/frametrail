@@ -121,6 +121,8 @@ public sealed partial class EditorWindow
     }
     private Task FlushVisualChangesAsync()
     {
+        canvasOverlay.Finish(true);
+        if (!canvasCommitWork.IsCompleted) return canvasCommitWork;
         visualPreviewTimer?.Stop(); visualCommitTimer?.Stop();
         if (!visualCommitWork.IsCompleted) return visualCommitWork;
         if (!visualPending && !visualTransaction) return Task.CompletedTask;

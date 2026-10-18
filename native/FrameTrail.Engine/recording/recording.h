@@ -26,6 +26,11 @@ FT_RECORDING_API int32_t __cdecl ft_camera_get_status(ft_camera_handle, ft_camer
 // Diagnostics: overlapping segments must retain the same device-source identity.
 FT_RECORDING_API int32_t __cdecl ft_camera_get_source_identity(ft_camera_handle, uint64_t*);
 FT_RECORDING_API void __cdecl ft_camera_destroy(ft_camera_handle);
+typedef void* ft_camera_preview_handle;
+FT_RECORDING_API int32_t __cdecl ft_camera_preview_start(const wchar_t*, const ft_camera_format*, ft_camera_preview_handle*);
+// Latest immutable BGRA frame, top-down. S_FALSE means no new frame yet.
+FT_RECORDING_API int32_t __cdecl ft_camera_preview_copy(ft_camera_preview_handle, uint8_t*, uint32_t, int64_t*, uint64_t*);
+FT_RECORDING_API void __cdecl ft_camera_preview_destroy(ft_camera_preview_handle);
 // Decode at least one video/audio sample and obtain container duration; used before accepting recovery media.
 FT_RECORDING_API int32_t __cdecl ft_recording_probe(const wchar_t* path, uint32_t video, int64_t* duration_100ns);
 // Pointer sampling + click events on a dedicated message thread. JSONL and cursor PNG assets stay native.
