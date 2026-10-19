@@ -2,6 +2,7 @@
 #include "frametrail/core/cursor.hpp"
 #include "frametrail/core/mockup.hpp"
 #include "visual_gpu.hpp"
+#include "image_decode.hpp"
 #include <d2d1_1helper.h>
 #include <algorithm>
 #include <cmath>
@@ -44,8 +45,15 @@ ComPtr<ID2D1Bitmap1> Renderer::image(const std::filesystem::path& path) {
     ComPtr<IWICImagingFactory> wic; FT_MEDIA_CHECK(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)));
     ComPtr<IWICBitmapDecoder> decoder; FT_MEDIA_CHECK(wic->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder));
     ComPtr<IWICBitmapFrameDecode> frame; FT_MEDIA_CHECK(decoder->GetFrame(0, &frame));
-    UINT w{}, h{}; FT_MEDIA_CHECK(frame->GetSize(&w, &h)); if (w > 8192 || h > 8192 || uint64_t(w)*h > 16'777'216) throw ValidationError("image", "image exceeds 16 megapixel decode limit");
-    ComPtr<IWICFormatConverter> converter; FT_MEDIA_CHECK(wic->CreateFormatConverter(&converter)); FT_MEDIA_CHECK(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom));
+    UINT w{}, h{}; FT_MEDIA_CHECK(frame->GetSize(&w, &h)); auto size = image_decode_size(w, h);
+    if (!size) throw ValidationError("image", "unsupported image dimensions");
+    ComPtr<IWICBitmapSource> source; FT_MEDIA_CHECK(frame.As(&source));
+    if (size->width != w || size->height != h) {
+        ComPtr<IWICBitmapScaler> scaler; FT_MEDIA_CHECK(wic->CreateBitmapScaler(&scaler));
+        FT_MEDIA_CHECK(scaler->Initialize(frame.Get(), size->width, size->height, WICBitmapInterpolationModeFant));
+        FT_MEDIA_CHECK(scaler.As(&source));
+    }
+    ComPtr<IWICFormatConverter> converter; FT_MEDIA_CHECK(wic->CreateFormatConverter(&converter)); FT_MEDIA_CHECK(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom));
     ComPtr<ID2D1Bitmap1> result; FT_MEDIA_CHECK(d2->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &result));
     if (images.size() >= 4) images.clear(); images[key] = result; return result;
 }

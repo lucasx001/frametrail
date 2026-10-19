@@ -3,6 +3,8 @@ using FrameTrail.Domain;
 using FrameTrail.Interop;
 using FrameTrail.Workspace;
 
+if(args.Length==3&&args[0]=="--p2-export")return await P2ExportValidation.RunAsync(args[1],args[2]);
+
 if (args.Length >= 3 && args[0] == "--p1-media") return await P1MediaValidation.RunAsync(args[1], args[2], args.Contains("--camera"));
 
 if (args.Length is 2 or 3 && args[0] == "--video-codecs") return await VideoCodecValidation.RunAsync(args[1], args.Length == 3 ? args[2] : null);

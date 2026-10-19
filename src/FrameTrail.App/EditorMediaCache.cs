@@ -17,7 +17,7 @@ internal sealed class EditorMediaCache
     {
         directory = Path.Combine(Path.GetFullPath(project), "cache");
         Directory.CreateDirectory(directory);
-        if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException("缓存目录不能是目录联接或符号链接。");
+        if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) throw new IOException(L.T("SE051427B3277"));
         this.budget = budget ?? ReadBudget();
     }
     internal string FilePath(string key, string suffix) => Path.Combine(directory, "editor-v2-" + key + "-" + suffix);

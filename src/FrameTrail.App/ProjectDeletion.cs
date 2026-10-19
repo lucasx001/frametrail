@@ -9,11 +9,11 @@ internal static class ProjectDeletion
         // Revalidate the exact project, never its parent/storage directory.
         directory = ProjectLocations.DeletionDirectory(directory);
         for (string? ancestor = directory; ancestor is not null; ancestor = Path.GetDirectoryName(ancestor))
-            if ((File.GetAttributes(ancestor) & FileAttributes.ReparsePoint) != 0) throw new IOException("不能删除经过目录联接或符号链接的项目。");
+            if ((File.GetAttributes(ancestor) & FileAttributes.ReparsePoint) != 0) throw new IOException(L.T("SE63DDC7DB215"));
         var operation = new FileOperation { Operation = 3, From = directory + "\0\0", Flags = 0x40 | 0x10 | 0x4 | 0x4000 };
         int result = SHFileOperation(ref operation);
         if (operation.Aborted) throw new OperationCanceledException();
-        if (result != 0 || Directory.Exists(directory)) throw new IOException($"项目未能移到回收站（Windows 错误 {result}），请确认没有其他程序占用素材。");
+        if (result != 0 || Directory.Exists(directory)) throw new IOException(L.T("SDE078BC8ABAD", result));
     }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct FileOperation

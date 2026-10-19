@@ -11,7 +11,7 @@ namespace FrameTrail.App;
 internal sealed class EditorExportDialog : ContentDialog
 {
     private readonly Func<int, int, int, string, IProgress<MediaStatus>, CancellationToken, Task<string?>> export;
-    private readonly TextBlock status = Text("选择保存位置后开始导出。", true);
+    private readonly TextBlock status = Text(L.T("SB73C8E2319CB"), true);
     private readonly ProgressBar progress = new() { Minimum = 0, Maximum = 100, Visibility = Visibility.Collapsed, Height = 4 };
     private readonly StackPanel specifications = new() { Spacing = 10 };
     private readonly Grid choices = new() { ColumnSpacing = 4 };
@@ -22,13 +22,13 @@ internal sealed class EditorExportDialog : ContentDialog
     private int kind;
     private bool busy, complete;
     private CancellationTokenSource cancellation = new();
-    private readonly Button exportButton = new() { Content = "选择位置并导出", Style = LookupStyle("EditorPrimaryButton") };
-    private readonly Button cancelButton = new() { Content = "取消", Style = LookupStyle("EditorButton") };
+    private readonly Button exportButton = new() { Content = L.T("S10F98535AE54"), Style = LookupStyle("EditorPrimaryButton") };
+    private readonly Button cancelButton = new() { Content = L.T("S2CD0F3BE8738"), Style = LookupStyle("EditorButton") };
     internal EditorExportDialog(string name, long duration, uint width, uint height, ImageSource? thumbnail, Func<int, int, int, string, IProgress<MediaStatus>, CancellationToken, Task<string?>> export,
         IReadOnlyList<VideoCodecCapabilities>? codecs = null, string videoCodec = VideoCodecs.H264)
     {
         this.export = export; canvasWidth = width; canvasHeight = height;
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, "导出作品");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, L.T("SB0F3182BF2B3"));
         CornerRadius = new CornerRadius(20);
         SizeChanged += (_, _) => FitDialogWidth();
         Resources["ContentDialogMaxWidth"] = 820d; Resources["ContentDialogMinWidth"] = 600d;
@@ -37,28 +37,28 @@ internal sealed class EditorExportDialog : ContentDialog
         // An explicit Width can extend beyond the ContentScrollViewer's clip.
         var body = new StackPanel { Spacing = 16, MaxWidth = 772, HorizontalAlignment = HorizontalAlignment.Stretch };
         var heading = new Grid { ColumnSpacing = 10 }; heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); heading.ColumnDefinitions.Add(new ColumnDefinition()); heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var title = Text("导出作品"); title.FontSize = 17; title.FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"]; title.VerticalAlignment = VerticalAlignment.Center; heading.Children.Add(title);
+        var title = Text(L.T("SB0F3182BF2B3")); title.FontSize = 17; title.FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"]; title.VerticalAlignment = VerticalAlignment.Center; heading.Children.Add(title);
         var projectName = Text(name, true); projectName.VerticalAlignment = VerticalAlignment.Center; projectName.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetColumn(projectName, 1); heading.Children.Add(projectName);
-        var dismiss = new Button { Style = LookupStyle("EditorIconButton"), Content = new EditorGlyph { Kind = "Close", Width = 12, Height = 12 } }; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dismiss, "关闭导出面板"); dismiss.Click += (_, _) => { if (!busy) Hide(); }; Grid.SetColumn(dismiss, 2); heading.Children.Add(dismiss); body.Children.Add(heading);
+        var dismiss = new Button { Style = LookupStyle("EditorIconButton"), Content = new EditorGlyph { Kind = "Close", Width = 12, Height = 12 } }; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(dismiss, L.T("SF80A978DC2CD")); dismiss.Click += (_, _) => { if (!busy) Hide(); }; Grid.SetColumn(dismiss, 2); heading.Children.Add(dismiss); body.Children.Add(heading);
         var columns = new Grid { ColumnSpacing = 16 }; columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.51, GridUnitType.Star) }); columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(0.49, GridUnitType.Star) });
         var left = new StackPanel { Spacing = 16 };
-        left.Children.Add(Caption("文件"));
-        var file = new StackPanel { Spacing = 8 }; file.Children.Add(Text(name)); file.Children.Add(Text("在下一步选择文件名与保存位置。", true)); left.Children.Add(Tile(file));
-        left.Children.Add(Caption("导出内容"));
-        var labels = new[] { "视频成片", "仅音频", "工程副本" };
+        left.Children.Add(Caption(L.T("S39932F24FE11")));
+        var file = new StackPanel { Spacing = 8 }; file.Children.Add(Text(name)); file.Children.Add(Text(L.T("S8B4784673270"), true)); left.Children.Add(Tile(file));
+        left.Children.Add(Caption(L.T("S2584921CF7CD")));
+        var labels = new[] { L.T("S35855958FD1F"), L.T("S4EEF33B40874"), L.T("S3DAEC22B8481") };
         for (int i = 0; i < labels.Length; i++) { int index = i; choices.ColumnDefinitions.Add(new ColumnDefinition()); var button = new Button { Content = labels[i], Style = LookupStyle("EditorButton"), HorizontalAlignment = HorizontalAlignment.Stretch, CornerRadius = new CornerRadius(15) }; button.Click += (_, _) => SelectKind(index); Grid.SetColumn(button, i); choices.Children.Add(button); }
         left.Children.Add(new Border { Style = LookupStyle("EditorTile"), Padding = new Thickness(3), Child = choices });
         foreach (string value in new[] { "1080p", "1440p", "4K" }) resolution.Items.Add(value);
         fps.Items.Add("30 fps"); fps.Items.Add("60 fps");
         VideoCodecSelector.Populate(codec, codecs ?? CaptureSession.GetVideoCodecs(), false, videoCodec);
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(codec, "导出视频编码");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(codec, L.T("SB33C0D16A94B"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(codec, "export.videoCodec");
-        specifications.Children.Add(Text("视频编码", true)); specifications.Children.Add(codec);
-        specifications.Children.Add(Text("分辨率", true)); specifications.Children.Add(resolution); specifications.Children.Add(Text("帧率", true)); specifications.Children.Add(fps);
+        specifications.Children.Add(Text(L.T("S780DA4F96096"), true)); specifications.Children.Add(codec);
+        specifications.Children.Add(Text(L.T("SB92421822C21"), true)); specifications.Children.Add(resolution); specifications.Children.Add(Text(L.T("SF9404BF335BC"), true)); specifications.Children.Add(fps);
         left.Children.Add(Tile(specifications)); columns.Children.Add(left);
         var summary = new StackPanel { Spacing = 12 };
         summary.Children.Add(new Border { CornerRadius = new CornerRadius(10), Height = 164, Background = new SolidColorBrush(Colors.Black), Child = new Image { Source = thumbnail, Stretch = Stretch.Uniform } });
-        summary.Children.Add(Row("格式", formatSummary)); summary.Children.Add(Row("分辨率", sizeSummary)); summary.Children.Add(Row("帧率", fpsSummary)); summary.Children.Add(Row("时长", Text(TimeSpan.FromTicks(duration).ToString(@"mm\:ss\.ff"))));
+        summary.Children.Add(Row(L.T("S0E8B1C78C5F3"), formatSummary)); summary.Children.Add(Row(L.T("SB92421822C21"), sizeSummary)); summary.Children.Add(Row(L.T("SF9404BF335BC"), fpsSummary)); summary.Children.Add(Row(L.T("S04A95E0654D3"), Text(TimeSpan.FromTicks(duration).ToString(@"mm\:ss\.ff"))));
         var card = Tile(summary); card.VerticalAlignment = VerticalAlignment.Top; Grid.SetColumn(card, 1); columns.Children.Add(card);
         var scroll = new ScrollViewer { Content = columns, MaxHeight = 430, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; body.Children.Add(scroll); body.Children.Add(progress); status.TextWrapping = TextWrapping.Wrap; body.Children.Add(status);
         var footer = new Grid { ColumnSpacing = 12 };
@@ -67,7 +67,7 @@ internal sealed class EditorExportDialog : ContentDialog
         resolution.SelectionChanged += (_, _) => UpdateSummary(); fps.SelectionChanged += (_, _) => UpdateSummary(); codec.SelectionChanged += (_, _) => UpdateSummary(); SelectKind(0);
         Opened += (_, _) => { scroll.MaxHeight = Math.Max(180, Math.Min(430, XamlRoot.Size.Height - 280)); SelectKind(kind); };
         exportButton.Click += Start;
-        cancelButton.Click += (_, _) => { if (busy) { cancellation.Cancel(); status.Text = "正在取消导出…"; } else Hide(); };
+        cancelButton.Click += (_, _) => { if (busy) { cancellation.Cancel(); status.Text = L.T("S45536A67E4AD"); } else Hide(); };
         Closing += (_, args) => { if (busy) args.Cancel = true; };
         Closed += (_, _) => cancellation.Dispose();
     }
@@ -90,7 +90,7 @@ internal sealed class EditorExportDialog : ContentDialog
     }
     private void UpdateSummary()
     {
-        formatSummary.Text = kind switch { 1 => "M4A · AAC", 2 => "工程与原始素材", _ => "MP4 · " + VideoCodecs.DisplayName(VideoCodecSelector.Selected(codec)) + " · AAC" };
+        formatSummary.Text = kind switch { 1 => "M4A · AAC", 2 => L.T("SCB624EBE08FA"), _ => "MP4 · " + VideoCodecs.DisplayName(VideoCodecSelector.Selected(codec)) + " · AAC" };
         exportButton.IsEnabled = kind != 0 || codec.SelectedItem is not null;
         uint h = (uint)new[] { 1080, 1440, 2160 }[Math.Max(0, resolution.SelectedIndex)];
         sizeSummary.Text = kind == 0 ? $"{Math.Round(h * (double)canvasWidth / canvasHeight / 2) * 2:0} × {h}" : "—";
@@ -100,18 +100,18 @@ internal sealed class EditorExportDialog : ContentDialog
     {
         if (complete) { Hide(); return; }
         if (busy || kind == 0 && codec.SelectedItem is null) return; busy = true;
-        exportButton.IsEnabled = false; cancelButton.Content = "取消导出"; choices.IsHitTestVisible = specifications.IsHitTestVisible = false;
-        cancellation.Dispose(); cancellation = new(); progress.Visibility = Visibility.Visible; progress.IsIndeterminate = true; status.Text = "请选择保存位置…";
+        exportButton.IsEnabled = false; cancelButton.Content = L.T("S7EEFAAFF791F"); choices.IsHitTestVisible = specifications.IsHitTestVisible = false;
+        cancellation.Dispose(); cancellation = new(); progress.Visibility = Visibility.Visible; progress.IsIndeterminate = true; status.Text = L.T("SFC51B55D05FC");
         try {
             var path = await export(kind, resolution.SelectedIndex, fps.SelectedIndex, VideoCodecSelector.Selected(codec), new Progress<MediaStatus>(s => {
                 progress.IsIndeterminate = s.Total == 0; if (s.Total > 0) progress.Value = s.Completed * 100.0 / s.Total;
-                status.Text = (s.Stage switch { 1 => "准备声音", 2 => "编码", 3 => "校验文件", 4 => "已完成", _ => "准备媒体" }) + (s.Total > 0 ? $" · {s.Completed * 100.0 / s.Total:0}%" : "…");
+                status.Text = (s.Stage switch { 1 => L.T("SAD47E6D075ED"), 2 => L.T("SE66883FFD17E"), 3 => L.T("SB72E9FB4DA0B"), 4 => L.T("SF28461BB49C8"), _ => L.T("SC581D2AC36FC") }) + (s.Total > 0 ? $" · {s.Completed * 100.0 / s.Total:0}%" : "…");
             }), cancellation.Token);
-            if (path is not null) { complete = true; status.Text = "导出完成 · " + path; exportButton.Content = "完成"; cancelButton.Content = "关闭"; progress.IsIndeterminate = false; progress.Value = 100; }
-            else { status.Text = "尚未选择保存位置。"; progress.Visibility = Visibility.Collapsed; }
-        } catch (OperationCanceledException) { status.Text = "导出已取消。"; progress.Visibility = Visibility.Collapsed; }
-        catch (Exception error) { status.Text = "导出未完成 · " + error.Message; progress.Visibility = Visibility.Collapsed; }
-        finally { busy = false; choices.IsHitTestVisible = specifications.IsHitTestVisible = !complete; exportButton.IsEnabled = complete || kind != 0 || codec.SelectedItem is not null; if (!complete) cancelButton.Content = "取消"; }
+            if (path is not null) { complete = true; status.Text = L.T("S1640C24FF7BA") + path; exportButton.Content = L.T("SC0B3FBFF51CC"); cancelButton.Content = L.T("S3FD47EDCE45B"); progress.IsIndeterminate = false; progress.Value = 100; }
+            else { status.Text = L.T("SD712F5B82DED"); progress.Visibility = Visibility.Collapsed; }
+        } catch (OperationCanceledException) { status.Text = L.T("SE8A19ECD170F"); progress.Visibility = Visibility.Collapsed; }
+        catch (Exception error) { status.Text = L.T("SE4EE3C313CD0") + error.Message; progress.Visibility = Visibility.Collapsed; }
+        finally { busy = false; choices.IsHitTestVisible = specifications.IsHitTestVisible = !complete; exportButton.IsEnabled = complete || kind != 0 || codec.SelectedItem is not null; if (!complete) cancelButton.Content = L.T("S2CD0F3BE8738"); }
     }
     internal async Task ValidateCodecChoicesAsync(string directory)
     {
@@ -142,7 +142,7 @@ internal sealed class EditorExportDialog : ContentDialog
         CheckBounds(); await MainWindow.SaveUiFrameAsync(this, path + "-ready.png");
         var originalContent = cancelButton.Content; bool enabled = exportButton.IsEnabled;
         try {
-            cancelButton.Content = "取消导出"; exportButton.IsEnabled = false;
+            cancelButton.Content = L.T("S7EEFAAFF791F"); exportButton.IsEnabled = false;
             CheckBounds(); await MainWindow.SaveUiFrameAsync(this, path + "-busy.png");
         } finally { cancelButton.Content = originalContent; exportButton.IsEnabled = enabled; }
     }

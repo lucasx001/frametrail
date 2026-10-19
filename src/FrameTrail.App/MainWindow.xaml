@@ -3,136 +3,144 @@
   <Grid.Resources>
    <Flyout x:Name="MicrophoneFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="4">
-     <ToggleButton x:Name="MicEnabled" Content="麦克风" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="录制麦克风" />
-     <StackPanel x:Name="MicrophoneDevices" /><TextBlock x:Name="MicrophoneEmpty" Text="未发现麦克风" Style="{StaticResource RecorderCaption}" Margin="10,8" />
+     <ToggleButton x:Name="MicEnabled" Content="{local:Loc Key=S714CAC30E2FF}" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="{local:Loc Key=S512DFD986720}" />
+     <StackPanel x:Name="MicrophoneDevices" /><TextBlock x:Name="MicrophoneEmpty" Text="{local:Loc Key=S94C8595ED8ED}" Style="{StaticResource RecorderCaption}" Margin="10,8" />
+     <HyperlinkButton Content="{local:Loc Key=SA81867B44DD3}" NavigateUri="ms-settings:privacy-microphone"/>
      <StackPanel x:Name="MicrophoneMeterPanel" Visibility="Collapsed" Margin="10,12,10,8" Spacing="8">
-      <ProgressBar x:Name="MicrophoneLevel" Minimum="0" Maximum="1" Height="3" Foreground="{StaticResource RecorderMint}" Background="{ThemeResource RecorderWell}" AutomationProperties.Name="麦克风实时电平" />
-      <TextBlock Text="录制时显示输入电平" Style="{StaticResource RecorderCaption}" />
+      <ProgressBar x:Name="MicrophoneLevel" Minimum="0" Maximum="1" Height="3" Foreground="{StaticResource RecorderMint}" Background="{ThemeResource RecorderWell}" AutomationProperties.Name="{local:Loc Key=SBF86CF3E7668}" />
+      <TextBlock Text="{local:Loc Key=S03E528D9C49B}" Style="{StaticResource RecorderCaption}" />
      </StackPanel>
     </StackPanel>
    </Flyout>
    <Flyout x:Name="CameraFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="4">
-     <ToggleButton x:Name="CameraEnabled" Content="摄像头" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="录制摄像头" />
-     <StackPanel x:Name="CameraDevices" /><TextBlock x:Name="CameraEmpty" Text="未发现摄像头" Style="{StaticResource RecorderCaption}" Margin="10,8" />
+     <ToggleButton x:Name="CameraEnabled" Content="{local:Loc Key=SFAC308FBABB8}" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="{local:Loc Key=SE04B6C58307F}" />
+     <StackPanel x:Name="CameraDevices" /><TextBlock x:Name="CameraEmpty" Text="{local:Loc Key=S25959A23BBCB}" Style="{StaticResource RecorderCaption}" Margin="10,8" />
+     <HyperlinkButton Content="{local:Loc Key=SB4763A13DAEA}" NavigateUri="ms-settings:privacy-webcam"/>
      <StackPanel x:Name="CameraOptions" Margin="10,8" Spacing="8" Visibility="Collapsed">
-      <ComboBox x:Name="CameraFormatPicker" SelectionChanged="CameraFormat_Changed" HorizontalAlignment="Stretch" FontSize="12" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="10" AutomationProperties.Name="摄像头采集格式" />
-      <Button Content="打开摄像头预览" Click="CameraPreview_Click" HorizontalAlignment="Stretch"/><TextBlock Text="打开预览检查构图；镜像仅影响预览。" Style="{StaticResource RecorderCaption}" />
+      <ComboBox x:Name="CameraFormatPicker" SelectionChanged="CameraFormat_Changed" HorizontalAlignment="Stretch" FontSize="12" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="10" AutomationProperties.Name="{local:Loc Key=SBB4F9ABF8525}" />
+      <Button Content="{local:Loc Key=SEB3B5BCEBB9A}" Click="CameraPreview_Click" HorizontalAlignment="Stretch"/><TextBlock Text="{local:Loc Key=S71508F970D31}" Style="{StaticResource RecorderCaption}" />
      </StackPanel>
     </StackPanel>
    </Flyout>
    <Flyout x:Name="SystemFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="4">
-     <ToggleButton x:Name="SystemEnabled" Content="系统声音" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="录制系统声音" />
-     <RadioButton x:Name="AllSystemAudio" Content="全部系统声音" GroupName="AudioScope" Style="{StaticResource RecorderChoice}" IsChecked="True" Checked="AudioScope_Changed" />
-     <RadioButton x:Name="ProcessAudio" Content="所选窗口 App" GroupName="AudioScope" Style="{StaticResource RecorderChoice}" Checked="AudioScope_Changed" />
-     <TextBlock x:Name="ProcessAudioHint" Text="选择窗口后可录制该 App 的进程树声音" Style="{StaticResource RecorderCaption}" Margin="35,0,10,6" />
+     <ToggleButton x:Name="SystemEnabled" Content="{local:Loc Key=SAAA9A8F072BD}" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="{local:Loc Key=S7D8CCF590780}" />
+     <RadioButton x:Name="AllSystemAudio" Content="{local:Loc Key=S9AB54C8249E5}" GroupName="AudioScope" Style="{StaticResource RecorderChoice}" IsChecked="True" Checked="AudioScope_Changed" />
+     <RadioButton x:Name="ProcessAudio" Content="{local:Loc Key=S5D94C296849C}" GroupName="AudioScope" Style="{StaticResource RecorderChoice}" Checked="AudioScope_Changed" />
+     <TextBlock x:Name="ProcessAudioHint" Text="{local:Loc Key=SAFD9C93DDE33}" Style="{StaticResource RecorderCaption}" Margin="35,0,10,6" />
      <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
-     <StackPanel x:Name="SystemDevices" /><TextBlock x:Name="SystemEmpty" Text="未发现声音输出设备" Style="{StaticResource RecorderCaption}" Margin="10,8" />
+     <StackPanel x:Name="SystemDevices" /><TextBlock x:Name="SystemEmpty" Text="{local:Loc Key=S8B14F728C294}" Style="{StaticResource RecorderCaption}" Margin="10,8" />
+     <HyperlinkButton Content="{local:Loc Key=S9D5909F99594}" NavigateUri="ms-settings:sound"/>
     </StackPanel>
    </Flyout>
    <Flyout x:Name="MoreFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="620">
      <StackPanel Width="278" Spacing="4">
-      <Button x:Name="DestinationButton" Style="{StaticResource RecorderMenuButton}" Click="Destination_Click" AutomationProperties.Name="选择保存文件夹">
+      <Button x:Name="DestinationButton" Style="{StaticResource RecorderMenuButton}" Click="Destination_Click" AutomationProperties.Name="{local:Loc Key=SDDE2C518EB82}">
        <Grid Width="250" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /></Grid.ColumnDefinitions>
         <local:RecorderGlyph Kind="Folder" Width="16" Height="16" /><TextBlock x:Name="DestinationName" Grid.Column="1" Text="FrameTrail" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="›" Foreground="{ThemeResource RecorderFaint}" />
        </Grid>
       </Button>
-      <TextBox x:Name="RecordingName" PlaceholderText="自动命名" Margin="6,4" Height="34" MinHeight="34" FontFamily="{StaticResource RecorderFont}" FontSize="13" Padding="12,5" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="17" AutomationProperties.Name="录制名称" />
-      <StackPanel Margin="10,4" Spacing="6"><TextBlock Text="视频编码" Style="{StaticResource RecorderCaption}"/><ComboBox x:Name="CodecPicker" HorizontalAlignment="Stretch" FontSize="12" BorderThickness="0" Background="{ThemeResource RecorderWell}" CornerRadius="16" AutomationProperties.Name="录制视频编码" AutomationProperties.AutomationId="recorder.videoCodec"/></StackPanel>
+      <TextBox x:Name="RecordingName" PlaceholderText="{local:Loc Key=S35358E5EE0FC}" Margin="6,4" Height="34" MinHeight="34" FontFamily="{StaticResource RecorderFont}" FontSize="13" Padding="12,5" Background="{ThemeResource RecorderWell}" BorderThickness="0" CornerRadius="17" AutomationProperties.Name="{local:Loc Key=SD8C1638A0FF0}" />
+      <StackPanel Margin="10,4" Spacing="6"><TextBlock Text="{local:Loc Key=S780DA4F96096}" Style="{StaticResource RecorderCaption}"/><ComboBox x:Name="CodecPicker" HorizontalAlignment="Stretch" FontSize="12" BorderThickness="0" Background="{ThemeResource RecorderWell}" CornerRadius="16" AutomationProperties.Name="{local:Loc Key=SC707AACAF829}" AutomationProperties.AutomationId="recorder.videoCodec"/></StackPanel>
       <Grid Margin="10,4" ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="110" /></Grid.ColumnDefinitions>
-       <TextBlock Text="帧率上限" VerticalAlignment="Center" /><ComboBox x:Name="FpsPicker" Grid.Column="1" SelectedIndex="0" HorizontalAlignment="Stretch" FontSize="12" BorderThickness="0" Background="{ThemeResource RecorderWell}" CornerRadius="16" AutomationProperties.Name="录制帧率上限"><ComboBoxItem Content="30 FPS" /><ComboBoxItem Content="60 FPS" /></ComboBox>
+       <TextBlock Text="{local:Loc Key=S3E76EC99FFEC}" VerticalAlignment="Center" /><ComboBox x:Name="FpsPicker" Grid.Column="1" SelectedIndex="0" HorizontalAlignment="Stretch" FontSize="12" BorderThickness="0" Background="{ThemeResource RecorderWell}" CornerRadius="16" AutomationProperties.Name="{local:Loc Key=S5CAD7F79DBF3}"><ComboBoxItem Content="30 FPS" /><ComboBoxItem Content="60 FPS" /></ComboBox>
       </Grid>
-      <ToggleButton x:Name="PointerEnabled" Content="记录光标与点击" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" Style="{StaticResource RecorderSettingToggle}" />
-      <ToggleButton x:Name="ExcludeControl" Content="排除录制条与备忘录" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" Style="{StaticResource RecorderSettingToggle}" />
+      <ToggleButton x:Name="PointerEnabled" Content="{local:Loc Key=S260F88241E2D}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" Style="{StaticResource RecorderSettingToggle}" />
+      <ToggleButton x:Name="ExcludeControl" Content="{local:Loc Key=S86F0BE597E0B}" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" Style="{StaticResource RecorderSettingToggle}" />
       <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
-      <Button Style="{StaticResource RecorderMenuButton}" Click="Android_Click" Content="Android USB 录屏…" />
-      <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="打开已有项目…" />
-      <Button x:Name="RecoverButton" Style="{StaticResource RecorderMenuButton}" Click="Recovery_Click" Content="恢复中断录制" />
-      <Button x:Name="MemoMenuButton" Style="{StaticResource RecorderMenuButton}" Click="Memo_Click" Content="打开备忘录" />
-      <Button x:Name="RefreshButton" Style="{StaticResource RecorderMenuButton}" Click="Refresh_Click" Content="刷新来源与设备" />
-      <Button Style="{StaticResource RecorderMenuButton}" Click="Settings_Click" Content="设置…" />
-      <Expander Header="更多设置" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" BorderThickness="0" Background="Transparent" FontSize="13">
+      <Button Style="{StaticResource RecorderMenuButton}" Click="Android_Click" Content="{local:Loc Key=S0E824A1AC951}" />
+      <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="{local:Loc Key=S55255C7EB609}" />
+      <Button x:Name="RecoverButton" Style="{StaticResource RecorderMenuButton}" Click="Recovery_Click" Content="{local:Loc Key=S434A5D43E679}" />
+      <Button x:Name="MemoMenuButton" Style="{StaticResource RecorderMenuButton}" Click="Memo_Click" Content="{local:Loc Key=SD5E96F55FB67}" />
+      <Button x:Name="RefreshButton" Style="{StaticResource RecorderMenuButton}" Click="Refresh_Click" Content="{local:Loc Key=S3AC1929EA5B4}" />
+      <Button Style="{StaticResource RecorderMenuButton}" Click="Settings_Click" Content="{local:Loc Key=SDA9FC8BA9497}" />
+      <Expander Header="{local:Loc Key=S86FFBBFC5084}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" BorderThickness="0" Background="Transparent" FontSize="13">
        <Expander.Resources>
         <SolidColorBrush x:Key="ExpanderHeaderBackground" Color="Transparent" /><SolidColorBrush x:Key="ExpanderHeaderBackgroundPointerOver" Color="#14808080" />
         <SolidColorBrush x:Key="ExpanderHeaderBorderBrush" Color="Transparent" /><SolidColorBrush x:Key="ExpanderHeaderBorderBrushPointerOver" Color="Transparent" />
         <SolidColorBrush x:Key="ExpanderContentBackground" Color="Transparent" /><SolidColorBrush x:Key="ExpanderContentBorderBrush" Color="Transparent" />
        </Expander.Resources>
        <StackPanel Width="232" Spacing="10">
-        <CheckBox x:Name="SoftwareAllowed" Content="允许软件编码（最高 1080p30）" FontSize="12" />
-        <TextBlock Text="停止录制快捷键" Style="{StaticResource RecorderCaption}" />
+        <CheckBox x:Name="SoftwareAllowed" Content="{local:Loc Key=SF02CEC690826}" FontSize="12" />
+        <TextBlock Text="{local:Loc Key=S9AF7D38925BA}" Style="{StaticResource RecorderCaption}" />
         <ComboBox x:Name="StopKey" SelectedIndex="3" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
-        <TextBlock Text="添加标记快捷键" Style="{StaticResource RecorderCaption}" />
+        <TextBlock Text="{local:Loc Key=SEC3C16FDCEA5}" Style="{StaticResource RecorderCaption}" />
         <ComboBox x:Name="MarkerKey" SelectedIndex="4" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
-        <Button Content="应用快捷键" Click="Hotkey_Click" Style="{StaticResource RecorderMenuButton}" /><TextBlock x:Name="HotkeyStatus" Style="{StaticResource RecorderCaption}" />
+        <Button Content="{local:Loc Key=SE9DD9A0D9A75}" Click="Hotkey_Click" Style="{StaticResource RecorderMenuButton}" /><TextBlock x:Name="HotkeyStatus" Style="{StaticResource RecorderCaption}" />
        </StackPanel>
       </Expander>
       <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
-      <Button Style="{StaticResource RecorderMenuButton}" Click="Quit_Click" Content="退出 FrameTrail" />
+      <Button Style="{StaticResource RecorderMenuButton}" Click="Quit_Click" Content="{local:Loc Key=S757E9439FBEF}" />
      </StackPanel>
     </ScrollViewer>
    </Flyout>
    <Flyout x:Name="RecordingMoreFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="4">
-     <TextBlock Text="录制操作" Style="{StaticResource RecorderCaption}" Margin="10,4,10,6" />
-     <Button Content="打开备忘录" Click="Memo_Click" Style="{StaticResource RecorderMenuButton}" />
-     <Button Content="查看录制来源" Click="ShowSource_Click" Style="{StaticResource RecorderMenuButton}" />
+     <TextBlock Text="{local:Loc Key=SDB0856AD5806}" Style="{StaticResource RecorderCaption}" Margin="10,4,10,6" />
+     <Button Content="{local:Loc Key=SD5E96F55FB67}" Click="Memo_Click" Style="{StaticResource RecorderMenuButton}" />
+     <Button Content="{local:Loc Key=SC83BACFB075B}" Click="ShowSource_Click" Style="{StaticResource RecorderMenuButton}" />
      <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
-     <TextBlock x:Name="RecordingShortcutHint" Text="Ctrl + Shift + F9 结束录制" Style="{StaticResource RecorderCaption}" Margin="10,4" />
-     <TextBlock Text="每 60 秒保存一个可恢复分段" Style="{StaticResource RecorderCaption}" Margin="10,4" />
+     <TextBlock x:Name="RecordingShortcutHint" Text="{local:Loc Key=SB5EA168F51CB}" Style="{StaticResource RecorderCaption}" Margin="10,4" />
+     <TextBlock Text="{local:Loc Key=S24327BEED65C}" Style="{StaticResource RecorderCaption}" Margin="10,4" />
     </StackPanel>
    </Flyout>
    <Flyout x:Name="MarkerFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="10">
-     <TextBlock Text="录制标记" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="15" Margin="10,4" />
-     <TextBox x:Name="MarkerLabel" PlaceholderText="标记文字（可选）" FontSize="13" CornerRadius="12" AutomationProperties.Name="录制标记文字" />
-     <Button Content="添加标记" Click="AddLabeledMarker_Click" Style="{StaticResource RecorderPillButton}" HorizontalAlignment="Stretch" />
+     <TextBlock Text="{local:Loc Key=SE397926F8451}" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="15" Margin="10,4" />
+     <TextBox x:Name="MarkerLabel" PlaceholderText="{local:Loc Key=S1C7ECF48F4B7}" FontSize="13" CornerRadius="12" AutomationProperties.Name="{local:Loc Key=SDA388CA34813}" />
+     <Button Content="{local:Loc Key=S2B62BD0BE524}" Click="AddLabeledMarker_Click" Style="{StaticResource RecorderPillButton}" HorizontalAlignment="Stretch" />
     </StackPanel>
    </Flyout>
    <Flyout x:Name="FeedbackFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="10" Padding="8">
-     <TextBlock x:Name="FeedbackTitle" Text="提示" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="15" />
-     <TextBlock x:Name="Feedback" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="12" Foreground="{ThemeResource RecorderMuted}" AutomationProperties.Name="工作区提示" />
+     <TextBlock x:Name="FeedbackTitle" Text="{local:Loc Key=SF56C6C82203B}" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="15" />
+     <TextBlock x:Name="Feedback" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="12" Foreground="{ThemeResource RecorderMuted}" AutomationProperties.Name="{local:Loc Key=S063CB6AE0DBA}" />
+     <StackPanel x:Name="DeviceHelp" Visibility="Collapsed">
+      <HyperlinkButton Content="{local:Loc Key=SA81867B44DD3}" NavigateUri="ms-settings:privacy-microphone"/>
+      <HyperlinkButton Content="{local:Loc Key=SB4763A13DAEA}" NavigateUri="ms-settings:privacy-webcam"/>
+      <HyperlinkButton Content="{local:Loc Key=S9D5909F99594}" NavigateUri="ms-settings:sound"/>
+     </StackPanel>
     </StackPanel>
    </Flyout>
    <Flyout x:Name="RecoveryFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
     <StackPanel Width="268" Spacing="10" Padding="8">
-     <TextBlock Text="恢复中断录制" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="15" />
-     <ComboBox x:Name="RecoveryPicker" DisplayMemberPath="Directory" HorizontalAlignment="Stretch" FontSize="12" AutomationProperties.Name="待恢复工程" />
-     <TextBlock Text="仅恢复已经完成的分段，未完成素材保留在工程目录中。" Style="{StaticResource RecorderCaption}" />
-     <Button Content="恢复工程" Click="Recover_Click" Style="{StaticResource RecorderPillButton}" HorizontalAlignment="Stretch" />
+     <TextBlock Text="{local:Loc Key=S434A5D43E679}" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="15" />
+     <ComboBox x:Name="RecoveryPicker" DisplayMemberPath="Directory" HorizontalAlignment="Stretch" FontSize="12" AutomationProperties.Name="{local:Loc Key=S9FCA95A71568}" />
+     <TextBlock Text="{local:Loc Key=SB375A33AEB1A}" Style="{StaticResource RecorderCaption}" />
+     <Button Content="{local:Loc Key=S2BEEFAF45A4F}" Click="Recover_Click" Style="{StaticResource RecorderPillButton}" HorizontalAlignment="Stretch" />
     </StackPanel>
    </Flyout>
   </Grid.Resources>
-  <StackPanel x:Name="SetupPanel" Orientation="Horizontal" Padding="7,0" VerticalAlignment="Center" AutomationProperties.Name="录制准备">
-   <Button x:Name="SourceWheel" Width="106" Height="40" CornerRadius="20" Background="{ThemeResource RecorderWell}" Style="{StaticResource RecorderIconButton}" Click="SourceMode_Click" PointerWheelChanged="SourceMode_Wheel" KeyDown="SourceMode_KeyDown" AutomationProperties.Name="录制来源：显示器" ToolTipService.ToolTip="点击、滚轮或方向键切换录制来源">
-    <StackPanel Orientation="Horizontal" Spacing="8"><local:RecorderGlyph x:Name="SourceGlyph" Kind="Display" /><TextBlock x:Name="SourceModeLabel" Text="显示器" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" /><Canvas Width="6" Height="10" VerticalAlignment="Center"><Path Data="M1,3 L3,1 L5,3 M1,7 L3,9 L5,7" Stroke="{ThemeResource RecorderFaint}" StrokeThickness="1" StrokeLineJoin="Round" /></Canvas></StackPanel>
+  <StackPanel x:Name="SetupPanel" Orientation="Horizontal" Padding="7,0" VerticalAlignment="Center" AutomationProperties.Name="{local:Loc Key=S61B554D4A67F}">
+   <Button x:Name="SourceWheel" Width="106" Height="40" CornerRadius="20" Background="{ThemeResource RecorderWell}" Style="{StaticResource RecorderIconButton}" Click="SourceMode_Click" PointerWheelChanged="SourceMode_Wheel" KeyDown="SourceMode_KeyDown" AutomationProperties.Name="{local:Loc Key=S78759219D563}" ToolTipService.ToolTip="{local:Loc Key=S267ABDB2E58B}">
+    <StackPanel Orientation="Horizontal" Spacing="8"><local:RecorderGlyph x:Name="SourceGlyph" Kind="Display" /><TextBlock x:Name="SourceModeLabel" Text="{local:Loc Key=S1A13EA5910A0}" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" /><Canvas Width="6" Height="10" VerticalAlignment="Center"><Path Data="M1,3 L3,1 L5,3 M1,7 L3,9 L5,7" Stroke="{ThemeResource RecorderFaint}" StrokeThickness="1" StrokeLineJoin="Round" /></Canvas></StackPanel>
    </Button>
-   <Button x:Name="OpenProjectButton" Style="{StaticResource RecorderIconButton}" Click="Open_Click" AutomationProperties.Name="打开已有项目" AutomationProperties.AutomationId="recorder.openProject" ToolTipService.ToolTip="查看项目列表"><local:RecorderGlyph Kind="Folder" Width="17" Height="17" /></Button>
-   <Button x:Name="MicrophoneButton" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Microphone_Click" AutomationProperties.Name="麦克风：关闭" ToolTipService.ToolTip="麦克风"><local:RecorderGlyph x:Name="MicrophoneGlyph" Kind="Microphone" IsOn="False" Width="16" Height="16" /></Button>
-   <Button x:Name="CameraButton" Style="{StaticResource RecorderIconButton}" Click="Camera_Click" AutomationProperties.Name="摄像头：关闭" ToolTipService.ToolTip="摄像头"><local:RecorderGlyph x:Name="CameraGlyph" Kind="Camera" IsOn="False" Width="16" Height="16" /></Button>
-   <Button x:Name="SystemButton" Style="{StaticResource RecorderIconButton}" Click="System_Click" AutomationProperties.Name="系统声音：关闭" ToolTipService.ToolTip="系统声音"><local:RecorderGlyph x:Name="SystemGlyph" Kind="Speaker" IsOn="False" Width="16" Height="16" /></Button>
-   <ToggleButton x:Name="AutomaticZoomEnabled" Style="{StaticResource RecorderIconToggle}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" AutomationProperties.AutomationId="recorder.autoZoom" AutomationProperties.Name="点击自动缩放：开启" ToolTipService.ToolTip="点击自动缩放：开启"><local:RecorderGlyph x:Name="AutomaticZoomGlyph" Kind="AutoZoom" Width="17" Height="17" /></ToggleButton>
-   <Button x:Name="MoreButton" Style="{StaticResource RecorderIconButton}" Click="More_Click" AutomationProperties.Name="保存与录制配置" ToolTipService.ToolTip="保存与录制配置"><Grid><local:RecorderGlyph Kind="More" Width="16" Height="16" /><Ellipse x:Name="NoticeBadge" Width="5" Height="5" Fill="{StaticResource RecorderAmber}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0" Visibility="Collapsed" /></Grid></Button>
-   <Button x:Name="StartButton" Margin="4,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Start_Click" AutomationProperties.Name="选择来源并开始录制" ToolTipService.ToolTip="开始录制"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Ellipse Fill="White" Width="12" Height="12" /></Grid></Button>
-   <Grid Width="22" Height="40" Background="Transparent" AutomationProperties.Name="拖动录制条" ToolTipService.ToolTip="按住胶囊空白处或此处拖动"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
+   <Button x:Name="OpenProjectButton" Style="{StaticResource RecorderIconButton}" Click="Open_Click" AutomationProperties.Name="{local:Loc Key=SD16005A92594}" AutomationProperties.AutomationId="recorder.openProject" ToolTipService.ToolTip="{local:Loc Key=S58B8A06F6249}"><local:RecorderGlyph Kind="Folder" Width="17" Height="17" /></Button>
+   <Button x:Name="MicrophoneButton" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Microphone_Click" AutomationProperties.Name="{local:Loc Key=SFA7B2288D985}" ToolTipService.ToolTip="{local:Loc Key=S714CAC30E2FF}"><local:RecorderGlyph x:Name="MicrophoneGlyph" Kind="Microphone" IsOn="False" Width="16" Height="16" /></Button>
+   <Button x:Name="CameraButton" Style="{StaticResource RecorderIconButton}" Click="Camera_Click" AutomationProperties.Name="{local:Loc Key=S4D8500D4B31E}" ToolTipService.ToolTip="{local:Loc Key=SFAC308FBABB8}"><local:RecorderGlyph x:Name="CameraGlyph" Kind="Camera" IsOn="False" Width="16" Height="16" /></Button>
+   <Button x:Name="SystemButton" Style="{StaticResource RecorderIconButton}" Click="System_Click" AutomationProperties.Name="{local:Loc Key=S379F79CB9C19}" ToolTipService.ToolTip="{local:Loc Key=SAAA9A8F072BD}"><local:RecorderGlyph x:Name="SystemGlyph" Kind="Speaker" IsOn="False" Width="16" Height="16" /></Button>
+   <ToggleButton x:Name="AutomaticZoomEnabled" Style="{StaticResource RecorderIconToggle}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" AutomationProperties.AutomationId="recorder.autoZoom" AutomationProperties.Name="{local:Loc Key=S69BB0203DDEC}" ToolTipService.ToolTip="{local:Loc Key=S69BB0203DDEC}"><local:RecorderGlyph x:Name="AutomaticZoomGlyph" Kind="AutoZoom" Width="17" Height="17" /></ToggleButton>
+   <Button x:Name="MoreButton" Style="{StaticResource RecorderIconButton}" Click="More_Click" AutomationProperties.Name="{local:Loc Key=SFDDDEFA0F2BE}" ToolTipService.ToolTip="{local:Loc Key=SFDDDEFA0F2BE}"><Grid><local:RecorderGlyph Kind="More" Width="16" Height="16" /><Ellipse x:Name="NoticeBadge" Width="5" Height="5" Fill="{StaticResource RecorderAmber}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0" Visibility="Collapsed" /></Grid></Button>
+   <Button x:Name="StartButton" Margin="4,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Start_Click" AutomationProperties.Name="{local:Loc Key=SC15244686A5C}" ToolTipService.ToolTip="{local:Loc Key=S415D8F361894}"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Ellipse Fill="White" Width="12" Height="12" /></Grid></Button>
+   <Grid Width="22" Height="40" Background="Transparent" AutomationProperties.Name="{local:Loc Key=S42446765E759}" ToolTipService.ToolTip="{local:Loc Key=S6325FE8BED43}"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
   </StackPanel>
-  <StackPanel x:Name="RecordingPanel" Orientation="Horizontal" Padding="15,0,5,0" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="录制控制">
+  <StackPanel x:Name="RecordingPanel" Orientation="Horizontal" Padding="15,0,5,0" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="{local:Loc Key=SDD80B341FB3F}">
    <StackPanel Orientation="Horizontal" Spacing="9" Margin="0,0,12,0" VerticalAlignment="Center">
     <Ellipse x:Name="RecordingDot" Width="8" Height="8" Fill="{StaticResource RecorderRed}" />
-    <TextBlock x:Name="DurationText" Text="00:00" FontFamily="Segoe UI Variable Display" FontSize="15" FontWeight="SemiBold" MinWidth="46" VerticalAlignment="Center" Typography.NumeralAlignment="Tabular" AutomationProperties.Name="录制时长" />
+    <TextBlock x:Name="DurationText" Text="00:00" FontFamily="Segoe UI Variable Display" FontSize="15" FontWeight="SemiBold" MinWidth="46" VerticalAlignment="Center" Typography.NumeralAlignment="Tabular" AutomationProperties.Name="{local:Loc Key=S3EB490D5BA43}" />
     <StackPanel x:Name="LevelBars" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" Visibility="Collapsed"><Border x:Name="Level1" Width="2.5" Height="3" CornerRadius="1.25" Background="{StaticResource RecorderMint}" /><Border x:Name="Level2" Width="2.5" Height="3" CornerRadius="1.25" Background="{StaticResource RecorderMint}" /><Border x:Name="Level3" Width="2.5" Height="3" CornerRadius="1.25" Background="{StaticResource RecorderMint}" /><Border x:Name="Level4" Width="2.5" Height="3" CornerRadius="1.25" Background="{StaticResource RecorderMint}" /></StackPanel>
    </StackPanel>
-   <Button x:Name="MarkerButton" Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Marker_Click" RightTapped="Marker_RightTapped" AutomationProperties.Name="添加录制标记" ToolTipService.ToolTip="添加标记；右键添加文字"><Grid><local:RecorderGlyph Kind="Marker" Width="13" Height="13" /><TextBlock x:Name="MarkerCount" Text="" FontSize="9" FontWeight="Bold" Margin="12,-8,-8,0" /></Grid></Button>
-   <Button Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Memo_Click" AutomationProperties.Name="备忘录" ToolTipService.ToolTip="备忘录"><local:RecorderGlyph Kind="Memo" Width="14" Height="14" /></Button>
-   <Button x:Name="PauseButton" Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Pause_Click" AutomationProperties.Name="暂停录制" ToolTipService.ToolTip="暂停录制"><local:RecorderGlyph x:Name="PauseGlyph" Kind="Pause" Width="13" Height="13" /></Button>
-   <Button x:Name="RecordingMoreButton" Width="32" Height="36" Style="{StaticResource RecorderIconButton}" Click="RecordingMore_Click" AutomationProperties.Name="更多录制操作" ToolTipService.ToolTip="更多录制操作"><local:RecorderGlyph Kind="More" Width="15" Height="15" /></Button>
-   <Button x:Name="StopButton" Width="36" Height="36" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Stop_Click" AutomationProperties.Name="结束录制" ToolTipService.ToolTip="结束录制"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Border Background="White" CornerRadius="2.5" Width="11" Height="11" /></Grid></Button>
-   <Grid Width="22" Height="36" Background="Transparent" AutomationProperties.Name="拖动录制条" ToolTipService.ToolTip="按住胶囊空白处或此处拖动"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
+   <Button x:Name="MarkerButton" Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Marker_Click" RightTapped="Marker_RightTapped" AutomationProperties.Name="{local:Loc Key=S3559A2BF4EBC}" ToolTipService.ToolTip="{local:Loc Key=S1E652E65B8A5}"><Grid><local:RecorderGlyph Kind="Marker" Width="13" Height="13" /><TextBlock x:Name="MarkerCount" Text="" FontSize="9" FontWeight="Bold" Margin="12,-8,-8,0" /></Grid></Button>
+   <Button Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Memo_Click" AutomationProperties.Name="{local:Loc Key=S890E0D58781D}" ToolTipService.ToolTip="{local:Loc Key=S890E0D58781D}"><local:RecorderGlyph Kind="Memo" Width="14" Height="14" /></Button>
+   <Button x:Name="PauseButton" Width="36" Height="36" Style="{StaticResource RecorderIconButton}" Click="Pause_Click" AutomationProperties.Name="{local:Loc Key=SD9917E419D62}" ToolTipService.ToolTip="{local:Loc Key=SD9917E419D62}"><local:RecorderGlyph x:Name="PauseGlyph" Kind="Pause" Width="13" Height="13" /></Button>
+   <Button x:Name="RecordingMoreButton" Width="32" Height="36" Style="{StaticResource RecorderIconButton}" Click="RecordingMore_Click" AutomationProperties.Name="{local:Loc Key=S138008EB0F96}" ToolTipService.ToolTip="{local:Loc Key=S138008EB0F96}"><local:RecorderGlyph Kind="More" Width="15" Height="15" /></Button>
+   <Button x:Name="StopButton" Width="36" Height="36" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Stop_Click" AutomationProperties.Name="{local:Loc Key=SDAA18E2ACD91}" ToolTipService.ToolTip="{local:Loc Key=SDAA18E2ACD91}"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Border Background="White" CornerRadius="2.5" Width="11" Height="11" /></Grid></Button>
+   <Grid Width="22" Height="36" Background="Transparent" AutomationProperties.Name="{local:Loc Key=S42446765E759}" ToolTipService.ToolTip="{local:Loc Key=S6325FE8BED43}"><local:RecorderGlyph Kind="Grip" Width="12" Height="14" Opacity="0.35" /></Grid>
   </StackPanel>
-  <StackPanel x:Name="ProgressPanel" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="正在处理录制">
-   <ProgressRing x:Name="TransitionProgress" IsActive="False" Width="16" Height="16" Foreground="{ThemeResource RecorderInk}" /><TextBlock x:Name="RecordingStatus" Text="正在准备…" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" />
+  <StackPanel x:Name="ProgressPanel" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="{local:Loc Key=S20F8920F03DF}">
+   <ProgressRing x:Name="TransitionProgress" IsActive="False" Width="16" Height="16" Foreground="{ThemeResource RecorderInk}" /><TextBlock x:Name="RecordingStatus" Text="{local:Loc Key=SF07335163E36}" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" />
   </StackPanel>
  </Grid>
 </Window>

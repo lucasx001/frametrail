@@ -20,29 +20,26 @@ internal sealed partial class ProjectLibraryWindow
             root.RequestedTheme = compact ? ElementTheme.Light : ElementTheme.Dark;
             if (compact) { double scale = RecorderWindowChrome.Scale(this); AppWindow.Resize(new((int)(520 * scale), (int)(520 * scale))); }
             await Task.Delay(150); root.UpdateLayout();
-            var first = (Grid)((ListViewItem)list.Items[0]).Content;
+            var first = Row((ListViewItem)list.ContainerFromIndex(0));
             var open = (Button)first.Children[0]; var remove = (Button)first.Children[1];
             if (open.ActualWidth < 250 || remove.ActualWidth < 30 || open.ActualWidth + remove.ActualWidth > first.ActualWidth + 1)
                 throw new IOException("Project row open and delete controls overlap or clip.");
             await MainWindow.SaveUiFrameAsync(root, Path.Combine(directory, compact ? "projects-compact-light.png" : "projects-dark.png"));
         }
         AppWindow.Resize(originalSize); root.RequestedTheme = originalTheme;
-        search.Text = "项目 B"; await Task.Delay(100); root.UpdateLayout();
+        search.Text = "项目 B"; await Task.Delay(250); root.UpdateLayout();
         if (list.Items.Count != 1) throw new IOException("Project name search did not filter rows.");
-        search.Text = "no-such-project"; await Task.Delay(100); if (list.Items.Count != 0 || empty.Visibility != Visibility.Visible) throw new IOException("Search empty state was not shown.");
-        search.Text = ""; await Task.Delay(100);
+        search.Text = "no-such-project"; await Task.Delay(250); if (list.Items.Count != 0 || empty.Visibility != Visibility.Visible) throw new IOException("Search empty state was not shown.");
+        search.Text = ""; await Task.Delay(250);
         checks.Add("The native project list shows existing and incomplete projects, filters names, shows an empty state, and fits dark and compact/light layouts with separate open/delete buttons.");
     }
     private Button EntryButton(string path, bool remove)
     {
         var entry = entries.Single(entry => string.Equals(entry.Directory, path, StringComparison.OrdinalIgnoreCase));
         string id = (remove ? "projects.delete." : "projects.open.") + EntryId(entry);
-        foreach (ListViewItem item in list.Items) {
-            var row = (Grid)item.Content;
-            foreach (var button in row.Children.OfType<Button>()) if (AutomationProperties.GetAutomationId(button) == id) {
-                list.ScrollIntoView(item); root.UpdateLayout(); return button;
-            }
-        }
+        list.ScrollIntoView(entry);root.UpdateLayout();
+        if(list.ContainerFromItem(entry) is ListViewItem item)
+            foreach(var button in Row(item).Children.OfType<Button>())if(AutomationProperties.GetAutomationId(button)==id)return button;
         throw new IOException("Project row button not found.");
     }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();

@@ -117,7 +117,7 @@ public sealed partial class EditorWindow
             }
         }
         catch (OperationCanceledException) { }
-        catch (Exception error) { ShowNotice("效果预览未完成", error.Message); }
+        catch (Exception error) { ShowNotice(L.T("SC8F68E6B43D4"), error.Message); }
     }
     private Task FlushVisualChangesAsync()
     {
@@ -149,7 +149,7 @@ public sealed partial class EditorWindow
         }
         catch (Exception error) {
             if (visualTransaction) { editor.CancelTransaction(); visualTransaction = false; }
-            ShowNotice("效果保存未完成", error.Message);
+            ShowNotice(L.T("SD3E418C0AFC6"), error.Message);
         }
         finally {
             committingVisuals = false; if (!visualPending) mockupEditing = false; timeline.EditingEnabled = !working && !editor.IsExporting; UpdateState();
@@ -170,7 +170,7 @@ public sealed partial class EditorWindow
             mockupEditing = false; loadingVisuals = true; try { RefreshMockupInspector(forceText: true); } finally { loadingVisuals = false; }
             LoadSelectedVisual(); RefreshTimeline();
         }
-        catch (Exception error) { ShowNotice("取消效果预览未完成", error.Message); }
+        catch (Exception error) { ShowNotice(L.T("SF566DA15C855"), error.Message); }
         finally { committingVisuals = false; timeline.EditingEnabled = !working && !editor.IsExporting; }
     }
 }

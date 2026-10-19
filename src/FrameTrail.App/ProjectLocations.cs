@@ -20,7 +20,7 @@ internal sealed class ProjectLocations
     internal void SetRecordingDirectory(string directory)
     {
         directory = Path.GetFullPath(directory);
-        if (!Directory.Exists(directory)) throw new DirectoryNotFoundException("项目保存文件夹不存在。");
+        if (!Directory.Exists(directory)) throw new DirectoryNotFoundException(L.T("SA06546611D66"));
         Directory.CreateDirectory(Path.GetDirectoryName(settingsFile)!);
         var temporary = settingsFile + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try { File.WriteAllText(temporary, JsonSerializer.Serialize(directory)); File.Move(temporary, settingsFile, true); }
@@ -38,13 +38,13 @@ internal sealed class ProjectLocations
         string path = Path.GetFullPath(selection).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         if (File.Exists(path) && string.Equals(Path.GetFileName(path), "project.json", StringComparison.OrdinalIgnoreCase)) path = Path.GetDirectoryName(path)!;
         path = DeletionDirectory(path);
-        if (!File.Exists(Path.Combine(path, "project.json"))) throw new IOException("这个文件夹中没有 project.json；若录制中断，请使用恢复中断录制入口。");
+        if (!File.Exists(Path.Combine(path, "project.json"))) throw new IOException(L.T("SC7164CFEFA32"));
         return path;
     }
     internal static string DeletionDirectory(string selection)
     {
         string path = Path.GetFullPath(selection).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (!path.EndsWith(".frametrailproject", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(path)) throw new IOException("请选择一个 .frametrailproject 项目文件夹。");
+        if (!path.EndsWith(".frametrailproject", StringComparison.OrdinalIgnoreCase) || !Directory.Exists(path)) throw new IOException(L.T("S2533F6C51D39"));
         return path;
     }
 }

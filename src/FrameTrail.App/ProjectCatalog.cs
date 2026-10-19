@@ -74,7 +74,7 @@ internal sealed class ProjectCatalog
                 modified = System.IO.Directory.GetLastWriteTimeUtc(path);
                 string manifest = Path.Combine(path, "project.json");
                 using var file = new FileStream(manifest, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                if (file.Length > ProjectJson.MaximumJsonBytes) throw new IOException("项目信息过大，无法读取。");
+                if (file.Length > ProjectJson.MaximumJsonBytes) throw new IOException(L.T("S3B97A94761FE"));
                 using var reader = new StreamReader(file);
                 var snapshot = ProjectJson.Deserialize(reader.ReadToEnd());
                 modified = File.GetLastWriteTimeUtc(manifest);
@@ -83,7 +83,7 @@ internal sealed class ProjectCatalog
             } catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or ProjectFormatException or ArgumentException) {
                 if (!System.IO.Directory.Exists(path)) continue;
                 entries.Add(new(path, name, modified, null, null, null,
-                    File.Exists(Path.Combine(path, "project.json")) ? "项目信息无法读取，可删除此项目" : "录制未完成，可从录制条恢复或删除"));
+                    File.Exists(Path.Combine(path, "project.json")) ? L.T("SB651845C2258") : L.T("S9DBB02247166")));
             }
         }
         return entries.OrderByDescending(entry => entry.ModifiedUtc).ThenBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase).ToArray();

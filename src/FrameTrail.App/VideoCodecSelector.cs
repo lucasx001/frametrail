@@ -11,7 +11,7 @@ internal static class VideoCodecSelector
     {
         picker.Items.Clear();
         foreach (var item in capabilities) picker.Items.Add(new ComboBoxItem {
-            Tag = item.Codec, Content = VideoCodecs.DisplayName(item.Codec) + " · " + (recording || !item.CanEncode ? item.Availability : item.HardwareCount > 0 ? "硬件编码" : "软件编码"),
+            Tag = item.Codec, Content = VideoCodecs.DisplayName(item.Codec) + " · " + (recording || !item.CanEncode ? item.Availability : item.HardwareCount > 0 ? L.T("SBA36B9D71F16") : L.T("SBB7C9EB35DA1")),
             IsEnabled = recording ? item.CanRecord : item.CanEncode
         });
         picker.SelectedItem = picker.Items.OfType<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == selected && i.IsEnabled)

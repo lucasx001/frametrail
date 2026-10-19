@@ -29,7 +29,7 @@ public sealed partial class EditorSession
         Timeline = EngineSession.ResolveTimeline(Snapshot);
     }
     private static ProjectSnapshot Freeze(ProjectSnapshot p) => ProjectJson.Deserialize(ProjectJson.Serialize(p));
-    private void EnsureEditable() { if (IsExporting) throw new InvalidOperationException("导出期间请等待或取消导出后再编辑。"); }
+    private void EnsureEditable() { if (IsExporting) throw new InvalidOperationException(L.T("SE8202E6313B4")); }
     private void Push(List<string> stack, ProjectSnapshot value)
     {
         stack.Add(ProjectJson.Serialize(value));
@@ -70,7 +70,7 @@ public sealed partial class EditorSession
     }
     private async Task SaveCoreAsync()
     {
-        try { if (!await workspace.SaveAsync(Snapshot, workspace.SessionEpoch)) throw new IOException("该修订未被保存；请重试。"); IsDirty = false; SaveError = null; }
+        try { if (!await workspace.SaveAsync(Snapshot, workspace.SessionEpoch)) throw new IOException(L.T("S54FB8812AC03")); IsDirty = false; SaveError = null; }
         catch (Exception error) { IsDirty = true; SaveError = error.Message; }
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -106,11 +106,11 @@ public sealed partial class EditorSession
         string? staging = null;
         try {
             var target = Path.GetFullPath(destination).TrimEnd(Path.DirectorySeparatorChar); staging = target + ".frametrail-copy-" + Guid.NewGuid().ToString("N");
-            if (Directory.Exists(target) || File.Exists(target)) throw new IOException("请选择尚不存在的素材文件夹。");
+            if (Directory.Exists(target) || File.Exists(target)) throw new IOException(L.T("S98716E132E09"));
             for (var ancestor = Path.GetDirectoryName(target); !string.IsNullOrEmpty(ancestor); ancestor = Path.GetDirectoryName(ancestor))
-                if (Directory.Exists(ancestor) && (File.GetAttributes(ancestor) & FileAttributes.ReparsePoint) != 0) throw new IOException("素材副本路径不能经过目录联接或符号链接。");
+                if (Directory.Exists(ancestor) && (File.GetAttributes(ancestor) & FileAttributes.ReparsePoint) != 0) throw new IOException(L.T("SFD13984392A6"));
             var root = Path.GetFullPath(DirectoryPath).TrimEnd(Path.DirectorySeparatorChar);
-            if (target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || string.Equals(target, root, StringComparison.OrdinalIgnoreCase)) throw new IOException("请选择工程目录之外的位置。");
+            if (target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || string.Equals(target, root, StringComparison.OrdinalIgnoreCase)) throw new IOException(L.T("S152C1C01926F"));
             Directory.CreateDirectory(staging);
             var paths = Snapshot.Media.Select(m => m.Path).Append("project.json").ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var folder in new[] { "events", "assets" }) {

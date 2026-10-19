@@ -6,12 +6,12 @@ namespace FrameTrail.App;
 internal sealed class ProjectFolderPicker : IDisposable
 {
     private readonly IFileDialog dialog;
-    internal ProjectFolderPicker(string initialDirectory, string title = "打开 FrameTrail 项目", string confirm = "打开项目")
+    internal ProjectFolderPicker(string initialDirectory, string? title = null, string? confirm = null)
     {
         dialog = (IFileDialog)Activator.CreateInstance(Type.GetTypeFromCLSID(new("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7"), true)!)!;
         try {
             dialog.GetOptions(out uint options); dialog.SetOptions(options | 0x20 | 0x40 | 0x800 | 0x8);
-            dialog.SetTitle(title); dialog.SetOkButtonLabel(confirm);
+            dialog.SetTitle(title ?? L.T("SB1D9D9BA59FD")); dialog.SetOkButtonLabel(confirm ?? L.T("SC565A6AA55BD"));
             var iid = typeof(IShellItem).GUID;
             SHCreateItemFromParsingName(Path.GetFullPath(initialDirectory), 0, ref iid, out var folder);
             try { dialog.SetFolder(folder); } finally { Marshal.FinalReleaseComObject(folder); }
@@ -29,7 +29,7 @@ internal sealed class ProjectFolderPicker : IDisposable
     private static string FilePath(IShellItem item)
     {
         item.GetDisplayName(0x80058000, out var text);
-        try { return Marshal.PtrToStringUni(text) ?? throw new IOException("无法读取选择的文件夹。"); }
+        try { return Marshal.PtrToStringUni(text) ?? throw new IOException(L.T("SE7D4665EE08B")); }
         finally { Marshal.FreeCoTaskMem(text); }
     }
     public void Dispose() => Marshal.FinalReleaseComObject(dialog);

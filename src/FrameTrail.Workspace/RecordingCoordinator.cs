@@ -221,7 +221,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
         var checkpoint = MakeSnapshot();
         if (workspace!.Snapshot is null && presetLibrary is not null) {
             try { var library = presetLibrary(); var catalog = await library.ListAsync(); if (catalog.DefaultId is string id) checkpoint = await library.ApplyAsync(id, checkpoint, workspace.DirectoryPath); }
-            catch (Exception error) { AddWarning("默认场景预设未应用，录制素材已保留：" + error.Message); }
+            catch (Exception error) { AddWarning(L.T("SDB4C03498049") + error.Message); }
         }
         if (plan!.AutomaticZoom && plan.RecordPointer && plan.Android is null && media.Any(m => m.Kind == MediaKind.PointerEvents))
         {
@@ -234,7 +234,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             catch (Exception error) when (error is IOException or JsonException or EngineException or ProjectFormatException or InvalidOperationException or FormatException or OverflowException or KeyNotFoundException)
             {
                 // Camera planning is optional; it must never discard finalized media.
-                AddWarning("自动缩放生成失败，已保留录制素材和此前的运镜：" + error.Message);
+                AddWarning(L.T("S542AA18A92E5") + error.Message);
             }
         }
         await workspace!.SaveAsync(checkpoint, workspace.SessionEpoch);

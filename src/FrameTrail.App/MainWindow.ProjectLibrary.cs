@@ -10,8 +10,8 @@ public sealed partial class MainWindow
     {
         try { ShowProjectLibrary([projectLocations.OpenDirectory(), projectLocations.OpenDirectory((opened ?? coordinator.Workspace)?.DirectoryPath)]); }
         catch (Exception error) {
-            if (editorWindow is { } editor) editor.ReportProjectError("无法打开项目列表", error.Message);
-            else ShowFeedback("无法打开项目列表", error.Message);
+            if (editorWindow is { } editor) editor.ReportProjectError(L.T("S2C98114B60E1"), error.Message);
+            else ShowFeedback(L.T("S2C98114B60E1"), error.Message);
         }
     }
     private void ShowProjectLibrary(IEnumerable<string> folders)
@@ -40,7 +40,7 @@ public sealed partial class MainWindow
     }
     private async Task RunLibraryActionAsync(Func<Task> action)
     {
-        if (busy || closing) throw new InvalidOperationException("请等待当前操作完成，再打开或删除项目。");
+        if (busy || closing) throw new InvalidOperationException(L.T("SAC9B8D0E046B"));
         busy = true; ApplyInteraction();
         try { await action(); }
         finally { busy = false; ApplyInteraction(); }

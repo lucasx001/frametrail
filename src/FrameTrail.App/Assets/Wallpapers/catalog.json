@@ -1,0 +1,152 @@
+{
+  "repository": "https://github.com/siddharthvaddem/openscreen",
+  "revision": "ca8104c279da0d4b4481ec992ff103949e22c772",
+  "path": "public/wallpapers",
+  "license": "Licenses/openscreen-MIT.txt",
+  "wallpapers": [
+    {
+      "Number": 1,
+      "File": "wallpaper1.jpg",
+      "Width": 5724,
+      "Height": 3816,
+      "Bytes": 270053,
+      "Sha256": "ec485016bf4ea260e24f2e421e93a67e94f3a65fdaae263d57dd1a6196c604cb"
+    },
+    {
+      "Number": 2,
+      "File": "wallpaper2.jpg",
+      "Width": 2800,
+      "Height": 2800,
+      "Bytes": 537226,
+      "Sha256": "0a841d3d70b0282706abc764e40fb19b1468c39adc8b1b7a7390d279ac899c06"
+    },
+    {
+      "Number": 3,
+      "File": "wallpaper3.jpg",
+      "Width": 4096,
+      "Height": 2304,
+      "Bytes": 3268347,
+      "Sha256": "4f6e598ceb3298aa4818be3ffaa5a0c3683dbf78de9239eb27573ff47a1865ce"
+    },
+    {
+      "Number": 4,
+      "File": "wallpaper4.jpg",
+      "Width": 6016,
+      "Height": 6016,
+      "Bytes": 2020470,
+      "Sha256": "27430e2477f30a3438d7a8276b02a16a1d965bc90815c2c5d0bcb8639724f745"
+    },
+    {
+      "Number": 5,
+      "File": "wallpaper5.jpg",
+      "Width": 6016,
+      "Height": 6016,
+      "Bytes": 846662,
+      "Sha256": "7ee5f2f388a8ac4a82db66456c6ba961844aef8c49dee8013b4badb848641c28"
+    },
+    {
+      "Number": 6,
+      "File": "wallpaper6.jpg",
+      "Width": 6016,
+      "Height": 6016,
+      "Bytes": 536327,
+      "Sha256": "01d37ecb3d562218a95666976b10b78adb8077500f3bfd02c6a7f7f56d9536a4"
+    },
+    {
+      "Number": 7,
+      "File": "wallpaper7.jpg",
+      "Width": 6016,
+      "Height": 6016,
+      "Bytes": 551305,
+      "Sha256": "6c2feb8bd2194a26b63dbbe28ee89863eb8cf7df289af41a2a7776230ad6e3b0"
+    },
+    {
+      "Number": 8,
+      "File": "wallpaper8.jpg",
+      "Width": 7680,
+      "Height": 7680,
+      "Bytes": 918422,
+      "Sha256": "5347a55ed9886a3256c00977e19a9711e53f473489794a6e3582697c4fe00b53"
+    },
+    {
+      "Number": 9,
+      "File": "wallpaper9.jpg",
+      "Width": 6016,
+      "Height": 6016,
+      "Bytes": 2170681,
+      "Sha256": "dabbfd53bf38cac7decdd581aa631600a4beedf44f72f09ae58fe0da1474c8d8"
+    },
+    {
+      "Number": 10,
+      "File": "wallpaper10.jpg",
+      "Width": 6016,
+      "Height": 6016,
+      "Bytes": 4367517,
+      "Sha256": "25308596f511b3961cab82aea08ccc4e8118ad7877951526f7b710ed317eb407"
+    },
+    {
+      "Number": 11,
+      "File": "wallpaper11.jpg",
+      "Width": 4096,
+      "Height": 2264,
+      "Bytes": 533457,
+      "Sha256": "46b2cca0feedbf4befc27f86efc4fce89dbb96b632c428cab7eee8d8030bf49b"
+    },
+    {
+      "Number": 12,
+      "File": "wallpaper12.jpg",
+      "Width": 4096,
+      "Height": 2262,
+      "Bytes": 573883,
+      "Sha256": "a6ba927c51e99cec2fe8f52a0a2c86506de3aa0913337d32d3337d6ad8deb88d"
+    },
+    {
+      "Number": 13,
+      "File": "wallpaper13.jpg",
+      "Width": 4717,
+      "Height": 2984,
+      "Bytes": 1032442,
+      "Sha256": "acbd8dfcd13f12e9bd94b66f9137f648dae2060da4bcf5c50a263c2f611e54c6"
+    },
+    {
+      "Number": 14,
+      "File": "wallpaper14.jpg",
+      "Width": 6016,
+      "Height": 3889,
+      "Bytes": 1196578,
+      "Sha256": "a3673378198c5e3b876350cc6d142cf34298d5fcb09ceb761dcfc29371aab804"
+    },
+    {
+      "Number": 15,
+      "File": "wallpaper15.jpg",
+      "Width": 6016,
+      "Height": 3900,
+      "Bytes": 240087,
+      "Sha256": "6710bc09f05d9011839afc901615d929dce578a55cdc719d6c7d1d7581bf576c"
+    },
+    {
+      "Number": 16,
+      "File": "wallpaper16.jpg",
+      "Width": 6016,
+      "Height": 3900,
+      "Bytes": 2150877,
+      "Sha256": "0ac67fe3f4dc5fe9a72040b84fd34853197938f299612a1a8307df979b5df4b3"
+    },
+    {
+      "Number": 17,
+      "File": "wallpaper17.jpg",
+      "Width": 6016,
+      "Height": 3900,
+      "Bytes": 3115670,
+      "Sha256": "9b7ace008eeb763fa43cc9fe694bc7b6831dc7f7389d0a9738d41e5eb293e06b"
+    },
+    {
+      "Number": 18,
+      "File": "wallpaper18.jpg",
+      "Width": 6016,
+      "Height": 3900,
+      "Bytes": 507531,
+      "Sha256": "1795862cad3c50047e4baf6c076909b97c0990a47f8662082671496bdd003e22"
+    }
+  ]
+}

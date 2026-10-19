@@ -11,7 +11,7 @@ namespace FrameTrail.Workspace;
 public sealed record AndroidDevice(string Serial, string State, string Model, string TransportId, string Usb)
 {
     public bool Ready => State == "device";
-    public string DisplayName => $"{Model} · {State switch { "device" => "已连接", "unauthorized" => "请在手机上授权", "offline" => "设备离线", _ => State }} · {Identity}";
+    public string DisplayName => L.T("S21CA73AA7256", Model, State switch { "device" => L.T("S5BE0323E8ADC"), "unauthorized" => L.T("SBD29B6148512"), "offline" => L.T("S6E1E714DF035"), _ => State }, Identity);
     public string Identity => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Serial)))[..8];
     public override string ToString() => DisplayName;
 }
@@ -149,11 +149,11 @@ public sealed class AndroidConnection : IAsyncDisposable
     {
         var devices = await runtime.DevicesAsync(token);
         var actual = devices.SingleOrDefault(d => d.Serial == selection.Device.Serial && d.TransportId == selection.Device.TransportId && d.Usb == selection.Device.Usb);
-        if (actual is null || !actual.Ready) throw new IOException("手机连接已变化，请刷新设备并在手机端允许 USB 调试。");
+        if (actual is null || !actual.Ready) throw new IOException(L.T("S055724288586"));
         var api = (await runtime.RunAsync(Target.Concat(new[] { "shell", "getprop", "ro.build.version.sdk" }), token)).Trim();
-        if (!int.TryParse(api, out var level) || level < 21) throw new IOException("手机视频录制需要 Android 5.0 或更新版本。");
+        if (!int.TryParse(api, out var level) || level < 21) throw new IOException(L.T("SFD10917D8983"));
         ApiLevel = level;
-        if (selection.InternalAudio && level < 30 && !selection.ContinueWithoutAudio) throw new IOException("手机内部音频需要 Android 11 或更新版本，可选择无声录制。");
+        if (selection.InternalAudio && level < 30 && !selection.ContinueWithoutAudio) throw new IOException(L.T("SFFC9010C9080"));
         uploadAttempted = true;
         await runtime.RunAsync(Target.Concat(new[] { "push", runtime.ServerPath, Jar }), token);
         var forwarded = (await runtime.RunAsync(Target.Concat(new[] { "forward", "tcp:0", "localabstract:scrcpy_" + scid }), token)).Trim();
@@ -171,12 +171,12 @@ public sealed class AndroidConnection : IAsyncDisposable
         while (true) {
             token.ThrowIfCancellationRequested(); var status = Capture.Status;
             if (status.State == 3) throw new IOException(status.Message);
-            if (server.HasExited) throw new IOException("手机采集服务已退出，请解锁手机并重新连接。");
+            if (server.HasExited) throw new IOException(L.T("SDACAE6A024B0"));
             if (status.State == 2 && (!audio || status.AudioState is 1 or 2 or 4)) {
-                if (audio && status.AudioState != 1 && !selection.ContinueWithoutAudio) throw new IOException("手机内部音频不可用。请解锁手机或选择无声录制。");
+                if (audio && status.AudioState != 1 && !selection.ContinueWithoutAudio) throw new IOException(L.T("SD1FAF236D145"));
                 break;
             }
-            if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromSeconds(20)) throw new TimeoutException("手机采集未准备好，请解锁手机并检查 USB 调试授权。");
+            if (Stopwatch.GetElapsedTime(started) > TimeSpan.FromSeconds(20)) throw new TimeoutException(L.T("S889678111935"));
             await Task.Delay(30, token);
         }
     }

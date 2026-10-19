@@ -16,12 +16,27 @@ FrameScene.swift and SharedFrameRenderer.swift at that same revision. The ports 
 `EditorMockupTurntable.cs`, `EditorMockupKnob.cs`, `EditorWindow.Mockups.cs`,
 `FrameStyles.cs`, `core/include/frametrail/core/mockup.hpp` and `media/mockup.cpp`.
 
+Some English UI translations in `FrameTrail.Domain/Resources/en.json` are adapted
+from DogSC's `Resources/en.lproj/Localizable.strings` at the same revision.
+
 Copyright (c) 2026 神烦老狗. Distributed under the MIT License.
 The complete original notice is retained in [dogsc-MIT.txt](docs/licenses/dogsc-MIT.txt).
 
 FrameTrail uses its own project schema, Windows UI, scene evaluator and GPU
 renderer. No DogSC media, wallpaper collection or Swift runtime is bundled by
 the M3 effects implementation.
+
+## OpenScreen wallpapers
+
+The 18 JPEG backgrounds in `src/FrameTrail.App/Assets/Wallpapers/` are copied
+unchanged from `public/wallpapers/` in
+[siddharthvaddem/openscreen](https://github.com/siddharthvaddem/openscreen/tree/ca8104c279da0d4b4481ec992ff103949e22c772/public/wallpapers),
+revision `ca8104c279da0d4b4481ec992ff103949e22c772`. The upstream repository
+includes the MIT License, copyright (c) 2025 Siddharth Vaddem; the complete
+notice is retained in [openscreen-MIT.txt](docs/licenses/openscreen-MIT.txt)
+and distributed as `Licenses/openscreen-MIT.txt`. `catalog.json` records the
+source revision, original dimensions and SHA-256 of each file. The editor
+decodes small thumbnails and copies the selected original into the project.
 
 ## Android USB runtime (M5)
 

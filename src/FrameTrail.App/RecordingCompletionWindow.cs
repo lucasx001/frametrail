@@ -12,13 +12,13 @@ internal sealed class RecordingCompletionWindow : Window
     private readonly Grid root;
     private readonly Image preview = new() { Stretch = Stretch.UniformToFill };
     private readonly TextBlock notice = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-    private readonly TextBlock fallback = new() { Text = "正在读取录制画面…", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock fallback = new() { Text = L.T("SB8B39D354A52"), FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
     private readonly Action finished;
     private bool closed;
 
     internal RecordingCompletionWindow(string directory, ProjectSnapshot snapshot, Action finished, Action? edit = null)
     {
-        this.finished = finished; Title = "FrameTrail · 录制完成";
+        this.finished = finished; Title = L.T("SAFEC21C58586");
         var column = new StackPanel { Padding = new Thickness(8), Width = 336 };
         root = new Grid { CornerRadius = new CornerRadius(28), RequestedTheme = EditorAppearance.Current }; root.Children.Add(column); Content = root;
         void SetAppearance(ElementTheme theme) => root.RequestedTheme = theme;
@@ -31,17 +31,17 @@ internal sealed class RecordingCompletionWindow : Window
         var badge = new Border { Child = metadata, CornerRadius = new CornerRadius(12), Padding = new Thickness(8, 4, 8, 4), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(10) };
         media.Children.Add(badge);
         var close = new Button { Content = new RecorderGlyph { Kind = "Close", Width = 10, Height = 10 }, Width = 26, Height = 26, Margin = new Thickness(10), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Style = (Style)Application.Current.Resources["RecorderIconButton"] };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(close, "关闭录制结果"); close.Click += (_, _) => Finish(); media.Children.Add(close); column.Children.Add(media);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(close, L.T("SDE7B10E3CDEF")); close.Click += (_, _) => Finish(); media.Children.Add(close); column.Children.Add(media);
         var title = new TextBlock { Text = Path.GetFileNameWithoutExtension(directory), FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"], FontSize = 14, MaxWidth = 270, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
         var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(10, 14, 10, 0) };
         var check = new RecorderGlyph { Kind = "Check", Width = 14, Height = 14 }; titleRow.Children.Add(check); titleRow.Children.Add(title); column.Children.Add(titleRow);
-        var saved = new TextBlock { Text = $"项目已保存 · {snapshot.Segments.Count} 个片段 · {snapshot.Markers.Count} 个标记", FontSize = 11, Margin = new Thickness(10, 6, 10, 0), Opacity = 0.56 }; column.Children.Add(saved);
+        var saved = new TextBlock { Text = L.T("S09AC85DD9C11", snapshot.Segments.Count, snapshot.Markers.Count), FontSize = 11, Margin = new Thickness(10, 6, 10, 0), Opacity = 0.56 }; column.Children.Add(saved);
         notice.Margin = new Thickness(10, 8, 10, 0); column.Children.Add(notice);
         var buttons = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 14, 0, 0), Height = 44 };
         buttons.ColumnDefinitions.Add(new ColumnDefinition()); buttons.ColumnDefinitions.Add(new ColumnDefinition());
-        var again = new Button { Content = "继续录制", Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
+        var again = new Button { Content = L.T("S377F85C59DC4"), Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
         again.Click += (_, _) => Finish(); buttons.Children.Add(again);
-        var open = new Button { Content = edit is null ? "查看素材  →" : "开始编辑  →", Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
+        var open = new Button { Content = edit is null ? L.T("S13B1B6FE3F5C") : L.T("SE0B7815E2DB5"), Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
         open.Click += (_, _) => { try { if (edit is not null) edit(); else Process.Start(new ProcessStartInfo("explorer.exe", directory) { UseShellExecute = true }); } catch (Exception error) { SetNotice(error.Message); } };
         Grid.SetColumn(open, 1); buttons.Children.Add(open); column.Children.Add(buttons);
         void Theme()
@@ -54,7 +54,7 @@ internal sealed class RecordingCompletionWindow : Window
         Theme(); root.ActualThemeChanged += (_, _) => Theme();
         root.Loaded += async (_, _) =>
         {
-            if (screen is null) { fallback.Text = "预览暂不可用"; return; }
+            if (screen is null) { fallback.Text = L.T("S899E00EE93FA"); return; }
             try
             {
                 var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(Path.Combine(directory, screen.Path.Replace('/', Path.DirectorySeparatorChar)));
@@ -64,7 +64,7 @@ internal sealed class RecordingCompletionWindow : Window
                 if (closed) return;
                 var bitmap = new BitmapImage(); await bitmap.SetSourceAsync(thumbnail); preview.Source = bitmap; fallback.Visibility = Visibility.Collapsed;
             }
-            catch { if (!closed) fallback.Text = "预览暂不可用 · 源素材已保存"; }
+            catch { if (!closed) fallback.Text = L.T("S17FB8B89658E"); }
         };
         Closed += (_, _) => closed = true;
         RecorderWindowChrome.Configure(this, 336, 316, 28);

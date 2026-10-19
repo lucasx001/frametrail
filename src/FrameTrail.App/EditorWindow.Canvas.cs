@@ -32,7 +32,7 @@ public sealed partial class EditorWindow
                     canvasPending=editor.PreviewCommand(new {op="effectUpsert",effectId=id,effect=effect with {Parameters=JsonSerializer.SerializeToElement(p)}});
                 }
                 if(canvasRenderWork.IsCompleted)canvasRenderWork=RenderCanvasDraftsAsync();
-            } catch(Exception error){canvasOverlay.Finish(false);ShowNotice("无法调整画布对象",error.Message);}
+            } catch(Exception error){canvasOverlay.Finish(false);ShowNotice(L.T("S5052355CD087"),error.Message);}
         };
         canvasOverlay.Ended += commit => { if(canvasTransaction)canvasCommitWork=CommitCanvasAsync(commit); };
         PreviewMount.SizeChanged += (_,_)=>QueueCanvasGeometry();
@@ -45,7 +45,7 @@ public sealed partial class EditorWindow
     {
         try { while(canvasPending is { } p){canvasPending=null;await preview.UpdateProjectAsync(CanvasDisplay(p),position);} }
         catch(OperationCanceledException) { }
-        catch(Exception error){ShowNotice("画布预览未完成",error.Message);}
+        catch(Exception error){ShowNotice(L.T("SB790B24B1EF2"),error.Message);}
     }
     private async Task CommitCanvasAsync(bool commit)
     {
@@ -55,18 +55,18 @@ public sealed partial class EditorWindow
             if(commit)await editor.CommitTransactionAsync();else editor.CancelTransaction();canvasTransaction=false;
             await UpdateEditedProjectAsync(before,null);
             if(cropEditing)await preview.UpdateProjectAsync(CanvasDisplay(editor.Snapshot),position);
-        } catch(Exception error){editor.CancelTransaction();canvasTransaction=false;ShowNotice("画布修改未完成",error.Message);}
+        } catch(Exception error){editor.CancelTransaction();canvasTransaction=false;ShowNotice(L.T("S4551264BF6C0"),error.Message);}
         finally {working=false;timeline.EditingEnabled=true;UpdateState();QueueCanvasGeometry();}
     }
     private async void QueueCanvasGeometry()
     {
         int request=++geometryRequest;
         if(!ready||closing||canvasOverlay.Dragging||canvasTransaction)return;
-        if(playing||working||editor.IsExporting||visualPending||visualTransaction){canvasOverlay.SetItems([]);return;}
+        if(playing||hoverOrigin is not null||working||editor.IsExporting||visualPending||visualTransaction){canvasOverlay.SetItems([]);return;}
         try {
             var media=preview.Session;if(media is null)return;
             var items=await Task.Run(()=>media.EditGeometry(position,cropEditing));
-            if(request!=geometryRequest||closing||canvasOverlay.Dragging||working)return;
+            if(request!=geometryRequest||closing||canvasOverlay.Dragging||working||playing||hoverOrigin is not null)return;
             if(cropEditing && items.FirstOrDefault() is { } item){
                 var r=editor.Snapshot.Editor?.Crop??new NormalizedRect();var plane=new CanvasPlane(item.Base);
                 var q=new[]{plane.Map(r.X,r.Y),plane.Map(r.X+r.Width,r.Y),plane.Map(r.X+r.Width,r.Y+r.Height),plane.Map(r.X,r.Y+r.Height)};
@@ -83,6 +83,6 @@ public sealed partial class EditorWindow
         Pause();canvasOverlay.Finish(true);await canvasCommitWork;await FlushVisualChangesAsync();await FlushPictureInputsAsync();
         cropEditing=!cropEditing;ShowInspector(0);SetFramePage(true);
         await preview.UpdateProjectAsync(CanvasDisplay(editor.Snapshot),position);QueueCanvasGeometry();
-        if(cropEditing)ShowNotice("拖动画面裁切框", "拖动边角调整裁切范围，拖动框内移动。再次点击裁切或按 Esc 返回成片预览。");
+        if(cropEditing)ShowNotice(L.T("SE7D42554517B"), L.T("S501FEAF4E526"));
     }
 }

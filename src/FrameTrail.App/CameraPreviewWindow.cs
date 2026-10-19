@@ -12,8 +12,9 @@ internal sealed class CameraPreviewWindow : Window
 {
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
     private readonly Image picture = new() { Stretch = Stretch.Uniform };
-    private readonly TextBlock status = new() { Text = "正在连接摄像头…", TextWrapping = TextWrapping.Wrap };
-    private readonly CheckBox mirror = new() { Content = "镜像预览", IsChecked = true };
+    private readonly TextBlock status = new() { Text = L.T("S84539A1C1AB0"), TextWrapping = TextWrapping.Wrap };
+    private readonly CheckBox mirror = new() { Content = L.T("SDEC5F943BECC"), IsChecked = true };
+    private readonly HyperlinkButton permissions=new(){Content=L.T("SB4763A13DAEA"),NavigateUri=new Uri("ms-settings:privacy-webcam"),Visibility=Visibility.Collapsed};
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer timer;
     private readonly SemaphoreSlim gate = new(1);
     private CameraPreviewSession? session;
@@ -23,12 +24,13 @@ internal sealed class CameraPreviewWindow : Window
     private int displayedFrames;
     internal CameraPreviewWindow()
     {
-        Title = "FrameTrail · 摄像头预览"; AppIcon.Apply(this);
+        Title = L.T("S6A32148E5AB1"); AppIcon.Apply(this);
         var root = new Grid { Padding = new Thickness(14), RowSpacing = 10, Background = RecorderTheme.Brush(new Grid(), "RecorderBase") };
         root.RowDefinitions.Add(new RowDefinition()); root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.Children.Add(picture); Grid.SetRow(mirror, 1); root.Children.Add(mirror);
         var details = new StackPanel { Spacing = 5 }; details.Children.Add(status);
-        details.Children.Add(new TextBlock { Text = "镜像仅影响此处预览，原始录制保持原方向。成片镜像在编辑器摄像头设置中调整。", FontSize = 11, TextWrapping = TextWrapping.Wrap });
+        details.Children.Add(permissions);
+        details.Children.Add(new TextBlock { Text = L.T("S5BABD446561D"), FontSize = 11, TextWrapping = TextWrapping.Wrap });
         Grid.SetRow(details, 2); root.Children.Add(details); Content = root;
         AppWindow.Resize(new Windows.Graphics.SizeInt32(440, 380));
         SetWindowDisplayAffinity(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x11);
@@ -44,13 +46,13 @@ internal sealed class CameraPreviewWindow : Window
         try {
             timer.Stop(); if (session is not null) { var old = session; session = null; await Task.Run(old.Dispose); }
             if (closed) return;
-            status.Text = "正在连接摄像头…";
+            status.Text = L.T("S84539A1C1AB0");permissions.Visibility=Visibility.Collapsed;
             var created = await Task.Run(() => CameraPreviewSession.Start(device, format));
             if (closed) { await Task.Run(created.Dispose); return; }
             session = created; pixels = new byte[checked((int)(format.Width * format.Height * 4))];
             bitmap = new WriteableBitmap((int)format.Width, (int)format.Height); picture.Source = bitmap;
             status.Text = device.Name; timer.Start();
-        } catch (Exception error) { status.Text = "摄像头不可用，请检查设备连接和 Windows 摄像头权限。\n" + error.Message; }
+        } catch (Exception error) { status.Text = L.T("S5A304E397727") + error.Message; permissions.Visibility=Visibility.Visible; }
         finally { gate.Release(); }
     }
     private async Task ReadAsync()
@@ -61,7 +63,7 @@ internal sealed class CameraPreviewWindow : Window
             if (await Task.Run(() => current.CopyFrame(pixels)) && !closed) {
                 using var output = bitmap.PixelBuffer.AsStream(); await output.WriteAsync(pixels); bitmap.Invalidate();displayedFrames++;
             }
-        } catch { timer.Stop(); status.Text = "摄像头已断开或格式发生变化。重新选择设备后可重试。"; }
+        } catch { timer.Stop(); status.Text = L.T("S58F3BF87AAEC"); permissions.Visibility=Visibility.Visible; }
         finally { reading = false; gate.Release(); }
     }
     internal async Task StopAsync()

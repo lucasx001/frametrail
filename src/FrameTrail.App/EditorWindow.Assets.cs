@@ -64,9 +64,9 @@ public sealed partial class EditorWindow
             var cache = mediaCache!; string path = cache.FilePath(key, "peaks.json"); float[]? peaks = null;
             cache.Pin(path); pinned = path;
             async Task<float[]> ReadPeaksAsync() {
-                if (new FileInfo(path).Length > 1024 * 1024) throw new IOException("声音波形缓存过大。");
+                if (new FileInfo(path).Length > 1024 * 1024) throw new IOException(L.T("SF33B2C16A362"));
                 var data=JsonSerializer.Deserialize<float[]>(await File.ReadAllTextAsync(path,token));
-                if(data is null || data.Length is 0 or > 24000 || data.Any(p=>!float.IsFinite(p)||p<0||p>1))throw new IOException("声音波形缓存无效。");
+                if(data is null || data.Length is 0 or > 24000 || data.Any(p=>!float.IsFinite(p)||p<0||p>1))throw new IOException(L.T("S62448511B275"));
                 return data;
             }
             if(cache.Use(path)) {try {peaks=await ReadPeaksAsync();}catch(Exception error) when(error is IOException or JsonException) { }}
@@ -78,7 +78,7 @@ public sealed partial class EditorWindow
                 while (!job.IsCompleted) {
                     var status = media.Status;
                     int percent = status.Total == 0 ? 0 : (int)(100.0 * status.Completed / status.Total);
-                    DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) AudioPreparationLabel.Text = $"声音波形 {percent}% · 可立即播放"; });
+                    DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) AudioPreparationLabel.Text = L.T("S57624B8AA29E", percent); });
                     await Task.WhenAny(job, Task.Delay(250));
                 }
                 await job; token.ThrowIfCancellationRequested(); File.Move(partial, path, true);
@@ -88,7 +88,7 @@ public sealed partial class EditorWindow
             DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { preparedAudio = path; timeline.SetWaveform(peaks); AudioPreparationLabel.Text = ""; UpdateState(); } });
             cache.Trim();
         } catch (OperationCanceledException) { }
-        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { AudioPreparationLabel.Text = "声音波形未完成 · 可继续播放"; ShowNotice("声音波形准备未完成", error.Message, Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning); } }); }
+        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) { AudioPreparationLabel.Text = L.T("S232C31FF306B"); ShowNotice(L.T("SD34B24A33A32"), error.Message, Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning); } }); }
         finally { mediaCache?.Unpin(pinned); if (partial is not null) { mediaCache!.Unpin(partial); try { File.Delete(partial); } catch (IOException) { } } }
     }
     private async Task BuildThumbnailsAsync(ProjectSnapshot snapshot, Channel<long> requests, CancellationToken token)
@@ -125,6 +125,6 @@ public sealed partial class EditorWindow
                 }
             }
         } catch (OperationCanceledException) { }
-        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) ShowNotice("缩略图准备未完成", error.Message, Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning); }); }
+        catch (Exception error) { DispatcherQueue.TryEnqueue(() => { if (!token.IsCancellationRequested) ShowNotice(L.T("SDB9B0D95B298"), error.Message, Microsoft.UI.Xaml.Controls.InfoBarSeverity.Warning); }); }
     }
 }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using FrameTrail.Domain;
 using FrameTrail.Interop;
 
@@ -16,7 +17,14 @@ public static class VisualResources
 }
 public sealed partial class EditorSession
 {
-    public async Task<string> ImportVisualAsync(string source, bool video, CancellationToken cancellationToken = default)
+    public Task<string> ImportVisualAsync(string source, bool video, CancellationToken cancellationToken = default) =>
+        ImportVisualCoreAsync(source, video, false, cancellationToken);
+
+    // Keep bundled backgrounds in the project so reopening and export never depend on the installation.
+    public Task<string> ImportWallpaperAsync(string source, CancellationToken cancellationToken = default) =>
+        ImportVisualCoreAsync(source, false, true, cancellationToken);
+
+    private async Task<string> ImportVisualCoreAsync(string source, bool video, bool reuse, CancellationToken cancellationToken)
     {
         await gate.WaitAsync(cancellationToken);
         string? created = null;
@@ -24,11 +32,20 @@ public sealed partial class EditorSession
         {
             EnsureEditable();
             var extension = Path.GetExtension(source).ToLowerInvariant();
-            if (!(video ? new[] { ".mp4", ".mov", ".m4v" } : new[] { ".png", ".jpg", ".jpeg", ".bmp" }).Contains(extension)) throw new IOException("请选择支持的图片或视频格式。");
+            if (!(video ? new[] { ".mp4", ".mov", ".m4v" } : new[] { ".png", ".jpg", ".jpeg", ".bmp" }).Contains(extension)) throw new IOException(L.T("SB0C847A65D31"));
             var inputInfo = new FileInfo(source);
-            if (inputInfo.Length <= 0 || inputInfo.Length > (video ? 2L * 1024 * 1024 * 1024 : 32L * 1024 * 1024)) throw new IOException("图片需小于 32 MB，背景视频需小于 2 GB。");
-            var relative = "assets/" + Guid.NewGuid().ToString("N") + extension; created = workspace.Resolve(relative); Directory.CreateDirectory(Path.GetDirectoryName(created)!);
-            await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous))
+            if (inputInfo.Length <= 0 || inputInfo.Length > (video ? 2L * 1024 * 1024 * 1024 : 32L * 1024 * 1024)) throw new IOException(L.T("S1B19EF3E70E4"));
+            await using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous);
+            string? hash = reuse ? Convert.ToHexString(await SHA256.HashDataAsync(input, cancellationToken)).ToLowerInvariant() : null;
+            input.Position = 0;
+            var relative = "assets/" + (reuse ? "wallpaper-" + hash : Guid.NewGuid().ToString("N")) + extension;
+            var destination = workspace.Resolve(relative);
+            if (reuse && File.Exists(destination)) {
+                await using var existing = File.OpenRead(destination);
+                if (Convert.ToHexString(await SHA256.HashDataAsync(existing, cancellationToken)).Equals(hash, StringComparison.OrdinalIgnoreCase)) return relative;
+                throw new IOException(L.T("WallpaperAssetChanged"));
+            }
+            created = destination; Directory.CreateDirectory(Path.GetDirectoryName(created)!);
             await using (var output = new FileStream(created, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
                 await input.CopyToAsync(output, cancellationToken);
             await Task.Run(() => MediaSession.ProbeVisual(created, video), cancellationToken);
@@ -38,6 +55,27 @@ public sealed partial class EditorSession
     }
     public Task UpsertEffectAsync(SourceEffect effect) => ExecuteAsync(new { op = "effectUpsert", effectId = effect.Id, effect });
     public Task DeleteEffectAsync(string id) => ExecuteAsync(new { op = "effectDelete", effectId = id });
+    public async Task PasteEffectAttributesAsync(SourceEffect source, string targetId)
+    {
+        await gate.WaitAsync();
+        try {
+            EnsureEditable();
+            if (transaction is not null) throw new InvalidOperationException(L.T("SFF8CA4F44F59"));
+            var target = Snapshot.Effects.SingleOrDefault(e => e.Id == targetId) ?? throw new ArgumentException(L.T("SelectTargetEffect"));
+            if (target.Kind != source.Kind) throw new ArgumentException(L.T("SelectCompatibleEffect"));
+            var properties = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(source.Parameters.GetRawText())!;
+            // Source tracks and sticker content belong to the target, not its style.
+            foreach (var key in new[] { "path", "text", "layer", "focusPoints", "target" }) {
+                properties.Remove(key);
+                if (target.Parameters.TryGetProperty(key, out var value)) properties[key] = value.Clone();
+            }
+            properties["origin"] = JsonSerializer.SerializeToElement("manual");
+            var effect = target with { Parameters = JsonSerializer.SerializeToElement(properties) };
+            if (effect.Parameters.GetRawText() == target.Parameters.GetRawText()) return;
+            var candidate = EngineSession.Edit(Snapshot, new { op = "effectUpsert", effectId = targetId, effect });
+            Push(undo, Snapshot); redo.Clear(); await AcceptAsync(candidate);
+        } finally { gate.Release(); }
+    }
     public Task PasteEffectAsync(SourceEffect effect, long sourceTicks)
     {
         var duration = Math.Min(VisualResources.Ticks(effect.SourceDuration), VisualResources.Ticks(Snapshot.SourceDuration) - sourceTicks);
@@ -78,10 +116,10 @@ public sealed partial class EditorSession
     public async Task LoadVisualPresetAsync()
     {
         var path = workspace.Resolve("assets/presets/saved.json");
-        if (new FileInfo(path).Length > ProjectJson.MaximumJsonBytes) throw new IOException("预设文件过大。");
+        if (new FileInfo(path).Length > ProjectJson.MaximumJsonBytes) throw new IOException(L.T("S980FE8B29671"));
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(path));
         var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-        var saved = json.RootElement.GetProperty("editor").Deserialize<EditorSettings>(options) ?? throw new IOException("预设缺少画面设置。");
+        var saved = json.RootElement.GetProperty("editor").Deserialize<EditorSettings>(options) ?? throw new IOException(L.T("S2A8DF38D0486"));
         var prior = Snapshot.Editor ?? new();
         var visual = saved with { SystemGain = prior.SystemGain, MicrophoneGain = prior.MicrophoneGain, SystemMuted = prior.SystemMuted, MicrophoneMuted = prior.MicrophoneMuted, ClipAudio = prior.ClipAudio };
         await ExecuteAsync(new { op = "settings", canvas = json.RootElement.GetProperty("canvas"), editor = visual });
@@ -90,7 +128,7 @@ public sealed partial class EditorSession
     {
         await gate.WaitAsync();
         try {
-            EnsureEditable(); if (transaction is not null) throw new InvalidOperationException("请先完成当前拖动。");
+            EnsureEditable(); if (transaction is not null) throw new InvalidOperationException(L.T("SFF8CA4F44F59"));
             var applied = await library.ApplyAsync(id, Snapshot, DirectoryPath);
             var candidate = EngineSession.Edit(Snapshot, new { op = "settings", canvas = applied.Canvas, editor = applied.Editor });
             Push(undo, Snapshot); redo.Clear(); await AcceptAsync(candidate);

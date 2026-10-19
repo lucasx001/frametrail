@@ -19,6 +19,7 @@ public sealed partial class EditorWindow
     private async void Fullscreen_Click(object sender, RoutedEventArgs e) => await SafeAsync(TogglePreviewFullscreenAsync);
     private async void Root_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if(e.Key==VirtualKey.F6&&!previewFullscreen&&!working&&!showingExport){e.Handled=true;if(timeline.HasFocus)InspectorTabs.Children.OfType<Microsoft.UI.Xaml.Controls.Control>().FirstOrDefault(c=>c.IsEnabled)?.Focus(FocusState.Keyboard);else timeline.FocusTimeline(FocusState.Keyboard);return;}
         if (e.Key == VirtualKey.Escape && (canvasOverlay.Dragging || cropEditing)) { e.Handled=true;if(canvasOverlay.Dragging){canvasOverlay.Finish(false);await canvasCommitWork;}else await SafeAsync(ToggleCropEditingAsync);return; }
         if (!previewFullscreen) return;
         if (e.Key is VirtualKey.Escape or VirtualKey.F11) {
@@ -82,8 +83,8 @@ public sealed partial class EditorWindow
         TitleBand.Visibility = EditorBody.Visibility = TimelinePanel.Visibility = fullscreen ? Visibility.Collapsed : Visibility.Visible;
         FullscreenHost.Visibility = fullscreen ? Visibility.Visible : Visibility.Collapsed;
         FullscreenGlyph.Kind = fullscreen ? "ExitFullscreen" : "Fullscreen";
-        AutomationProperties.SetName(FullscreenButton, fullscreen ? "退出全屏" : "全屏预览");
-        FullscreenTip.Content = fullscreen ? "退出全屏 · Esc / F11" : "全屏预览 · F11 / 双击视频";
+        AutomationProperties.SetName(FullscreenButton, fullscreen ? L.T("S0F1505B6AD3F") : L.T("S7C2561288230"));
+        FullscreenTip.Content = fullscreen ? L.T("SADBD1679AB0D") : L.T("S4C1DFCF160BC");
         Root.UpdateLayout(); SizePreview(); Root.UpdateLayout();
         CanvasScroll.ChangeView(fullscreen ? 0 : previewScrollX, fullscreen ? 0 : previewScrollY, null, true);
         FullscreenButton.Focus(FocusState.Programmatic);

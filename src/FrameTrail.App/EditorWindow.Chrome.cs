@@ -20,7 +20,7 @@ public sealed partial class EditorWindow
     private readonly HashSet<NumberBox> changedNumbers = new();
     private readonly HashSet<NumberBox> pictureNumbers = new();
     private bool pictureInputCommitQueued, flushingPictureInputs;
-    private readonly string[] tabLabels = ["画面", "开场", "运镜", "光标", "摄像头", "声音"];
+    private readonly string[] tabLabels = [L.T("SD051DF30A636"), L.T("SFD0D4B7258C2"), L.T("SCFCC288E1D3D"), L.T("S47A75CA0B8FE"), L.T("SFAC308FBABB8"), L.T("S473400815C0F")];
     private readonly string[] tabGlyphs = ["Scene", "Opening", "Zoom", "Cursor", "Camera", "Speaker"];
     private static SolidColorBrush Hex(uint n) => new(Windows.UI.Color.FromArgb(255, (byte)(n >> 16), (byte)(n >> 8), (byte)n));
     private void InitializeChrome()
@@ -62,7 +62,7 @@ public sealed partial class EditorWindow
             if (active) content.Children.Add(new TextBlock { Text = tabLabels[i], FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"], FontSize = 13, Foreground = ink });
             var button = new Button { Style = (Style)Application.Current.Resources["EditorButton"], Content = content, MinWidth = 44, Height = 44, Padding = active ? new Thickness(14, 0, 16, 0) : new Thickness(0), CornerRadius = new CornerRadius(22), Background = active ? (Brush)Application.Current.Resources["EditorBlue"] : new SolidColorBrush(Colors.Transparent) };
             bool available = i != 4 || editor.Snapshot.Media.Any(m => m.Kind == FrameTrail.Domain.MediaKind.Camera);
-            button.IsEnabled = available; ToolTipService.SetToolTip(button, available ? tabLabels[i] : "当前项目没有摄像头素材");
+            button.IsEnabled = available; ToolTipService.SetToolTip(button, available ? tabLabels[i] : L.T("S00C39FE87C1F"));
             AutomationProperties.SetName(button, tabLabels[i]); AutomationProperties.SetAutomationId(button, "editor.inspector." + tabGlyphs[i].ToLowerInvariant());
             button.Click += (_, _) => ShowInspector(index); InspectorTabs.Children.Add(button);
         }
@@ -79,9 +79,10 @@ public sealed partial class EditorWindow
         UnavailableSettings.Visibility = Visibility.Collapsed;
         openingSettings.Visibility = tab == 1 ? Visibility.Visible : Visibility.Collapsed;
         motionSettings.Visibility = tab == 2 ? Visibility.Visible : Visibility.Collapsed;
-        InspectorHeading.Text = tab == 6 ? "片段" : tabLabels[tab];
-        InspectorScope.Text = tab == 6 && SelectedClip is { } c ? $"第 {editor.Timeline.Clips.IndexOf(c) + 1} 段" : tab == 4 ? "全片基础布局" : "全片";
+        InspectorHeading.Text = tab == 6 ? L.T("S908E56FE5ED8") : tabLabels[tab];
+        InspectorScope.Text = tab == 6 && SelectedClip is { } c ? L.T("S85F334543581", editor.Timeline.Clips.IndexOf(c) + 1) : tab == 4 ? L.T("S9B436B8DF494") : L.T("SC78DFFE1E8AB");
         InspectorScroll.ChangeView(null, 0, null, true); DrawInspectorTabs();
+        timeline.SelectVisual(tab==2?selectedEffect:null);
     }
     private void SetFramePage(bool layout)
     {
@@ -178,7 +179,7 @@ public sealed partial class EditorWindow
         if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; UpdateFrameNavigation(); timeline.RefreshAppearance(); }, mediaCache); settingsWindow.Closed += (_, _) => settingsWindow = null; }
         settingsWindow.Activate();
     }
-    private void Snap_Click(object sender, RoutedEventArgs e) { timeline.SnappingEnabled = !timeline.SnappingEnabled; SnapLabel.Text = timeline.SnappingEnabled ? "吸附" : "吸附已关"; SnapButton.Background = timeline.SnappingEnabled ? new SolidColorBrush(Windows.UI.Color.FromArgb(32, 90, 174, 255)) : new SolidColorBrush(Colors.Transparent); }
+    private void Snap_Click(object sender, RoutedEventArgs e) { timeline.SnappingEnabled = !timeline.SnappingEnabled; SnapLabel.Text = timeline.SnappingEnabled ? L.T("S98ABD5C8F638") : L.T("S33751F2542A2"); SnapButton.Background = timeline.SnappingEnabled ? new SolidColorBrush(Windows.UI.Color.FromArgb(32, 90, 174, 255)) : new SolidColorBrush(Colors.Transparent); }
     private void FilmMode_Click(object sender, RoutedEventArgs e) => SetTimelineMode(false);
     private void WaveMode_Click(object sender, RoutedEventArgs e) => SetTimelineMode(true);
     private void SetTimelineMode(bool waveform) { timeline.WaveformMode = waveform; FilmModeButton.Background = waveform ? new SolidColorBrush(Colors.Transparent) : RecorderTheme.Brush(Root, "EditorThumb"); WaveModeButton.Background = waveform ? RecorderTheme.Brush(Root, "EditorThumb") : new SolidColorBrush(Colors.Transparent); }
@@ -188,22 +189,22 @@ public sealed partial class EditorWindow
     private void PreviewOptions_Click(object sender, RoutedEventArgs e)
     {
         var menu = new MenuFlyout();
-        var mute = new ToggleMenuFlyoutItem { Text = "静音预览", IsChecked = previewMuted };
+        var mute = new ToggleMenuFlyoutItem { Text = L.T("S86CEDAE64496"), IsChecked = previewMuted };
         mute.Click += (_, _) => { Pause(); previewMuted = mute.IsChecked; };
         menu.Items.Add(mute);
- foreach (var (label, index) in new[] { ("适合窗口", 0), ("125%", 1), ("150%", 2), ("200%", 3) }) { int choice = index; var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = CanvasZoom.SelectedIndex == choice }; item.Click += (_, _) => CanvasZoom.SelectedIndex = choice; menu.Items.Add(item); }
+ foreach (var (label, index) in new[] { (L.T("SFF6C8048B322"), 0), ("125%", 1), ("150%", 2), ("200%", 3) }) { int choice = index; var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = CanvasZoom.SelectedIndex == choice }; item.Click += (_, _) => CanvasZoom.SelectedIndex = choice; menu.Items.Add(item); }
         menu.Items.Add(new MenuFlyoutSeparator());
-        var qualityMenu = new MenuFlyoutSubItem { Text = "预览清晰度" };
-        foreach (var (label, quality) in new[] { ("4K · 高清预览（默认）", PreviewQuality.UltraHd), ("自动 · 匹配屏幕", PreviewQuality.Automatic) }) {
+        var qualityMenu = new MenuFlyoutSubItem { Text = L.T("S4B350ABAABEA") };
+        foreach (var (label, quality) in new[] { (L.T("S3339E6CC541D"), PreviewQuality.UltraHd), (L.T("S916B0AF69EE3"), PreviewQuality.Automatic) }) {
             var item = new ToggleMenuFlyoutItem { Text = label, IsChecked = preview.Quality == quality };
             item.Click += async (_, _) => {
                 try { await preview.SetQualityAsync(quality, position); }
-                catch (Exception error) { ShowNotice("预览清晰度切换失败", error.Message, InfoBarSeverity.Error); }
+                catch (Exception error) { ShowNotice(L.T("S363E855FD08B"), error.Message, InfoBarSeverity.Error); }
             };
             qualityMenu.Items.Add(item);
         }
         menu.Items.Add(qualityMenu);
-        menu.Items.Add(new MenuFlyoutSeparator()); var reload = new MenuFlyoutItem { Text = "重新加载预览" }; reload.Click += ReloadPreview_Click; menu.Items.Add(reload); menu.ShowAt((FrameworkElement)sender);
+        menu.Items.Add(new MenuFlyoutSeparator()); var reload = new MenuFlyoutItem { Text = L.T("S2B4D78B18E58") }; reload.Click += ReloadPreview_Click; menu.Items.Add(reload); menu.ShowAt((FrameworkElement)sender);
     }
 }
 
