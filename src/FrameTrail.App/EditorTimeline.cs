@@ -11,7 +11,7 @@ using Windows.Foundation;
 namespace FrameTrail.App;
 
 // Only visible clips, ruler marks and waveform buckets become XAML elements.
-internal sealed class EditorTimeline : Grid
+internal sealed partial class EditorTimeline : ContentControl
 {
     private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled };
     private readonly Canvas canvas = new() { Height = 148, Background = new SolidColorBrush(Colors.Transparent) };
@@ -29,6 +29,14 @@ internal sealed class EditorTimeline : Grid
     private float[]? waveform;
     private Dictionary<string, int> clipIndices = new();
     private ResolvedMarker[] markers = Array.Empty<ResolvedMarker>();
+    private TimelineIntervalIndex<ResolvedEffect> effects = new([],e=>e.OutputStart,e=>e.OutputStart+e.OutputDuration);
+    private Dictionary<string,int> effectOrdinals = new();
+    private readonly Dictionary<string,Border> clipViews = new(), effectViews = new();
+    private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer hoverTimer;
+    private long? pendingHover;
+    private bool drawQueued;
+    internal int DrawCount { get; private set; }
+    internal event Action<long?>? Hover;
     private readonly Rectangle playLine = new() { Width = 1, Height = 134, Fill = Brush(255, 69, 59), IsHitTestVisible = false };
     private readonly Border playHandle = new() { Width = 8, Height = 15, CornerRadius = new CornerRadius(4), Background = Brush(255, 69, 59), IsHitTestVisible = false };
     internal event Action<long>? Seek;
@@ -45,16 +53,19 @@ internal sealed class EditorTimeline : Grid
     private bool waveformMode;
     internal bool WaveformMode { get => waveformMode; set { waveformMode = value; Draw(); } }
     internal void RefreshAppearance() => Draw();
-    internal void SelectVisual(string? id) { selectedVisual = id; Draw(); }
+    internal void SelectVisual(string? id) { selectedVisual = id; DescribeSelection(); Draw(); }
     internal int RenderedElementCount => canvas.Children.Count;
     internal EditorTimeline()
     {
-        Children.Add(scroll); scroll.Content = canvas; scroll.ViewChanged += (_, _) => Draw(); SizeChanged += (_, _) => Draw();
+        Content = scroll; HorizontalContentAlignment=HorizontalAlignment.Stretch;VerticalContentAlignment=VerticalAlignment.Stretch;IsTabStop=true; UseSystemFocusVisuals=true; scroll.Content = canvas; scroll.ViewChanged += (_, _) => Draw(); SizeChanged += (_, _) => Draw();
+        hoverTimer=DispatcherQueue.CreateTimer();hoverTimer.Interval=TimeSpan.FromMilliseconds(100);hoverTimer.IsRepeating=false;
+        hoverTimer.Tick+=(_,_)=>Hover?.Invoke(pendingHover);
+        canvas.PointerExited+=(_,_)=>{HideHover();Hover?.Invoke(null);};
         canvas.PointerPressed += Pressed; canvas.PointerMoved += Moved; canvas.PointerReleased += Released;
         canvas.PointerCaptureLost += (_, _) => { if (dragging) Finish(false); };
         ActualThemeChanged += (_, _) => Draw();
     }
-    internal void Set(ResolvedTimeline value, string? selection, long ticks) { timeline = value; selected = selection; playhead = ticks; clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i); markers = value.Markers.OrderBy(m => m.Ticks).ToArray(); canvas.Height = value.Effects.Count > 0 ? 294 : 148; Draw(); }
+    internal void Set(ResolvedTimeline value, string? selection, long ticks) { timeline = value; selected = selection; playhead = ticks; clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i); markers = value.Markers.OrderBy(m => m.Ticks).ToArray(); effects=new(value.Effects,e=>e.OutputStart,e=>e.OutputStart+e.OutputDuration); effectOrdinals=value.Effects.Select((e,i)=>(Key:e.Id+":"+e.OutputStart,Index:i)).ToDictionary(v=>v.Key,v=>v.Index); canvas.Height = value.Effects.Count > 0 ? 294 : 148; DescribeSelection(); Draw(); }
     internal void Position(long ticks) { playhead = ticks; Canvas.SetLeft(playLine, X(playhead)); Canvas.SetLeft(playHandle, X(playhead) - 3.5); }
     internal void SetWaveform(float[]? values) { waveform = values; Draw(); }
     private readonly HashSet<long> staleThumbnails = new();
@@ -67,14 +78,35 @@ internal sealed class EditorTimeline : Grid
         thumbnails[ticks] = new BitmapImage(new Uri(path)) { DecodePixelWidth = 384 }; staleThumbnails.Remove(ticks); Draw();
     }
     internal void CancelDrag() { if (dragging) { Finish(false); canvas.ReleasePointerCaptures(); } }
+    internal void HideHover(){hoverTimer.Stop();pendingHover=null;}
+    internal void Reveal(long ticks)=>scroll.ChangeView(Math.Max(0,X(ticks)-ActualWidth/2),null,null,true);
+    internal bool FocusTimeline(FocusState state)=>Focus(state);
+    internal bool HasFocus {
+        get {for(var current=XamlRoot is null?null:FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;current is not null;current=VisualTreeHelper.GetParent(current))if(current==this)return true;return false;}
+    }
+    private void DescribeSelection()
+    {
+        var effect=timeline?.Effects.FirstOrDefault(e=>e.Id==selectedVisual);
+        string value=effect is not null ? $"{EffectLabel(effect.Kind)} · {TimeSpan.FromTicks(effect.OutputStart):g}" : selected is not null&&clipIndices.TryGetValue(selected,out var index)?L.T("SB0B17D80E7A4", index+1, timeline!.Clips.Count):L.T("SF1241A97B082");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this,value);
+        if(Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(this) is { } peer) peer.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+    }
     private double X(long ticks) => 16 + ticks / 10_000_000.0 * EffectiveScale;
+    private static string EffectLabel(string kind)=>kind switch{"zoom"=>L.T("SB762AEC769A3"),"tilt"=>L.T("S17E14283A497"),"mask"=>L.T("SAC7CE836857B"),"focus"=>L.T("SED19BD5E2620"),"intro"=>L.T("SFD0D4B7258C2"),_=>L.T("S622DA0460277")};
     private double EffectiveScale => timeline is null ? scale : Math.Min(scale, 8_000_000.0 / Math.Max(1, timeline.Duration / 10_000_000.0));
     private long T(double x) => timeline is null ? 0 : Math.Clamp((long)Math.Round((x - 16) / EffectiveScale * 10_000_000), 0, timeline.Duration);
     private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Windows.UI.Color.FromArgb(255, r, g, b));
     private void At(UIElement element, double x, double y) { Canvas.SetLeft(element, x); Canvas.SetTop(element, y); canvas.Children.Add(element); }
     private void Draw()
     {
+        if(drawQueued)return;drawQueued=true;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,()=>{drawQueued=false;DrawNow();});
+    }
+    private void DrawNow()
+    {
+        DrawCount++;
         var requested = new List<long>();
+        var usedClips=new HashSet<string>();var usedEffects=new HashSet<string>();
         canvas.Children.Clear(); if (timeline is null) return;
         canvas.Width = Math.Max(ActualWidth - 4, X(timeline.Duration) + 32); double left = scroll.HorizontalOffset, right = left + Math.Max(320, ActualWidth);
         double step = 1; while (step * EffectiveScale < 72) step *= 2; if (step * EffectiveScale > 180) step /= 2;
@@ -103,18 +135,20 @@ internal sealed class EditorTimeline : Grid
                 body.Children.Add(strip);
             }
             if (w > 26) {
-                string title = waveformMode ? $"片段 {clipIndices[clip.Id] + 1}" : $"{clip.OutputDuration / 10_000_000.0:0.#}s";
+                string title = waveformMode ? L.T("S9D4973468893", clipIndices[clip.Id] + 1) : $"{clip.OutputDuration / 10_000_000.0:0.#}s";
                 if (clip.Numerator != clip.Denominator) title += $" · {(double)clip.Numerator / clip.Denominator:0.##}×";
                 body.Children.Add(new Border { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(160, 0, 0, 0)), CornerRadius = new CornerRadius(5), Padding = new Thickness(5, 2, 5, 2), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(3), Child = new TextBlock { Text = title, FontSize = 10, Foreground = new SolidColorBrush(Colors.White), TextTrimming = TextTrimming.CharacterEllipsis } });
             }
-            At(new Border { Width = w, Height = 64, CornerRadius = new CornerRadius(8), Padding = new Thickness(1), BorderThickness = new Thickness(clip.Id == selected ? 2 : 1), BorderBrush = clip.Id == selected ? Brush(90, 174, 255) : new SolidColorBrush(Windows.UI.Color.FromArgb(75, 90, 174, 255)), Child = body, IsHitTestVisible = false }, x, 32);
+            if(!clipViews.TryGetValue(clip.Id,out var clipView))clipViews[clip.Id]=clipView=new Border{Height=64,CornerRadius=new CornerRadius(8),Padding=new Thickness(1),IsHitTestVisible=false};
+            usedClips.Add(clip.Id);clipView.Width=w;clipView.BorderThickness=new Thickness(clip.Id==selected?2:1);clipView.BorderBrush=clip.Id==selected?Brush(90,174,255):new SolidColorBrush(Windows.UI.Color.FromArgb(75,90,174,255));clipView.Child=body;
+            At(clipView,x,32);
             if (clip.Id == selected) {
                 if (start >= left) At(new Rectangle { Width = 3, Height = 16, RadiusX = 1.5, RadiusY = 1.5, Fill = Brush(90, 174, 255), IsHitTestVisible = false }, start + 3, 56);
                 if (end <= right) At(new Rectangle { Width = 3, Height = 16, RadiusX = 1.5, RadiusY = 1.5, Fill = Brush(90, 174, 255), IsHitTestVisible = false }, end - 8, 56);
             }
         }
         At(new Rectangle { Width = Math.Max(1, right - left), Height = 0.5, Fill = RecorderTheme.Brush(this, "EditorLine"), IsHitTestVisible = false }, left, 101);
-        if (waveform is null || waveform.Length == 0) At(new TextBlock { Text = waveform is null ? "正在读取声音…" : "没有声音素材", FontSize = 10, Foreground = RecorderTheme.Brush(this, "EditorTertiary"), IsHitTestVisible = false }, left + 16, 111);
+        if (waveform is null || waveform.Length == 0) At(new TextBlock { Text = waveform is null ? L.T("S0B2C11200068") : L.T("S923FBEB23043"), FontSize = 10, Foreground = RecorderTheme.Brush(this, "EditorTertiary"), IsHitTestVisible = false }, left + 16, 111);
         if (waveform is not null && waveform.Length > 0) {
             var line = new Polyline { Stroke = Brush(0, 143, 104), StrokeThickness = 1.5, IsHitTestVisible = false };
             for (double x = Math.Max(16, left); x < Math.Min(right, X(timeline.Duration)); x += 3) {
@@ -130,13 +164,21 @@ internal sealed class EditorTimeline : Grid
         int ml = 0, mh = markers.Length; while (ml < mh) { int m = (ml + mh) / 2; if (X(markers[m].Ticks) < left) ml = m + 1; else mh = m; }
         double lastMarker = double.NegativeInfinity;
         for (int i = ml; i < markers.Length && X(markers[i].Ticks) <= right; ++i) { double x = X(markers[i].Ticks); if (x - lastMarker < 4) continue; lastMarker = x; At(new TextBlock { Text = "◆", FontSize = 11, Foreground = Brush(235, 185, 95), IsHitTestVisible = false }, x - 5, 22); }
-        foreach (var effect in timeline.Effects.Where(e => X(e.OutputStart + e.OutputDuration) >= left && X(e.OutputStart) <= right)) {
+        var lastEffectX=new Dictionary<string,double>();
+        foreach (var effect in effects.Query(T(left),T(right))) {
             double start = X(effect.OutputStart), end = X(effect.OutputStart + effect.OutputDuration), x = Math.Max(left, start), width = Math.Max(2, Math.Min(right, end) - x - 2);
-            var body = new Border { Width = width, Height = 20, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(effect.Id == selectedVisual ? (byte)190 : (byte)65, 90, 174, 255)), BorderBrush = Brush(90,174,255), BorderThickness = new Thickness(effect.Id == selectedVisual ? 2 : 1), IsHitTestVisible = false };
-            if(width > 38) body.Child = new TextBlock { Text = effect.Kind switch { "zoom" => "缩放", "tilt" => "透视", "mask" => "遮挡", "focus" => "聚焦", "intro" => "开场", _ => "贴图" }, FontSize = 10, Margin = new Thickness(6,0,3,0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = RecorderTheme.Brush(this, "EditorInk") };
+            if(effect.Id!=selectedVisual&&lastEffectX.TryGetValue(effect.Kind,out var last)&&x-last<2)continue;
+            lastEffectX[effect.Kind]=x;
+            // A source effect can appear in multiple edited intervals.
+            string viewKey=effect.Id+":"+effect.OutputStart;
+            if(!effectViews.TryGetValue(viewKey,out var body))effectViews[viewKey]=body=new Border{Height=20,CornerRadius=new CornerRadius(6),BorderBrush=Brush(90,174,255),IsHitTestVisible=false};
+            usedEffects.Add(viewKey);body.Width=width;body.Background=new SolidColorBrush(Windows.UI.Color.FromArgb(effect.Id==selectedVisual?(byte)190:(byte)65,90,174,255));body.BorderThickness=new Thickness(effect.Id==selectedVisual?2:1);body.Child=null;
+            if(width > 38) body.Child = new TextBlock { Text = effect.Kind switch { "zoom" => L.T("SB762AEC769A3"), "tilt" => L.T("S17E14283A497"), "mask" => L.T("SAC7CE836857B"), "focus" => L.T("SED19BD5E2620"), "intro" => L.T("SFD0D4B7258C2"), _ => L.T("S622DA0460277") }, FontSize = 10, Margin = new Thickness(6,0,3,0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = RecorderTheme.Brush(this, "EditorInk") };
             At(body, x, EffectY(effect.Kind));
         }
         playLine.Height = canvas.Height - 14; At(playLine, X(playhead), 14); At(playHandle, X(playhead) - 3.5, 6);
+        foreach(var id in clipViews.Keys.Where(id=>!usedClips.Contains(id)).ToArray())clipViews.Remove(id);
+        foreach(var id in effectViews.Keys.Where(id=>!usedEffects.Contains(id)).ToArray())effectViews.Remove(id);
         ThumbnailsNeeded?.Invoke(requested);
     }
     private IEnumerable<ResolvedClip> VisibleClips(double left, double right)
@@ -157,8 +199,9 @@ internal sealed class EditorTimeline : Grid
     private void Pressed(object sender, PointerRoutedEventArgs e)
     {
         if (timeline is null) return; var point = e.GetCurrentPoint(canvas); if (!point.Properties.IsLeftButtonPressed) return;
-        var p = point.Position; var ticks = T(p.X); var clip = timeline.Clips.FirstOrDefault(c => ticks >= c.OutputStart && ticks < c.OutputStart + c.OutputDuration);
-        var effect = timeline.Effects.LastOrDefault(c => ticks >= c.OutputStart && ticks < c.OutputStart + c.OutputDuration && p.Y >= EffectY(c.Kind) && p.Y <= EffectY(c.Kind) + 20);
+        HideHover(); FocusTimeline(FocusState.Pointer);
+        var p = point.Position; var ticks = T(p.X); var clip = VisibleClips(p.X,p.X).FirstOrDefault(c=>ticks<c.OutputStart+c.OutputDuration);
+        var effect = effects.Query(ticks,ticks).Where(c => ticks < c.OutputStart + c.OutputDuration && p.Y >= EffectY(c.Kind) && p.Y <= EffectY(c.Kind) + 20).MaxBy(c=>effectOrdinals[c.Id+":"+c.OutputStart]);
         if(effect is not null) {
             bool already = selectedVisual == effect.Id; selectedVisual = effect.Id; SelectEffect?.Invoke(effect.Id);
             if(EditingEnabled && already) { dragEffect = effect; effectGrabOffset = ticks-effect.OutputStart; dragKind = Math.Abs(p.X-X(effect.OutputStart)) <= 10 ? "start" : Math.Abs(p.X-X(effect.OutputStart+effect.OutputDuration)) <= 10 ? "end" : "move"; BeginEdit?.Invoke(); dragging = true; }
@@ -177,7 +220,8 @@ internal sealed class EditorTimeline : Grid
     }
     private void Moved(object sender, PointerRoutedEventArgs e)
     {
-        if (timeline is null || !e.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed) return;
+        if (timeline is null) return;
+        if(!e.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed){if(!dragging&&EditingEnabled){pendingHover=T(e.GetCurrentPoint(canvas).Position.X);if(!hoverTimer.IsRunning)hoverTimer.Start();}return;}
         var ticks = Snap(T(e.GetCurrentPoint(canvas).Position.X));
         if (!dragging) { if (dragKind == "seek") Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); return; }
         if(dragEffect is not null) { PreviewEdit?.Invoke(new { op = "effectAtOutput", effectId = dragEffect.Id, outputTicks = dragKind == "move" ? ticks-effectGrabOffset : ticks, edge = dragKind }); e.Handled = true; return; }

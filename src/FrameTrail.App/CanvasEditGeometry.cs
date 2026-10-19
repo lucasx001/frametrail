@@ -17,7 +17,7 @@ internal sealed class CanvasPlane
         }
         for (int col=0;col<8;++col) {
             int pivot=col;for(int r=col+1;r<8;++r)if(Math.Abs(a[r,col])>Math.Abs(a[pivot,col]))pivot=r;
-            if(Math.Abs(a[pivot,col])<1e-12)throw new ArgumentException("退化的画布投影。");
+            if(Math.Abs(a[pivot,col])<1e-12)throw new ArgumentException(L.T("SF3048BAC9B93"));
             for(int c=col;c<9;++c)(a[col,c],a[pivot,c])=(a[pivot,c],a[col,c]);
             double d=a[col,col];for(int c=col;c<9;++c)a[col,c]/=d;
             for(int r=0;r<8;++r)if(r!=col){d=a[r,col];for(int c=col;c<9;++c)a[r,c]-=d*a[col,c];}
@@ -29,7 +29,7 @@ internal sealed class CanvasPlane
     internal (double X,double Y) Inverse(double x,double y)
     {
         double a=h[0]-x*h[6],b=h[1]-x*h[7],c=x-h[2],d=h[3]-y*h[6],e=h[4]-y*h[7],f=y-h[5],det=a*e-b*d;
-        if(Math.Abs(det)<1e-12)throw new ArgumentException("画布投影无法命中。");return((c*e-b*f)/det,(a*f-c*d)/det);
+        if(Math.Abs(det)<1e-12)throw new ArgumentException(L.T("SE361995E1CF6"));return((c*e-b*f)/det,(a*f-c*d)/det);
     }
     internal static NormalizedRect Drag(NormalizedRect r, double dx,double dy,int corner,double rotation=0,double aspect=1)
     {

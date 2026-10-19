@@ -33,8 +33,8 @@ internal sealed class CaptureSelectionController : IDisposable
         this.mode = mode; this.confirmed = confirmed; this.cancelled = cancelled;
         displays = sources.Where(s => s.Kind == CaptureSourceKind.Monitor).ToArray();
         windows = sources.Where(s => s.Kind == CaptureSourceKind.Window && !SelectionShade.IsOwnWindow(s.Handle)).ToArray();
-        if (displays.Count == 0) throw new InvalidOperationException("未发现可选择的显示器，请刷新来源。");
-        if (mode == 1 && windows.Count == 0) throw new InvalidOperationException("没有可录制的应用窗口。");
+        if (displays.Count == 0) throw new InvalidOperationException(L.T("SF040584A9226"));
+        if (mode == 1 && windows.Count == 0) throw new InvalidOperationException(L.T("S52EF37E77698"));
         card = new SelectionActionWindow(Action, Cancel);
         card.Closed += (_, _) => { if (!disposed) Cancel(); };
         try { foreach (var display in displays) shades.Add(new SelectionShade(display, mode == 2, Pointer, Cancel, Action)); }
@@ -86,17 +86,17 @@ internal sealed class CaptureSelectionController : IDisposable
         var display = mode == 1 && source is not null ? DisplayAt(source.X, source.Y) ?? displays[0] : source ?? displays[0];
         if (mode == 2)
         {
-            card.SetText(region is CaptureRegion r ? $"{r.Width} × {r.Height}" : "拖动框选录制区域",
-                region is not null ? "仅录制框内画面" : "在一个显示器内拖动 · Esc 取消",
-                "开始录制", selected is not null && region is not null && selected.IsSdr, true);
+            card.SetText(region is CaptureRegion r ? $"{r.Width} × {r.Height}" : L.T("S98CE7CDC67C8"),
+                region is not null ? L.T("S9E142FABF4D7") : L.T("SB4CE719E445B"),
+                L.T("S415D8F361894"), selected is not null && region is not null && selected.IsSdr, true);
         }
         else if (source is null)
-            card.SetText("选择一个窗口", "单击要录制的窗口即可开始 · Esc 取消", "开始录制", false, false);
+            card.SetText(L.T("S96343D09DCB4"), L.T("S5F86210B104F"), L.T("S415D8F361894"), false, false);
         else
         {
-            string title = mode == 0 ? $"显示器 {displays.ToList().FindIndex(d => d.Handle == source.Handle) + 1}" : source.Name;
-            card.SetText(title, source.IsSdr ? $"{source.Width} × {source.Height} · 单击开始录制" : "当前仅支持 SDR 显示器",
-                "开始录制", source.IsSdr, selected is not null);
+            string title = mode == 0 ? L.T("S00081E19E6F4", displays.ToList().FindIndex(d => d.Handle == source.Handle) + 1) : source.Name;
+            card.SetText(title, source.IsSdr ? L.T("S5DB4056F1023", source.Width, source.Height) : L.T("S71047DD9B33E"),
+                L.T("S415D8F361894"), source.IsSdr, selected is not null);
         }
         card.PositionOn(display);
     }
@@ -134,13 +134,13 @@ internal sealed class SelectionActionWindow : Window
     private nuint displayHandle;
     internal SelectionActionWindow(Action action, Action cancel)
     {
-        this.cancel = cancel; Title = "FrameTrail · 选择录制来源";
+        this.cancel = cancel; Title = L.T("SD42ECADDD44C");
         title.FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"];
         var labels = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(16, 0, 16, 0) };
         labels.Children.Add(title); labels.Children.Add(detail);
-        var dismiss = new Button { Content = "取消  esc", Style = (Style)Application.Current.Resources["RecorderPillButton"], Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        var dismiss = new Button { Content = L.T("SFCB63229A829"), Style = (Style)Application.Current.Resources["RecorderPillButton"], Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
         dismiss.Click += (_, _) => cancel();
-        start = new Button { Content = "开始录制", Style = (Style)Application.Current.Resources["RecorderPillButton"], MinWidth = 144, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
+        start = new Button { Content = L.T("S415D8F361894"), Style = (Style)Application.Current.Resources["RecorderPillButton"], MinWidth = 144, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
         start.Click += (_, _) => action();
         var row = new Grid { ColumnSpacing = 6, Padding = new Thickness(8), VerticalAlignment = VerticalAlignment.Center };
         row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(90) }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(144) });
@@ -222,10 +222,10 @@ internal sealed class SelectionShade : IDisposable
     internal SelectionShade(CaptureSource display, bool regionSelection, Action<uint, int, int> pointer, Action cancel, Action start)
     {
         this.display = display; this.pointer = pointer; this.cancel = cancel; this.start = start; procedure = Procedure;
-        if (display.Width <= 0 || display.Height <= 0 || (long)display.Width * display.Height > 40_000_000) throw new InvalidOperationException("此显示器尺寸超出选择器支持范围。");
+        if (display.Width <= 0 || display.Height <= 0 || (long)display.Width * display.Height > 40_000_000) throw new InvalidOperationException(L.T("S88BC5457B43F"));
         var wc = new WindowClass { Size = (uint)Marshal.SizeOf<WindowClass>(), Procedure = procedure, Instance = GetModuleHandle(null), ClassName = className, Cursor = LoadCursor(0, regionSelection ? 32515 : 32512) };
         if (RegisterClassEx(ref wc) == 0) throw new System.ComponentModel.Win32Exception();
-        window = CreateWindowEx(0x00080088, className, "FrameTrail · 录制范围", 0x80000000, display.X, display.Y, display.Width, display.Height, 0, 0, wc.Instance, 0);
+        window = CreateWindowEx(0x00080088, className, L.T("S329410902635"), 0x80000000, display.X, display.Y, display.Width, display.Height, 0, 0, wc.Instance, 0);
         dc = CreateCompatibleDC(0); var info = new BitmapInfo { Size = 40, Width = display.Width, Height = -display.Height, Planes = 1, Bits = 32 };
         bitmap = CreateDIBSection(dc, ref info, 0, out bits, 0, 0); previous = SelectObject(dc, bitmap);
         if (window == 0 || dc == 0 || bitmap == 0 || bits == 0) { Dispose(); throw new System.ComponentModel.Win32Exception(); }

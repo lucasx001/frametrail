@@ -26,6 +26,8 @@ public struct MediaStatus
 internal static class MediaNative
 {
     private const string Dll = "FrameTrail.Media.dll";
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_export_cpu(MediaHandle handle,uint forceCpu);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_export_metrics(MediaHandle handle,[Out] byte[]? output,uint capacity,out uint required);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_edit_geometry(MediaHandle handle, long ticks, uint crop, [Out] byte[]? output, uint capacity, out uint required);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_probe_visual(string path, uint video, out uint width, out uint height, out long duration);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_create(byte[] json, uint length, string root, out ulong handle);
@@ -97,6 +99,14 @@ public sealed class MediaSession : IDisposable
     public void PreparePeaks(string path) => MediaNative.Check(MediaNative.ft_media_audio_peaks(handle, Path.GetFullPath(path)));
     public void StopAudio() => MediaNative.Check(MediaNative.ft_media_audio_stop(handle));
     public void Export(string target, bool audioOnly = false) => MediaNative.Check(MediaNative.ft_media_export(handle, Path.GetFullPath(target), audioOnly ? 1u : 0u));
+    public void ForceCpuExport(bool value) => MediaNative.Check(MediaNative.ft_media_export_cpu(handle,value?1u:0u));
+    public JsonElement ExportMetrics {
+        get {
+            MediaNative.Check(MediaNative.ft_media_export_metrics(handle,null,0,out var size));var bytes=new byte[size];
+            MediaNative.Check(MediaNative.ft_media_export_metrics(handle,bytes,size,out _));
+            using var json=JsonDocument.Parse(bytes.AsMemory(0,bytes.Length-1));return json.RootElement.Clone();
+        }
+    }
     public void Cancel() { if (!handle.IsClosed) MediaNative.Check(MediaNative.ft_media_cancel(handle)); }
     public void Dispose() => handle.Dispose();
 }

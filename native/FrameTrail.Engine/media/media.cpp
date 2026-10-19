@@ -1,6 +1,7 @@
 #include "internal.hpp"
 #include "pcm_wave.hpp"
 #include "edit_geometry.hpp"
+#include "image_decode.hpp"
 #include <mmsystem.h>
 #include <array>
 #include <algorithm>
@@ -42,7 +43,7 @@ int32_t __cdecl ft_media_probe_visual(const wchar_t* path,uint32_t video,uint32_
             ComPtr<IWICImagingFactory> wic;FT_MEDIA_CHECK(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic)));
             ComPtr<IWICBitmapDecoder> decoder;FT_MEDIA_CHECK(wic->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,&decoder));
             ComPtr<IWICBitmapFrameDecode> frame;FT_MEDIA_CHECK(decoder->GetFrame(0,&frame));FT_MEDIA_CHECK(frame->GetSize(width,height));
-            if(uint64_t(*width)* *height>16'777'216)throw ValidationError("asset","image exceeds 16 megapixel limit");
+            if(!image_decode_size(*width,*height))throw ValidationError("asset","unsupported image dimensions");
             ComPtr<IWICFormatConverter> converter;FT_MEDIA_CHECK(wic->CreateFormatConverter(&converter));FT_MEDIA_CHECK(converter->Initialize(frame.Get(),GUID_WICPixelFormat32bppPBGRA,WICBitmapDitherTypeNone,nullptr,0,WICBitmapPaletteTypeCustom));
             WICRect pixel{0,0,1,1};BYTE data[4]{};FT_MEDIA_CHECK(converter->CopyPixels(&pixel,4,4,data));
         }
@@ -142,8 +143,28 @@ int32_t __cdecl ft_media_status_get(ft_media_handle handle, ft_media_status* sta
     return protect([&] { auto s = get(handle); *status = {sizeof(*status), s->stage, s->completed, s->total, s->last_progress, s->output_duration, s->rendered_ticks, s->audio_ticks, s->software, s->cpu_fallback, s->audio_running}; });
 }
 int32_t __cdecl ft_media_cancel(ft_media_handle handle) { return protect([&] { auto s = get(handle); s->cancelled = true; }); }
+int32_t __cdecl ft_media_export_cpu(ft_media_handle handle,uint32_t force_cpu) {
+    return protect([&]{auto s=get(handle);std::scoped_lock lock(s->mutex);s->export_force_cpu=force_cpu!=0;});
+}
+int32_t __cdecl ft_media_export_metrics(ft_media_handle handle,char* output,uint32_t capacity,uint32_t* required) {
+    return protect([&]{if(!required)winrt::throw_hresult(E_POINTER);auto s=get(handle);
+        auto value=Json{{"gpuFrames",s->export_gpu_frames.load()},{"cpuFrames",s->export_cpu_frames.load()},
+            {"convertMicroseconds",s->export_convert_us.load()},{"readbackMicroseconds",s->export_readback_us.load()},
+            {"writeMicroseconds",s->export_write_us.load()},{"poolWaitMicroseconds",s->export_wait_us.load()},{"gpuRejectionHresult",s->export_gpu_rejection.load()}}.dump();
+        *required=static_cast<uint32_t>(value.size()+1);if(!output)return;
+        if(capacity<*required)winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER));memcpy(output,value.c_str(),*required);});
+}
 int32_t __cdecl ft_media_export(ft_media_handle handle, const wchar_t* target, uint32_t audio_only) {
-    auto result = protect([&] { if (!target) winrt::throw_hresult(E_INVALIDARG); auto s = get(handle); std::scoped_lock lock(s->mutex); s->stage = 1; s->export_file(target, audio_only != 0); });
+    auto result = protect([&] {
+        if(!target)winrt::throw_hresult(E_INVALIDARG);auto s=get(handle);std::scoped_lock lock(s->mutex);s->stage=1;s->export_gpu_rejection=0;
+        try{s->export_file(target,audio_only!=0);}
+        catch(const winrt::hresult_error& error){
+            const auto hr=error.code();
+            if(s->export_force_cpu||audio_only||s->cancelled||!(hr==MF_E_UNSUPPORTED_D3D_TYPE||hr==MF_E_INVALIDMEDIATYPE||hr==E_INVALIDARG||hr==E_NOTIMPL||hr==MF_E_TOPO_CODEC_NOT_FOUND))throw;
+            s->export_gpu_rejection=static_cast<uint32_t>(hr);s->export_force_cpu=true;
+            try{s->export_file(target,false);s->export_force_cpu=false;}catch(...){s->export_force_cpu=false;throw;}
+        }
+    });
     if (result < 0) { try { get(handle)->stage = result == cancelled_hr ? 5 : 6; } catch (...) { } } return result;
 }
 int32_t __cdecl ft_media_audio_prepare(ft_media_handle handle, const wchar_t* wav) {

@@ -64,7 +64,7 @@ public sealed class EditorMockupKnob : Slider
                 if (e.Key == VirtualKey.Enter) { editing = false; Draw(); Focus(FocusState.Programmatic); InteractionEnded?.Invoke(true); e.Handled = true; }
                 else if (e.Key == VirtualKey.Escape) { editing = false; Value = startValue; Draw(); Focus(FocusState.Programmatic); InteractionEnded?.Invoke(false); e.Handled = true; }
             };
-            ToolTipService.SetToolTip(readout, "点击输入精确数值");
+            ToolTipService.SetToolTip(readout, L.T("S7B16A6DAD97C"));
         }
         Draw();
     }

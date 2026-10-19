@@ -17,6 +17,9 @@
     <Content Include="..\..\artifacts\android-runtime\**\*" Link="android-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\MockupStudioGlow.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Assets\Wallpapers\*.jpg;Assets\Wallpapers\catalog.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <EmbeddedResource Include="Assets\Wallpapers\catalog.json" LogicalName="FrameTrail.App.Wallpapers.catalog.json" />
+    <Content Include="..\..\docs\licenses\openscreen-MIT.txt" Link="Licenses\openscreen-MIT.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Brand\FrameTrail.Icon.v1.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="PackageAssets\*.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
@@ -24,6 +27,9 @@
     <Content Include="..\..\docs\user-guide.md" Link="Docs\user-guide.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\docs\privacy.md" Link="Docs\privacy.md" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\docs\release-notes.md" Link="Docs\release-notes.md" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\user-guide.en.md" Link="Docs\user-guide.en.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\privacy.en.md" Link="Docs\privacy.en.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\release-notes.en.md" Link="Docs\release-notes.en.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\docs\licenses\dogsc-MIT.txt" Link="Licenses\dogsc-MIT.txt" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4948" />

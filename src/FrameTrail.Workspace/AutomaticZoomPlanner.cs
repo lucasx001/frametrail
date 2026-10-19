@@ -22,16 +22,16 @@ internal static class AutomaticZoomPlanner
             using var reader = new StreamReader(workspace.Resolve(media.Path));
             while (await reader.ReadLineAsync().ConfigureAwait(false) is { } line)
             {
-                if (line.Length > 32768) throw new IOException("光标事件过长。");
+                if (line.Length > 32768) throw new IOException(L.T("S6C9A8253585B"));
                 using var document = JsonDocument.Parse(line); var e = document.RootElement;
                 if (!e.TryGetProperty("type", out var type) || type.GetString() != "pointer" || e.TryGetProperty("inside", out var inside) && !inside.GetBoolean()) continue;
                 int timescale = e.GetProperty("timescale").GetInt32();
-                if (timescale <= 0) throw new IOException("光标时间单位无效。");
+                if (timescale <= 0) throw new IOException(L.T("SA593155F9D65"));
                 var local = VisualResources.Ticks(new() { Ticks = e.GetProperty("ticks").GetInt64(), Timescale = timescale });
                 if (local < 0 || local >= duration) continue;
                 long ticks = checked(local + offset);
                 double x = e.GetProperty("x").GetDouble(), y = e.GetProperty("y").GetDouble();
-                if (!double.IsFinite(x) || !double.IsFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) throw new IOException("光标坐标无效。");
+                if (!double.IsFinite(x) || !double.IsFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) throw new IOException(L.T("S3626EC938A61"));
                 int kind = e.TryGetProperty("kind", out var k) ? k.GetInt32() : 0;
                 bool click = kind is 1 or 3;
                 // The recorder samples at 60 Hz even when stationary. Only movement
@@ -40,7 +40,7 @@ internal static class AutomaticZoomPlanner
                 if (!click && (!moved || ticks - lastActivity < 1_000_000)) continue;
                 lastX = x; lastY = y; lastActivity = ticks;
                 events.Add(new(ticks, x, y, click ? kind : 0));
-                if (events.Count > 100000) throw new IOException("自动运镜事件超过本次规划上限。");
+                if (events.Count > 100000) throw new IOException(L.T("S7B0D33B7686F"));
             }
         }
         return new { op = "autoZoom", events, scale };

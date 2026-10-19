@@ -8,6 +8,8 @@ The recorder and editor layouts, colour tokens and pictogram geometry are adapte
 
 The frame chrome rendering also adapts SharedFrameRenderer.swift at that same revision.
 
+Some English UI translations adapt DogSC's Resources/en.lproj/Localizable.strings at the same revision.
+
 MIT License
 
 Copyright (c) 2026 神烦老狗
@@ -30,6 +32,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+
+## OpenScreen wallpapers
+
+The 18 unmodified JPEG files in Assets/Wallpapers are from public/wallpapers in
+https://github.com/siddharthvaddem/openscreen at revision
+ca8104c279da0d4b4481ec992ff103949e22c772. The repository includes the MIT License,
+copyright (c) 2025 Siddharth Vaddem. Its complete notice is distributed in
+Licenses/openscreen-MIT.txt. Assets/Wallpapers/catalog.json records original
+dimensions, byte sizes and SHA-256 checksums.
 
 ## Alibaba PuHuiTi 3.0
 

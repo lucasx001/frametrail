@@ -35,7 +35,7 @@ public sealed class EditorMockupTurntable : UserControl
     public EditorMockupTurntable()
     {
         IsTabStop = true; HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        AutomationProperties.SetName(this, "样机旋转选择器"); AutomationProperties.SetAutomationId(this, "editor.frame.turntable");
+        AutomationProperties.SetName(this, L.T("SB26B975CA6A5")); AutomationProperties.SetAutomationId(this, "editor.frame.turntable");
         name.FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"];
         var content = new StackPanel { Spacing = 10 };
         stage.Children.Add(ring);
@@ -45,7 +45,7 @@ public sealed class EditorMockupTurntable : UserControl
         }
         var arrows = new Grid { Margin = new Thickness(2, 0, 2, 0), IsHitTestVisible = true };
         arrows.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); arrows.ColumnDefinitions.Add(new ColumnDefinition()); arrows.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var left = Arrow("上一个样机", -1); var right = Arrow("下一个样机", 1); Grid.SetColumn(right, 2); arrows.Children.Add(left); arrows.Children.Add(right); stage.Children.Add(arrows);
+        var left = Arrow(L.T("S765F08441443"), -1); var right = Arrow(L.T("S79D7AA580A2E"), 1); Grid.SetColumn(right, 2); arrows.Children.Add(left); arrows.Children.Add(right); stage.Children.Add(arrows);
         // Only the buttons intercept input; empty space still reaches the ring.
         arrows.Background = null;
         content.Children.Add(stage);
@@ -134,7 +134,7 @@ public sealed class EditorMockupTurntable : UserControl
         button.Click += (_, _) => Settle(rotation + Wrapped(FrameStyles.All.ToList().IndexOf(style) - rotation), true);
         button.PointerEntered += (_, _) => { if (new Windows.UI.ViewManagement.UISettings().AnimationsEnabled) frame.RenderTransform = new ScaleTransform { ScaleX = 1.035, ScaleY = 1.035 }; };
         button.PointerExited += (_, _) => frame.RenderTransform = null;
-        ToolTipService.SetToolTip(button, "边框会和屏幕、光标一起缩放并进行 3D 变形");
+        ToolTipService.SetToolTip(button, L.T("S5968C228E6BC"));
         return (button, surface, poster, glow, shade);
     }
     private static Windows.UI.Color Color(int colour) => Windows.UI.Color.FromArgb(255, (byte)(colour >> 16), (byte)(colour >> 8), (byte)colour);

@@ -44,11 +44,11 @@ public sealed class AndroidRecordingDriver(AndroidCaptureSession capture) : IRec
         public SegmentStart Start => start;
         public RecordingHealth Poll() {
             var status = capture.Status; var warnings = new List<string>();
-            if (requestedAudio && status.AudioState != 1) warnings.Add("手机内部音频不可用或已中断；已保留有效声音，视频与电脑麦克风继续录制。");
+            if (requestedAudio && status.AudioState != 1) warnings.Add(L.T("SAEDD4A6DC738"));
             var microphone = mic?.GetStatus();
-            if (microphone?.State == AudioCaptureState.Failed) warnings.Add("电脑麦克风已中断：" + microphone.Message);
+            if (microphone?.State == AudioCaptureState.Failed) warnings.Add(L.T("S02E54886044B") + microphone.Message);
             bool failed = status.State == 3 || requestedAudio && requiredAudio && status.AudioState != 1;
-            return new(failed, status.State == 3 ? status.Message : "必选手机音频已中断。", warnings, microphone?.Peak ?? 0);
+            return new(failed, status.State == 3 ? status.Message : L.T("S3C80169812F4"), warnings, microphone?.Peak ?? 0);
         }
         public async Task<CompletedCapture> FinishAsync(long boundaryQpc) {
             if (finished) throw new InvalidOperationException("Android segment already finalized."); finished = true;

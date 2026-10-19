@@ -123,6 +123,9 @@ struct Session {
     std::atomic_int64_t rendered_ticks{-1};
     std::atomic_int64_t audio_ticks{-1};
     std::atomic_uint32_t audio_running{}, software{}, cpu_fallback{};
+    bool export_force_cpu{};
+    std::atomic_uint32_t export_gpu_rejection{};
+    std::atomic_uint64_t export_gpu_frames{}, export_cpu_frames{}, export_convert_us{}, export_readback_us{}, export_write_us{}, export_wait_us{};
     std::thread audio_thread; std::atomic_bool audio_stop{};
     explicit Session(Project p, std::filesystem::path path) : project(std::move(p)), evaluator(project), output_duration(evaluator.timeline().output_duration()), root(std::move(path)) { }
     ~Session();

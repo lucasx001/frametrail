@@ -5,6 +5,10 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="..\..\src\FrameTrail.App\Language.cs" Link="Language.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\LatestRequestQueue.cs" Link="LatestRequestQueue.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\TimelineIntervalIndex.cs" Link="TimelineIntervalIndex.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\ReleaseUpdateClient.cs" Link="ReleaseUpdateClient.cs" />
     <Compile Include="..\..\src\FrameTrail.App\CanvasEditGeometry.cs" Link="CanvasEditGeometry.cs" />
     <Compile Include="..\..\src\FrameTrail.App\PlaybackFrameGate.cs" Link="PlaybackFrameGate.cs" />
     <Compile Include="..\..\src\FrameTrail.App\SafeDiagnostics.cs" Link="SafeDiagnostics.cs" />

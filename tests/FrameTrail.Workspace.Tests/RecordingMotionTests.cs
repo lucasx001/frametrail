@@ -128,7 +128,7 @@ public sealed class RecordingMotionTests : IAsyncLifetime
         await using var recorder = Coordinator(new(_ => new[] { invalid == "time" ? Pointer(1, 1, timescale: 0) : Pointer(1, 1, x: -1) }));
         recorder.StatusChanged += (_, status) => warned.AddRange(status.Warnings);
         await recorder.StartAsync(Plan); var result = (await recorder.StopAsync())!;
-        Assert.Single(result.Segments); Assert.Empty(result.Effects); Assert.Contains(warned, w => w.Contains("自动缩放生成失败"));
+        Assert.Single(result.Segments); Assert.Empty(result.Effects); Assert.Contains(warned, w => w.Contains(AppText.T("S542AA18A92E5")));
         Assert.True(File.Exists(Path.Combine(Project, "project.json")));
     }
 

@@ -16,6 +16,8 @@ M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的
 
 P1 体验补充已接入画布对象与裁切框直接编辑、共享摄像头实时预览、无需整片缓存的有声播放，以及 RF64 与缓存管理。实现与验收边界见 [P1 验证](docs/validation/p1-editor-recording.md)。
 
+P2 补充了时间线悬停与属性复用、长列表优化、GPU 表面导出与兼容回退、官方版本检查，以及中英文/首次使用/键盘可访问性。语言在下次启动生效；本机证据和扩展验收见 [P2 验证](docs/validation/p2-workflow-performance.md)。
+
 - [产品规格](docs/spec.md)
 - [实现进度与任务顺序](docs/progress.md)
 - [当前待办与验收入口](docs/todo.md)
@@ -32,7 +34,7 @@ P1 体验补充已接入画布对象与裁切框直接编辑、共享摄像头�
 
 ## 下载、安装与发布
 
-版本安装包位于 [GitHub Releases](https://github.com/lucasx001/frametrail/releases)。选择 `FrameTrail-X.Y.Z-x64-Setup.exe` 即可按当前用户安装；也可下载便携 ZIP，完整解压后运行。安装包包含运行时，无需开发工具，支持 Windows 11 x64（最低 build 22621）。当前已公开 v0.0.1；当前 EXE 未签名，Windows 可能显示未知发布者或 SmartScreen 提示。
+版本安装包位于 [GitHub Releases](https://github.com/lucasx001/frametrail/releases)。选择 `FrameTrail-X.Y.Z-x64-Setup.exe` 即可按当前用户安装；也可下载便携 ZIP，完整解压后运行。安装包包含运行时，无需开发工具，支持 Windows 11 x64（最低 build 22621）。已提供公开发行版本；当前 EXE 未签名，Windows 可能显示未知发布者或 SmartScreen 提示。
 
 维护者可在 **Actions → Release Windows application → Run workflow** 输入 `0.0.1`，或推送 `v0.0.1` tag，自动构建、测试、打包并发布对应版本。支持先保留草稿，已公开版本不会被覆盖；下一版使用 `0.0.2`。工作流已完成 v0.0.1 公开与附件验证。操作与更新说明见 [分发文档](docs/distribution.md)，执行状态见 [0019](docs/0019-github-releases.md)。
 
@@ -92,6 +94,8 @@ M3 效果回归（先按相同原生目录构建 Release，同样需要 ffmpeg/f
 在编辑器「运镜」页添加或按录制点击生成效果，选择片段后调整参数即可实时预览，无需点击应用。滑块拖动过程中预览，松手后自动保存并合并为一次撤销；数字/文字输入短暂停顿后保存，输入焦点保持。当前播放头不在效果有效区间时，会定位到该效果的可见时刻。时间线可选择效果，再拖动片段或两端裁边；Ctrl+C / Ctrl+V 复制到播放头，Delete 删除当前效果，Ctrl+Z / Ctrl+Y 撤销重做。效果按源时间保存，剪辑和变速通过统一映射同步处理。
 
 「画面」支持工程内图片、循环视频和渐变背景，「样机」选择窗口/浏览器/设备边框；「开场」设置屏幕或摄像头的动画，「摄像头」选择形状，「光标」调整平滑。场景预设菜单可应用内置预设，或保存/恢复当前工程预设。素材复制进工程后重开无需原始导入路径；视觉预设保留当前声音设置。
+
+「画面 → 背景 → 壁纸」提供 OpenScreen 同款 18 张桌面壁纸，点击缩略图即可应用，支持撤销 / 重做；也可导入自己的图片。壁纸随应用离线提供，选择后将原图复制到工程，移动工程或重开后仍可预览、导出。来源和原始许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
 
 ## Android USB 录屏（M5）
 

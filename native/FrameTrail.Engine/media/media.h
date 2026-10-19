@@ -30,6 +30,8 @@ FTM_API int32_t __cdecl ft_media_status_get(ft_media_handle handle, ft_media_sta
 FTM_API int32_t __cdecl ft_media_cancel(ft_media_handle handle);
 // Blocking, call on a worker. Atomically replaces target only after finalize and validation.
 FTM_API int32_t __cdecl ft_media_export(ft_media_handle handle, const wchar_t* target, uint32_t audio_only);
+FTM_API int32_t __cdecl ft_media_export_cpu(ft_media_handle handle, uint32_t force_cpu);
+FTM_API int32_t __cdecl ft_media_export_metrics(ft_media_handle handle, char* output, uint32_t capacity, uint32_t* required);
 FTM_API int32_t __cdecl ft_media_audio_prepare(ft_media_handle handle, const wchar_t* wav);
 FTM_API int32_t __cdecl ft_media_audio_play(ft_media_handle handle, const wchar_t* wav, int64_t ticks);
 FTM_API int32_t __cdecl ft_media_audio_stop(ft_media_handle handle);

@@ -23,7 +23,7 @@ internal static class VideoCodecMatrixValidation
                 try {
                     using var media = new MediaSession(snapshot, copy);
                     await Task.Run(() => media.Export(Path.Combine(directory, $"{codec.Codec}-{height}-{fps}.mp4")));
-                    results.Add(new { codec = codec.Codec, height, fps, success = true, seconds = watch.Elapsed.TotalSeconds });
+                    results.Add(new { codec = codec.Codec, height, fps, success = true, seconds = watch.Elapsed.TotalSeconds, metrics=media.ExportMetrics });
                 } catch (Exception error) { success = false; results.Add(new { codec = codec.Codec, height, fps, success = false, error = error.ToString() }); }
             }
             try {

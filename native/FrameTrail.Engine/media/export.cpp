@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <array>
 #include <propvarutil.h>
+#include <chrono>
+#include <mftransform.h>
 
 namespace frametrail::media {
 namespace {
@@ -21,13 +23,16 @@ ComPtr<IMFSample> sample_bytes(const BYTE* bytes, DWORD length, int64_t time, in
     memcpy(data, bytes, length); buffer->Unlock(); FT_MEDIA_CHECK(buffer->SetCurrentLength(length));
     ComPtr<IMFSample> sample; FT_MEDIA_CHECK(MFCreateSample(&sample)); FT_MEDIA_CHECK(sample->AddBuffer(buffer.Get())); FT_MEDIA_CHECK(sample->SetSampleTime(time)); FT_MEDIA_CHECK(sample->SetSampleDuration(duration)); return sample;
 }
-// GPU BT.709 RGB -> limited-range NV12. Encoder upload is an explicit bounded
-// CPU fallback, shared by hardware/software MF encoders; no pixels cross the ABI.
+// GPU BT.709 conversion targets an encoder-owned surface from a bounded pool.
+// Non-D3D encoders keep the CPU readback path; pixels never cross the ABI.
 struct Nv12 {
     Renderer& gpu; uint32_t w, h;
     ComPtr<ID3D11VideoDevice> device; ComPtr<ID3D11VideoContext> context;
     ComPtr<ID3D11VideoProcessorEnumerator> enumerator; ComPtr<ID3D11VideoProcessor> processor;
     ComPtr<ID3D11Texture2D> output, staging; ComPtr<ID3D11VideoProcessorOutputView> view;
+    ComPtr<IMFVideoSampleAllocatorEx> allocator;
+    std::vector<BYTE> cpu_bytes;
+    static uint64_t elapsed(std::chrono::steady_clock::time_point first){return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-first).count());}
     Nv12(Renderer& gpu, uint32_t w, uint32_t h, uint32_t fps) : gpu(gpu), w(w), h(h) {
         FT_MEDIA_CHECK(gpu.device.As(&device)); FT_MEDIA_CHECK(gpu.context.As(&context));
         D3D11_VIDEO_PROCESSOR_CONTENT_DESC desc{}; desc.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE; desc.InputWidth = desc.OutputWidth = w; desc.InputHeight = desc.OutputHeight = h;
@@ -43,15 +48,48 @@ struct Nv12 {
         context->VideoProcessorSetStreamColorSpace(processor.Get(), 0, &rgb); context->VideoProcessorSetOutputColorSpace(processor.Get(), &yuv);
         context->VideoProcessorSetStreamAutoProcessingMode(processor.Get(), 0, FALSE);
     }
-    std::vector<BYTE> convert(ID3D11Texture2D* input) {
+    void enable_pool(IMFSinkWriter* writer,DWORD stream,IMFMediaType* input,bool force_cpu) {
+        if(force_cpu)return;
+        ComPtr<IMFSinkWriterEx> extended;if(FAILED(writer->QueryInterface(IID_PPV_ARGS(&extended))))return;
+        bool aware=false;
+        for(DWORD i=0;i<16;++i){GUID category{};ComPtr<IMFTransform> transform;
+            if(FAILED(extended->GetTransformForStream(stream,i,&category,&transform)))break;
+            if(category!=MFT_CATEGORY_VIDEO_ENCODER)continue;
+            ComPtr<IMFAttributes> attr;UINT32 value{};aware=SUCCEEDED(transform->GetAttributes(&attr))&&SUCCEEDED(attr->GetUINT32(MF_SA_D3D11_AWARE,&value))&&value;}
+        if(!aware)return;
+        ComPtr<IMFVideoSampleAllocatorEx> pool;ComPtr<IMFAttributes> attr;
+        FT_MEDIA_CHECK(MFCreateAttributes(&attr,2));FT_MEDIA_CHECK(attr->SetUINT32(MF_SA_D3D11_BINDFLAGS,D3D11_BIND_RENDER_TARGET));
+        FT_MEDIA_CHECK(attr->SetUINT32(MF_SA_D3D11_USAGE,D3D11_USAGE_DEFAULT));
+        HRESULT hr=MFCreateVideoSampleAllocatorEx(__uuidof(IMFVideoSampleAllocatorEx),reinterpret_cast<void**>(pool.GetAddressOf()));
+        if(SUCCEEDED(hr))hr=pool->SetDirectXManager(gpu.manager.Get());
+        if(SUCCEEDED(hr))hr=pool->InitializeSampleAllocatorEx(4,16,attr.Get(),input);
+        if(SUCCEEDED(hr))allocator=std::move(pool);
+    }
+    ComPtr<IMFSample> convert(ID3D11Texture2D* input,int64_t ticks,int64_t duration,Session& session) {
+        ComPtr<IMFSample> sample;ComPtr<ID3D11VideoProcessorOutputView> target_view;
+        if(allocator){
+            auto start=std::chrono::steady_clock::now();HRESULT hr;
+            while((hr=allocator->AllocateSample(&sample))==MF_E_SAMPLEALLOCATOR_EMPTY){session.check_cancel();if(elapsed(start)>5'000'000)winrt::throw_hresult(MF_E_UNSUPPORTED_D3D_TYPE);Sleep(1);}
+            FT_MEDIA_CHECK(hr);session.export_wait_us+=elapsed(start);
+            ComPtr<IMFMediaBuffer> buffer;FT_MEDIA_CHECK(sample->GetBufferByIndex(0,&buffer));ComPtr<IMF2DBuffer> two;FT_MEDIA_CHECK(buffer.As(&two));DWORD length{};FT_MEDIA_CHECK(two->GetContiguousLength(&length));FT_MEDIA_CHECK(buffer->SetCurrentLength(length));
+            ComPtr<IMFDXGIBuffer> dxgi;FT_MEDIA_CHECK(buffer.As(&dxgi));ComPtr<ID3D11Texture2D> texture;FT_MEDIA_CHECK(dxgi->GetResource(IID_PPV_ARGS(&texture)));UINT index{};FT_MEDIA_CHECK(dxgi->GetSubresourceIndex(&index));
+            D3D11_TEXTURE2D_DESC td{};texture->GetDesc(&td);D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC vd{};vd.ViewDimension=D3D11_VPOV_DIMENSION_TEXTURE2DARRAY;
+            vd.Texture2DArray.MipSlice=index%td.MipLevels;vd.Texture2DArray.FirstArraySlice=index/td.MipLevels;vd.Texture2DArray.ArraySize=1;
+            FT_MEDIA_CHECK(device->CreateVideoProcessorOutputView(texture.Get(),enumerator.Get(),&vd,&target_view));
+        }
+        auto started=std::chrono::steady_clock::now();
         D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC desc{}; desc.ViewDimension = D3D11_VPIV_DIMENSION_TEXTURE2D;
         ComPtr<ID3D11VideoProcessorInputView> in; FT_MEDIA_CHECK(device->CreateVideoProcessorInputView(input, enumerator.Get(), &desc, &in));
         RECT rect{0, 0, static_cast<LONG>(w), static_cast<LONG>(h)}; context->VideoProcessorSetStreamSourceRect(processor.Get(), 0, TRUE, &rect); context->VideoProcessorSetStreamDestRect(processor.Get(), 0, TRUE, &rect);
-        D3D11_VIDEO_PROCESSOR_STREAM stream{}; stream.Enable = TRUE; stream.pInputSurface = in.Get(); FT_MEDIA_CHECK(context->VideoProcessorBlt(processor.Get(), view.Get(), 0, 1, &stream));
+        D3D11_VIDEO_PROCESSOR_STREAM stream{}; stream.Enable = TRUE; stream.pInputSurface = in.Get(); FT_MEDIA_CHECK(context->VideoProcessorBlt(processor.Get(), target_view?target_view.Get():view.Get(), 0, 1, &stream));
+        session.export_convert_us+=elapsed(started);
+        if(sample){gpu.context->Flush();FT_MEDIA_CHECK(sample->SetSampleTime(ticks));FT_MEDIA_CHECK(sample->SetSampleDuration(duration));session.export_gpu_frames++;return sample;}
+        started=std::chrono::steady_clock::now();
         gpu.context->CopyResource(staging.Get(), output.Get()); D3D11_MAPPED_SUBRESOURCE mapped{}; FT_MEDIA_CHECK(gpu.context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
-        std::vector<BYTE> result(static_cast<size_t>(w) * h * 3 / 2);
-        for (UINT y = 0; y < h + h / 2; ++y) memcpy(result.data() + static_cast<size_t>(y) * w, static_cast<BYTE*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch, w);
-        gpu.context->Unmap(staging.Get(), 0); return result;
+        cpu_bytes.resize(static_cast<size_t>(w) * h * 3 / 2);
+        for (UINT y = 0; y < h + h / 2; ++y) memcpy(cpu_bytes.data() + static_cast<size_t>(y) * w, static_cast<BYTE*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch, w);
+        gpu.context->Unmap(staging.Get(), 0);session.export_readback_us+=elapsed(started);session.export_cpu_frames++;
+        return sample_bytes(cpu_bytes.data(),static_cast<DWORD>(cpu_bytes.size()),ticks,duration);
     }
 };
 void validate_output(const std::filesystem::path& path, bool video, int64_t expected) {
@@ -64,6 +102,7 @@ void validate_output(const std::filesystem::path& path, bool video, int64_t expe
 }
 }
 void Session::export_file(const std::filesystem::path& destination, bool audio_only) {
+    export_gpu_frames=0;export_cpu_frames=0;export_convert_us=0;export_readback_us=0;export_write_us=0;export_wait_us=0;
     check_cancel(); auto target = std::filesystem::absolute(destination).lexically_normal();
     for (auto path = target; !path.empty();) {
         const auto attributes = GetFileAttributesW(path.c_str());
@@ -85,8 +124,10 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
     ComPtr<IMFAttributes> attributes; FT_MEDIA_CHECK(MFCreateAttributes(&attributes, 4));
     FT_MEDIA_CHECK(attributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4));
     FT_MEDIA_CHECK(attributes->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE)); FT_MEDIA_CHECK(attributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE));
+    if(!audio_only&&!export_force_cpu)FT_MEDIA_CHECK(attributes->SetUnknown(MF_SINK_WRITER_D3D_MANAGER,gpu().manager.Get()));
     ComPtr<IMFSinkWriter> writer; FT_MEDIA_CHECK(MFCreateSinkWriterFromURL(temp.c_str(), nullptr, attributes.Get(), &writer));
     std::unique_ptr<Nv12> converter;
+    ComPtr<IMFMediaType> video_input;
     if (!audio_only) {
         ComPtr<IMFMediaType> type; FT_MEDIA_CHECK(MFCreateMediaType(&type)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_SUBTYPE, frametrail::codecs::subtype(frametrail::codecs::id(project.export_settings.video_codec))));
         FT_MEDIA_CHECK(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, project.export_settings.width, project.export_settings.height)); FT_MEDIA_CHECK(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, fps, 1));
@@ -97,6 +138,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         FT_MEDIA_CHECK(writer->AddStream(type.Get(), &video_stream));
         ComPtr<IMFMediaType> input; FT_MEDIA_CHECK(MFCreateMediaType(&input)); FT_MEDIA_CHECK(type->CopyAllItems(input.Get()));
         FT_MEDIA_CHECK(input->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12)); FT_MEDIA_CHECK(writer->SetInputMediaType(video_stream, input.Get(), nullptr));
+        video_input=input;
         converter = std::make_unique<Nv12>(gpu(), project.export_settings.width, project.export_settings.height, fps);
     }
     if (has_audio) {
@@ -106,6 +148,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         mix_audio(wav);
     }
     check_cancel(); FT_MEDIA_CHECK(writer->BeginWriting()); stage = 2; progress(0, audio_only ? static_cast<uint64_t>(audio_frames) : frame_count);
+    if(converter)converter->enable_pool(writer.Get(),video_stream,video_input.Get(),export_force_cpu);
     std::ifstream audio; if (has_audio) { audio.open(wav, std::ios::binary); audio.seekg(static_cast<std::streamoff>(pcm_data_offset(audio))); }
     int64_t audio_position = 0;
     auto write_audio = [&](int64_t until) {
@@ -121,8 +164,8 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
     else for (uint64_t i = 0; i < frame_count; ++i) {
         check_cancel(); const auto ticks = static_cast<int64_t>(i) * time_scale / fps, end = std::min<int64_t>(duration, static_cast<int64_t>(i + 1) * time_scale / fps);
         const auto scene = evaluator.evaluate(ticks); if (!scene) throw ValidationError("export", "missing scheduled output frame");
-        auto* texture = gpu().render(project, *scene, project.export_settings.width, project.export_settings.height); auto bytes = converter->convert(texture);
-        auto sample = sample_bytes(bytes.data(), static_cast<DWORD>(bytes.size()), ticks, end - ticks); FT_MEDIA_CHECK(writer->WriteSample(video_stream, sample.Get()));
+        auto* texture = gpu().render(project, *scene, project.export_settings.width, project.export_settings.height);
+        auto sample=converter->convert(texture,ticks,end-ticks,*this);auto started=std::chrono::steady_clock::now();FT_MEDIA_CHECK(writer->WriteSample(video_stream,sample.Get()));export_write_us+=Nv12::elapsed(started);
         write_audio(ticks_samples(end)); progress(i + 1, frame_count);
     }
     check_cancel(); stage = 3; FT_MEDIA_CHECK(writer->Finalize()); writer.Reset(); audio.close(); check_cancel();

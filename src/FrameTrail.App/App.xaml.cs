@@ -10,6 +10,8 @@ public partial class App : Application
     private Window? window;
     public App()
     {
+        var args=Environment.GetCommandLineArgs();int language=Array.IndexOf(args,"--language");
+        FrameTrail.Domain.AppText.Initialize(language>=0&&args.Length>language+1?args[language+1]:null);
         InitializeComponent();
         UnhandledException += (_, args) => SafeDiagnostics.Record(args.Exception);
     }

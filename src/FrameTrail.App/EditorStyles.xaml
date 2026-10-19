@@ -102,6 +102,25 @@
         <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="10"/>
         <Setter Property="SpinButtonPlacementMode" Value="Inline"/>
     </Style>
+    <Style x:Key="EditorWallpaperButton" TargetType="ToggleButton">
+        <Setter Property="UseSystemFocusVisuals" Value="True"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToggleButton">
+            <Grid>
+                <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal"/>
+                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="WallpaperChrome.Opacity" Value="0.88"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="WallpaperChrome.Opacity" Value="0.72"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="WallpaperChrome.Opacity" Value="0.4"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Checked"/>
+                    <VisualState x:Name="CheckedPointerOver"><VisualState.Setters><Setter Target="WallpaperChrome.Opacity" Value="0.88"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="CheckedPressed"><VisualState.Setters><Setter Target="WallpaperChrome.Opacity" Value="0.72"/></VisualState.Setters></VisualState>
+                </VisualStateGroup></VisualStateManager.VisualStateGroups>
+                <Border x:Name="WallpaperChrome" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                    <ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                </Border>
+            </Grid>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style x:Key="EditorCombo" TargetType="ComboBox">
         <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
         <Setter Property="MinHeight" Value="30"/><Setter Property="Background" Value="{ThemeResource EditorPanel}"/>
