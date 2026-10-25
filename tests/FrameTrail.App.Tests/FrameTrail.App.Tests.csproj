@@ -10,6 +10,9 @@
     <Compile Include="..\..\src\FrameTrail.App\TimelineIntervalIndex.cs" Link="TimelineIntervalIndex.cs" />
     <Compile Include="..\..\src\FrameTrail.App\ReleaseUpdateClient.cs" Link="ReleaseUpdateClient.cs" />
     <Compile Include="..\..\src\FrameTrail.App\CanvasEditGeometry.cs" Link="CanvasEditGeometry.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\EditorTransportController.cs" Link="EditorTransportController.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\EditorEditController.cs" Link="EditorEditController.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\EditorAssetCoordinator.cs" Link="EditorAssetCoordinator.cs" />
     <Compile Include="..\..\src\FrameTrail.App\PlaybackFrameGate.cs" Link="PlaybackFrameGate.cs" />
     <Compile Include="..\..\src\FrameTrail.App\SafeDiagnostics.cs" Link="SafeDiagnostics.cs" />
     <Compile Include="..\..\src\FrameTrail.App\ProjectLocations.cs" Link="ProjectLocations.cs" />

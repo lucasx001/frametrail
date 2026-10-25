@@ -92,7 +92,7 @@ public sealed partial class EditorWindow
             var changed = ProjectJson.Serialize(editor.Snapshot with { Revision = 0 });
             await editor.UndoAsync(); await editor.RedoAsync();
             if (changed != ProjectJson.Serialize(editor.Snapshot with { Revision = 0 })) throw new InvalidOperationException("Undo/redo content changed.");
-            editor.BeginTransaction(); editor.PreviewCommand(new { op = "delete", segmentId = "ui-m2-split" }); editor.CancelTransaction();
+            editController.Begin(EditorEditOwner.Timeline); editController.Preview(EditorEditOwner.Timeline, new { op = "delete", segmentId = "ui-m2-split" }); editController.Cancel(EditorEditOwner.Timeline);
             if (changed != ProjectJson.Serialize(editor.Snapshot with { Revision = 0 })) throw new InvalidOperationException("Cancelled transaction changed project.");
             checks.Add("Split, rate, reorder, undo/redo and cancelled drag transaction preserve exact authored content.");
             await ReloadAsync(); await SeekAsync(0); await Task.Delay(500);

@@ -8,6 +8,7 @@ namespace FrameTrail.Workspace;
 public sealed partial class EditorSession
 {
     private readonly ProjectWorkspace workspace;
+    private readonly ExportJobService exportJobs;
     private readonly List<string> undo = new(), redo = new();
     private readonly SemaphoreSlim gate = new(1);
     private ProjectSnapshot? transaction;
@@ -22,9 +23,10 @@ public sealed partial class EditorSession
     public event EventHandler? Changed;
     public string DirectoryPath => workspace.DirectoryPath;
 
-    public EditorSession(ProjectWorkspace workspace)
+    public EditorSession(ProjectWorkspace workspace, ExportJobService? exportJobs = null)
     {
         this.workspace = workspace;
+        this.exportJobs = exportJobs ?? new ExportJobService();
         Snapshot = Freeze(workspace.Snapshot ?? throw new InvalidOperationException("Project has no saved snapshot."));
         Timeline = EngineSession.ResolveTimeline(Snapshot);
     }
@@ -89,12 +91,7 @@ public sealed partial class EditorSession
         } finally { gate.Release(); }
         Changed?.Invoke(this, EventArgs.Empty);
         try {
-            var frozen = Freeze(Snapshot);
-            using var media = await Task.Run(() => new MediaSession(frozen, DirectoryPath), cancellationToken);
-            using var registration = cancellationToken.Register(media.Cancel);
-            var task = Task.Run(() => media.Export(path, audioOnly), CancellationToken.None);
-            while (!task.IsCompleted) { var status = media.Status; progress?.Report(status); if (status.Total > 0 && Environment.TickCount64 - (long)status.LastProgressMilliseconds > 120_000) media.Cancel(); await Task.WhenAny(task, Task.Delay(150, CancellationToken.None)); }
-            await task; progress?.Report(media.Status);
+            await exportJobs.RunAsync(Snapshot, DirectoryPath, path, audioOnly, progress, cancellationToken);
         } finally { IsExporting = false; Changed?.Invoke(this, EventArgs.Empty); }
     }
     public async Task CopySourcesAsync(string destination, CancellationToken cancellationToken)
