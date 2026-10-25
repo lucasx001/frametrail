@@ -65,11 +65,12 @@ public sealed partial class EditorSession
             if (target.Kind != source.Kind) throw new ArgumentException(L.T("SelectCompatibleEffect"));
             var properties = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(source.Parameters.GetRawText())!;
             // Source tracks and sticker content belong to the target, not its style.
-            foreach (var key in new[] { "path", "text", "layer", "focusPoints", "target" }) {
+            foreach (var key in new[] { "path", "text", "layer", "focusPoints", "focusTransition", "target" }) {
                 properties.Remove(key);
                 if (target.Parameters.TryGetProperty(key, out var value)) properties[key] = value.Clone();
             }
             properties["origin"] = JsonSerializer.SerializeToElement("manual");
+            properties.Remove("plannerState"); properties.Remove("planner");
             var effect = target with { Parameters = JsonSerializer.SerializeToElement(properties) };
             if (effect.Parameters.GetRawText() == target.Parameters.GetRawText()) return;
             var candidate = EngineSession.Edit(Snapshot, new { op = "effectUpsert", effectId = targetId, effect });
@@ -82,10 +83,20 @@ public sealed partial class EditorSession
         if (sourceTicks < 0 || duration <= 0) throw new ArgumentOutOfRangeException(nameof(sourceTicks));
         var parameters = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(effect.Parameters.GetRawText())!;
         parameters["origin"] = JsonSerializer.SerializeToElement("manual");
+        parameters.Remove("plannerState"); parameters.Remove("planner");
         if (parameters.TryGetValue("focusPoints", out var points))
         {
             var delta = sourceTicks - VisualResources.Ticks(effect.SourceStart);
-            parameters["focusPoints"] = JsonSerializer.SerializeToElement(points.EnumerateArray().Select(p => new { ticks = p.GetProperty("ticks").GetInt64() + delta, x = p.GetProperty("x").GetDouble(), y = p.GetProperty("y").GetDouble() }).Where(p => p.ticks >= sourceTicks && p.ticks < sourceTicks + duration));
+            var shifted = new List<Dictionary<string, JsonElement>>();
+            foreach (var point in points.EnumerateArray())
+            {
+                long ticks = checked(point.GetProperty("ticks").GetInt64() + delta);
+                if (ticks < sourceTicks || ticks >= sourceTicks + duration) continue;
+                var key = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(point.GetRawText())!;
+                key["ticks"] = JsonSerializer.SerializeToElement(ticks);
+                shifted.Add(key);
+            }
+            parameters["focusPoints"] = JsonSerializer.SerializeToElement(shifted);
         }
         return UpsertEffectAsync(effect with { Id = "effect-" + Guid.NewGuid().ToString("N"), SourceStart = MediaTime.FromTicks(sourceTicks), SourceDuration = MediaTime.FromTicks(duration), Parameters = JsonSerializer.SerializeToElement(parameters) });
     }

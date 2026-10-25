@@ -1,4 +1,5 @@
 using FrameTrail.Domain;
+using System.Text.Json;
 using FrameTrail.Interop;
 using FrameTrail.Workspace;
 using Xunit;
@@ -44,6 +45,34 @@ public sealed class EditorSessionTests : IAsyncLifetime
         string source = Path.Combine(root, "invalid.jpg"); await File.WriteAllTextAsync(source, "invalid image");
         await Assert.ThrowsAnyAsync<Exception>(() => editor.ImportWallpaperAsync(source));
         Assert.Empty(Directory.GetFiles(workspace.Resolve("assets"))); Assert.False(editor.CanUndo);
+    }
+    [Fact] public async Task ContinuationCopyRetainsFocusPhaseAndAttributePasteRetainsTheTargetTrack()
+    {
+        await using var workspace = await CreateAsync();
+        var effect = new SourceEffect { Id = "continuation", Kind = "zoom", SourceStart = MediaTime.FromTicks(10_000_000),
+            SourceDuration = MediaTime.FromTicks(20_000_000), Parameters = JsonSerializer.SerializeToElement(new
+            {
+                origin = "automatic", planner = AutomaticZoomPlanner.Version, enter = 0, focusTransition = 0.7,
+                focusPoints = new[] { new { ticks = 10_000_000L, x = 0.8, y = 0.4, fromX = 0.2, fromY = 0.4, phaseTicks = 1_000_000L } },
+                plannerState = new { lastClick = 10_000_000L }
+            }) };
+        await workspace.SaveAsync(workspace.Snapshot! with { Revision = 2, Effects = new[] { effect } }, workspace.SessionEpoch);
+        var editor = new EditorSession(workspace);
+        await editor.PasteEffectAsync(effect, 0);
+        var copied = editor.Snapshot.Effects.Single(e => e.Id != effect.Id);
+        var key = copied.Parameters.GetProperty("focusPoints")[0];
+        Assert.Equal(0, key.GetProperty("ticks").GetInt64());
+        Assert.Equal(0.2, key.GetProperty("fromX").GetDouble());
+        Assert.Equal(1_000_000, key.GetProperty("phaseTicks").GetInt64());
+        Assert.Equal(0.7, copied.Parameters.GetProperty("focusTransition").GetDouble());
+        Assert.False(copied.Parameters.TryGetProperty("plannerState", out _));
+        var style = effect with { Parameters = JsonSerializer.SerializeToElement(new { enter = 0.2, focusTransition = 0.1, scale = 2.1 }) };
+        await editor.PasteEffectAttributesAsync(style, copied.Id);
+        var pasted = editor.Snapshot.Effects.Single(e => e.Id == copied.Id);
+        Assert.Equal(0.7, pasted.Parameters.GetProperty("focusTransition").GetDouble());
+        Assert.Equal(0.2, pasted.Parameters.GetProperty("focusPoints")[0].GetProperty("fromX").GetDouble());
+        Assert.Equal("edited", pasted.Parameters.GetProperty("origin").GetString());
+        EngineSession.ValidateProject(editor.Snapshot);
     }
 
     [Fact] public async Task ReusingDamagedWallpaperDoesNotDeleteTheExistingProjectAsset()

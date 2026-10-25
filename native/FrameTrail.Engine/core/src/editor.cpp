@@ -60,24 +60,33 @@ void apply_command(Project& p, const Json& cmd) {
         if(edge=="start")start=std::clamp(mapped->ticks,int64_t(0),end-1);
         else if(edge=="end")end=std::clamp(mapped->ticks,start+1,total);
         else {auto length=end-start;start=std::clamp(mapped->ticks,int64_t(0),total-length);end=start+length;}
-        auto parameters=Json::parse(found->parameters_json);parameters["origin"]="edited";
+        auto parameters=Json::parse(found->parameters_json);parameters["origin"]="edited";parameters.erase("plannerState");
         if(parameters.contains("focusPoints")){
             Json keys=Json::array();
-            if(edge!="move" && !parameters["focusPoints"].empty()) {
-                auto sampled=evaluate_visuals({parse_visual_effect(*found)},start).screen;
-                keys.push_back({{"ticks",start},{"x",sampled.focus_x},{"y",sampled.focus_y}});
+            if(edge=="start" && !parameters["focusPoints"].empty()) {
+                auto visual=parse_visual_effect(*found);
+                auto next=std::upper_bound(visual.focus_points.begin(),visual.focus_points.end(),start,[](auto t,auto& point){return t<point.ticks;});
+                if(next!=visual.focus_points.begin()) {
+                    auto key=std::prev(next);
+                    keys.push_back({{"ticks",start},{"x",key->x},{"y",key->y},{"fromX",key->from_x},{"fromY",key->from_y},{"phaseTicks",std::min<int64_t>(5*time_scale,start-key->transition_start)}});
+                } else {
+                    auto sampled=evaluate_visuals({visual},start).screen;
+                    keys.push_back({{"ticks",start},{"x",sampled.focus_x},{"y",sampled.focus_y}});
+                }
             }
-            for(auto key:parameters["focusPoints"]){auto tick=key["ticks"].get<int64_t>()+(edge=="move"?start-old:0);if(tick>=start && tick<end && (keys.empty() || tick>keys.back()["ticks"].get<int64_t>())){key["ticks"]=tick;keys.push_back(key);}}
+            for(auto key:parameters["focusPoints"]){auto delta=edge=="move"?start-old:0;auto tick=key["ticks"].get<int64_t>()+delta;if(tick>=start && tick<end && (keys.empty() || tick>keys.back()["ticks"].get<int64_t>())){key["ticks"]=tick;keys.push_back(key);}}
             parameters["focusPoints"]=keys;
         }
         found->source_start=canonical_time(start);found->source_duration=canonical_time(end-start);found->parameters_json=parameters.dump();
     } else if (op == "autoZoom") {
         generate_auto_zoom(p,cmd.dump());
+    } else if (op == "autoZoomAppend") {
+        append_auto_zoom(p,cmd.dump());
     } else if (op == "effectUpsert" || op == "effectDelete") {
         auto json=Json::parse(serialize_project(p)); auto id=cmd.at("effectId").get<std::string>(); auto& effects=json["effects"];
         auto found=std::find_if(effects.begin(),effects.end(),[&](auto&e){return e["id"]==id;});
         if(op=="effectDelete") { if(found==effects.end())throw ValidationError("effectId","effect no longer exists"); effects.erase(found); }
-        else { auto value=cmd.at("effect"); value["id"]=id; if(found!=effects.end()) { value["parameters"]["origin"]="edited"; *found=value; } else effects.push_back(value); }
+        else { auto value=cmd.at("effect"); value["id"]=id; if(found!=effects.end()) { value["parameters"]["origin"]="edited"; value["parameters"].erase("plannerState"); *found=value; } else effects.push_back(value); }
         p=parse_project(json.dump());
     } else if (op == "settings") {
         auto json = Json::parse(serialize_project(p));

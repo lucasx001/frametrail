@@ -34,6 +34,52 @@ public sealed class PersistenceTests : IAsyncLifetime
         Assert.Equal(3, ProjectJson.Deserialize(await File.ReadAllTextAsync(workspace.Resolve("project.json"))).Revision);
         Assert.Equal(1, ProjectJson.Deserialize(await File.ReadAllTextAsync(workspace.Resolve("project.previous.json"))).Revision);
     }
+    [Fact] public async Task FinalizedMediaCacheReusesOnlyUnchangedFilesWithinOneLease()
+    {
+        int probes = 0;
+        await using (var workspace = ProjectWorkspace.Create(Project, "project1", Validate, (_, _) => probes++))
+        {
+            var path = workspace.Resolve("media/screen.mp4");
+            await File.WriteAllBytesAsync(path, FinalizedMp4Header);
+            await workspace.SaveAsync(Snapshot(), workspace.SessionEpoch);
+            await workspace.SaveAsync(Snapshot(2), workspace.SessionEpoch);
+            Assert.Equal(1, probes);
+            var altered = Snapshot(3) with { Media = new[] { Snapshot().Media[0] with { Width = 800 } } };
+            await workspace.SaveAsync(altered, workspace.SessionEpoch); Assert.Equal(2, probes);
+            var write = File.GetLastWriteTimeUtc(path); var creation = File.GetCreationTimeUtc(path);
+            var replacement = path + ".new";
+            await File.WriteAllBytesAsync(replacement, FinalizedMp4Header);
+            File.SetLastWriteTimeUtc(replacement, write); File.SetCreationTimeUtc(replacement, creation);
+            File.Move(replacement, path, true);
+            await workspace.SaveAsync(altered with { Revision = 4 }, workspace.SessionEpoch);
+            Assert.Equal(3, probes); // File identity changes even with identical length/times.
+            File.Delete(path);
+            await Assert.ThrowsAsync<FileNotFoundException>(() => workspace.SaveAsync(altered with { Revision = 5 }, workspace.SessionEpoch));
+            await File.WriteAllBytesAsync(path, FinalizedMp4Header);
+            await workspace.SaveAsync(altered with { Revision = 5 }, workspace.SessionEpoch);
+            Assert.Equal(4, probes);
+        }
+        await using var reopened = await ProjectWorkspace.OpenAsync(Project, Validate, (_, _) => probes++);
+        Assert.Equal(5, probes);
+    }
+    [Fact] public async Task FailedCandidateDoesNotPopulateFinalizedMediaCache()
+    {
+        int probes = 0;
+        await using var workspace = ProjectWorkspace.Create(Project, "project1", Validate, (_, _) => probes++);
+        await File.WriteAllBytesAsync(workspace.Resolve("media/screen.mp4"), FinalizedMp4Header);
+        var pointer = workspace.Resolve("events/pointer.jsonl");
+        await File.WriteAllTextAsync(pointer, "invalid JSON");
+        var candidate = Snapshot() with { Media = Snapshot().Media.Append(new MediaAsset { Id = "pointer", Kind = MediaKind.PointerEvents,
+            Path = "events/pointer.jsonl", Duration = MediaTime.FromTicks(10_000_000) }).ToArray() };
+        await Assert.ThrowsAsync<IOException>(() => workspace.SaveAsync(candidate, workspace.SessionEpoch));
+        Assert.Equal(1, probes);
+        await File.WriteAllTextAsync(pointer, "{}");
+        await workspace.SaveAsync(candidate, workspace.SessionEpoch);
+        Assert.Equal(2, probes);
+        File.SetLastWriteTimeUtc(pointer, File.GetLastWriteTimeUtc(pointer).AddSeconds(1));
+        await File.WriteAllTextAsync(pointer, "[]");
+        await Assert.ThrowsAsync<IOException>(() => workspace.SaveAsync(candidate with { Revision = 2 }, workspace.SessionEpoch));
+    }
     [Fact] public async Task CleanupLeaseAllowsDamagedProjectsAndRejectsActiveWriterWithoutReadingOrReplacingData()
     {
         Directory.CreateDirectory(Project); var json = Path.Combine(Project, "project.json"); await File.WriteAllTextAsync(json, "damaged project");

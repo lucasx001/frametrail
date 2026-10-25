@@ -18,14 +18,14 @@ public sealed class RecordingMotionTests : IAsyncLifetime
     private static string Pointer(double seconds, int kind = 0, double x = 0.3, double y = 0.4, bool inside = true, int timescale = 10_000_000) =>
         JsonSerializer.Serialize(new { type = "pointer", ticks = (long)(seconds * timescale), timescale, x, y, inside, kind });
     private static IEnumerable<string> Stationary(double click = 1) => Enumerable.Range(0, 361).Select(i => Pointer(i / 60.0, i == (int)(click * 60) ? 1 : 0));
-    private sealed class Driver(Func<int, IEnumerable<string>> events, bool sourceFailure = false) : IRecordingDriver
+    private sealed class Driver(Func<int, IEnumerable<string>> events, bool sourceFailure = false, bool checkpointImmediately = false) : IRecordingDriver
     {
         private int index;
         public Task<IRecordingSegment> StartAsync(RecordingPlan plan, SegmentPaths paths, CancellationToken cancellationToken) =>
-            Task.FromResult<IRecordingSegment>(new Segment(paths, plan.RecordPointer, events(++index), sourceFailure));
-        private sealed class Segment(SegmentPaths paths, bool pointer, IEnumerable<string> events, bool sourceFailure) : IRecordingSegment
+            Task.FromResult<IRecordingSegment>(new Segment(paths, plan.RecordPointer, events(++index), sourceFailure, checkpointImmediately && index == 1));
+        private sealed class Segment(SegmentPaths paths, bool pointer, IEnumerable<string> events, bool sourceFailure, bool backdate) : IRecordingSegment
         {
-            public SegmentStart Start { get; } = new(Stopwatch.GetTimestamp(), Stopwatch.Frequency, 640, 360);
+            public SegmentStart Start { get; } = new(Stopwatch.GetTimestamp() - (backdate ? 6 * Stopwatch.Frequency : 0), Stopwatch.Frequency, 640, 360);
             public RecordingHealth Poll() => new(sourceFailure, sourceFailure ? "Fixture source closed" : null, Array.Empty<string>(), 0);
             public async Task<CompletedCapture> FinishAsync(long boundaryQpc)
             {
@@ -151,5 +151,146 @@ public sealed class RecordingMotionTests : IAsyncLifetime
         await library.SetDefaultAsync(null); await recorder.ResumeAsync(); var snapshot = (await recorder.StopAsync())!;
         Assert.Equal(2, snapshot.Segments.Count); Assert.Equal("crosshair", snapshot.Editor!.CursorStyle); Assert.Equal(1280u, snapshot.Canvas.Width);
         Assert.Equal(2, snapshot.Effects.Count); // Each separated click group keeps its own automatic motion.
+    }
+
+    [Fact] public async Task StopSavesRecoverableMediaBeforeWaitingForPlanningAndReleasesTransition()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var recorder = new RecordingCoordinator(new Driver(_ => Stationary()), EngineSession.ValidateProject, (_, _) => { })
+        {
+            PlanningBarrier = async token => { entered.TrySetResult(); await release.Task.WaitAsync(token); }
+        };
+        await recorder.StartAsync(Plan);
+        var stopping = recorder.StopAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(stopping.IsCompleted);
+        var raw = ProjectJson.Deserialize(await File.ReadAllTextAsync(recorder.Workspace!.Resolve("project.json")));
+        Assert.Single(raw.Segments); Assert.Empty(raw.Effects);
+        var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(recorder.Workspace.Resolve("recovery/manifest.json")));
+        Assert.Contains("segment-", manifest.RootElement.GetProperty("checkpointJson").GetString());
+        // This must acquire transition immediately and reject the invalid state,
+        // rather than block behind native planning while the recording is stopped.
+        var marker = recorder.AddMarkerAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => marker.WaitAsync(TimeSpan.FromSeconds(2)));
+        release.TrySetResult();
+        var saved = (await stopping.WaitAsync(TimeSpan.FromSeconds(5)))!;
+        Assert.Single(saved.Effects); Assert.Equal(RecordingWorkspaceState.RecordingComplete, recorder.State);
+    }
+
+    [Fact] public async Task SourceClosureWaitsForPlanningOutsideTransitionBeforeReportingComplete()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var recorder = new RecordingCoordinator(new Driver(_ => Stationary(), sourceFailure: true), EngineSession.ValidateProject, (_, _) => { })
+        {
+            PlanningBarrier = async token => { entered.TrySetResult(); await release.Task.WaitAsync(token); }
+        };
+        recorder.StatusChanged += (_, status) => { if (status.State == RecordingWorkspaceState.RecordingComplete) completed.TrySetResult(); };
+        await recorder.StartAsync(Plan);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(completed.Task.IsCompleted); Assert.NotNull(recorder.Workspace!.Snapshot);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => recorder.AddMarkerAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+        release.TrySetResult();
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(recorder.Workspace.Snapshot!.Effects);
+    }
+
+    [Fact] public async Task IncrementalReaderDoesNotReopenConsumedTracksAndProtectsAuthoredZoom()
+    {
+        await using var workspace = ProjectWorkspace.Create(Project, "incremental", EngineSession.ValidateProject, (_, _) => { });
+        await File.WriteAllBytesAsync(workspace.Resolve("media/screen.mp4"), PersistenceTests.FinalizedMp4Header);
+        await File.WriteAllLinesAsync(workspace.Resolve("events/first.jsonl"), new[] { Pointer(1,1), Pointer(5.5,1) });
+        var initial = new ProjectSnapshot { ProjectId = "incremental", Revision = 1, SourceDuration = MediaTime.FromTicks(60_000_000),
+            Segments = new[] { new RecordingSegment { Id = "clip", SourceDuration = MediaTime.FromTicks(60_000_000) } },
+            Media = new[] { new MediaAsset { Id = "screen", Kind = MediaKind.Screen, Path = "media/screen.mp4", Duration = MediaTime.FromTicks(60_000_000), Width = 640, Height = 360 },
+                new MediaAsset { Id = "pointer-first", Kind = MediaKind.PointerEvents, Path = "events/first.jsonl", Duration = MediaTime.FromTicks(60_000_000) } } };
+        var planner = new AutomaticZoomPlanner();
+        var first = await planner.AppendAsync(workspace, initial, CancellationToken.None);
+        Assert.Equal(1, planner.FilesRead);
+        File.Delete(workspace.Resolve("events/first.jsonl"));
+        var changed = first.Effects.Last();
+        var authored = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(changed.Parameters.GetRawText())!;
+        authored["origin"] = JsonSerializer.SerializeToElement("edited");
+        changed = changed with { Parameters = JsonSerializer.SerializeToElement(authored) };
+        await File.WriteAllLinesAsync(workspace.Resolve("events/second.jsonl"), new[] { Pointer(0.1,1) });
+        var next = first with { SourceDuration = MediaTime.FromTicks(120_000_000),
+            Segments = new[] { initial.Segments[0] with { SourceDuration = MediaTime.FromTicks(120_000_000) } },
+            Media = new[] { initial.Media[0] with { Duration = MediaTime.FromTicks(120_000_000) }, initial.Media[1],
+                new MediaAsset { Id = "pointer-second", Kind = MediaKind.PointerEvents, Path = "events/second.jsonl", StartOffset = MediaTime.FromTicks(60_000_000), Duration = MediaTime.FromTicks(60_000_000) } },
+            Effects = first.Effects.Select(e => e.Id == changed.Id ? changed : e).ToArray() };
+        var result = await planner.AppendAsync(workspace, next, CancellationToken.None);
+        Assert.Equal(2, planner.FilesRead);
+        Assert.Equal(JsonSerializer.Serialize(changed.Parameters), JsonSerializer.Serialize(result.Effects.Single(e => e.Id == changed.Id).Parameters));
+    }
+
+    [Fact] public async Task EarlierPlanningResultMergesIntoTheLatestCompletedMediaCheckpoint()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var recorder = new RecordingCoordinator(new Driver(_ => Stationary(), checkpointImmediately: true), EngineSession.ValidateProject, (_, _) => { })
+        {
+            PlanningBarrier = async token => { entered.TrySetResult(); await release.Task.WaitAsync(token); }
+        };
+        await recorder.StartAsync(Plan with { CheckpointSeconds = 5 });
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var pausing = recorder.PauseAsync();
+            var deadline = Stopwatch.StartNew();
+            while (recorder.Workspace!.Snapshot!.SourceDuration.Ticks != 120_000_000 && deadline.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(20);
+            Assert.Equal(120_000_000, recorder.Workspace.Snapshot!.SourceDuration.Ticks);
+            Assert.Equal(2, recorder.Workspace.Snapshot.Media.Count(m => m.Kind == MediaKind.Screen));
+            release.TrySetResult();
+            await pausing.WaitAsync(TimeSpan.FromSeconds(5));
+            var final = (await recorder.StopAsync())!;
+            Assert.Equal(120_000_000, final.SourceDuration.Ticks);
+            Assert.Equal(2, final.Media.Count(m => m.Kind == MediaKind.Screen));
+            Assert.Single(final.Segments); Assert.Equal(2, final.Effects.Count);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact] public async Task DisposeCancelsPendingDerivedWorkAndPreservesTheRawCheckpoint()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recorder = new RecordingCoordinator(new Driver(_ => Stationary()), EngineSession.ValidateProject, (_, _) => { })
+        {
+            PlanningBarrier = async token => { entered.TrySetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+        };
+        await recorder.StartAsync(Plan);
+        var stopping = recorder.StopAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await recorder.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await stopping.WaitAsync(TimeSpan.FromSeconds(5));
+        await using var reopened = await ProjectWorkspace.OpenAsync(Project, EngineSession.ValidateProject, (_, _) => { });
+        Assert.Single(reopened.Snapshot!.Segments); Assert.Empty(reopened.Snapshot.Effects);
+    }
+    [Fact] public async Task PlanningCommitHonorsANewerAuthoredRevisionAndDoesNotOverwriteItsZoom()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var recorder = new RecordingCoordinator(new Driver(_ => Stationary()), EngineSession.ValidateProject, (_, _) => { })
+        {
+            PlanningBarrier = async token => { entered.TrySetResult(); await release.Task.WaitAsync(token); }
+        };
+        await recorder.StartAsync(Plan);
+        var stopping = recorder.StopAsync();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var workspace = recorder.Workspace!;
+            var raw = workspace.Snapshot!;
+            var authored = new SourceEffect { Id = "authored", Kind = "zoom", SourceDuration = raw.SourceDuration,
+                Parameters = JsonSerializer.SerializeToElement(new { origin = "edited", scale = 2.2 }) };
+            await workspace.SaveAsync(raw with { Revision = 100, Effects = new[] { authored } }, workspace.SessionEpoch);
+            release.TrySetResult();
+            var result = (await stopping.WaitAsync(TimeSpan.FromSeconds(5)))!;
+            Assert.True(result.Revision > 100);
+            Assert.Equal("authored", Assert.Single(result.Effects).Id);
+            Assert.Equal(2.2, result.Effects[0].Parameters.GetProperty("scale").GetDouble());
+        }
+        finally { release.TrySetResult(); }
     }
 }

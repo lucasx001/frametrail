@@ -56,8 +56,15 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     private RecordingWorkspaceState state;
     private double peak;
     private bool disposed;
+    private bool closing;
+    private readonly object disposalGate = new();
+    private Task? disposal;
     private bool checkpointDisabled;
     private bool startTimelineClip;
+    private AutomaticZoomPlanner zoomPlanner = new();
+    private Task planningWork = Task.CompletedTask;
+    private CancellationTokenSource planningCancellation = new();
+    internal Func<CancellationToken, Task>? PlanningBarrier { get; init; }
     private IReadOnlyList<string> activePending = Array.Empty<string>();
     private readonly List<string> abandonedPending = new();
     public event EventHandler<RecordingWorkspaceStatus>? StatusChanged;
@@ -73,7 +80,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
         await transition.WaitAsync(cancellationToken);
         try
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
+            ObjectDisposedException.ThrowIf(disposed || closing, this);
             if (state is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException("A recording is already active.");
             if (requested.CheckpointSeconds < 5 || requested.CheckpointSeconds > 300) throw new ArgumentOutOfRangeException(nameof(requested.CheckpointSeconds));
             if (!VideoCodecs.IsSupported(requested.VideoCodec)) throw new ArgumentException("Unsupported recording codec.", nameof(requested));
@@ -82,9 +89,13 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             if (requested.Android is not null && (requested.RecordPointer || requested.Camera is not null || requested.Audio?.Any(a => a.Kind != AudioCaptureKind.Microphone) == true))
                 throw new ArgumentException("Android recording uses phone audio and optional computer microphone; disable Windows pointer, camera and system audio.");
             if (requested.Audio?.GroupBy(a => a.Kind == AudioCaptureKind.Microphone).Any(g => g.Count() > 1) == true) throw new ArgumentException("Only one microphone and one system/process audio track are supported.");
+            planningCancellation.Cancel();
             if (workspace is not null) { await workspace.DisposeAsync(); workspace = null; }
             runId = Guid.NewGuid(); plan = requested with { Audio = requested.Audio?.ToArray() ?? Array.Empty<AudioSelection>(), ProjectPath = Path.GetFullPath(requested.ProjectPath) };
             media.Clear(); segments.Clear(); markers.Clear(); warnings.Clear(); warningSet.Clear(); sourceTicks = 0; revision = 0; segmentIndex = 0; lastBoundary = 0;
+            zoomPlanner = new();
+            planningCancellation.Dispose(); planningCancellation = new();
+            planningWork = Task.CompletedTask;
             SetState(RecordingWorkspaceState.Preparing);
             createdProjectId = Guid.NewGuid().ToString("N");
             checkpointDisabled = false; activePending = Array.Empty<string>(); abandonedPending.Clear();
@@ -109,6 +120,8 @@ public sealed class RecordingCoordinator : IAsyncDisposable
 
     public async Task PauseAsync()
     {
+        Task pendingPlanning;
+        Guid expectedRun;
         await transition.WaitAsync();
         try
         {
@@ -116,9 +129,20 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             SetState(RecordingWorkspaceState.Pausing);
             await CompleteSegmentAsync(Stopwatch.GetTimestamp());
             await WriteManifestAsync("paused");
-            SetState(RecordingWorkspaceState.Paused);
+            pendingPlanning = planningWork; expectedRun = runId;
         }
         catch (Exception error) { AddWarning(error.Message); SetState(RecordingWorkspaceState.Paused); throw; }
+        finally { transition.Release(); }
+        await pendingPlanning;
+        await transition.WaitAsync();
+        try
+        {
+            if (runId == expectedRun && state == RecordingWorkspaceState.Pausing)
+            {
+                await WriteManifestAsync("paused");
+                SetState(RecordingWorkspaceState.Paused);
+            }
+        }
         finally { transition.Release(); }
     }
     public async Task ResumeAsync(CancellationToken cancellationToken = default)
@@ -137,6 +161,9 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     }
     public async Task<ProjectSnapshot?> StopAsync()
     {
+        Task pendingPlanning;
+        Guid expectedRun;
+        ProjectWorkspace stoppedWorkspace;
         await transition.WaitAsync();
         try
         {
@@ -144,11 +171,19 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             SetState(RecordingWorkspaceState.Finalizing); monitorCancellation?.Cancel();
             if (active is not null) await CompleteSegmentAsync(Stopwatch.GetTimestamp());
             await WriteManifestAsync(media.Any(m => m.Kind == MediaKind.Screen) ? "complete" : "failed");
-            await workspace!.BarrierAsync(); if (driver is IRecordingRunDriver run) await run.EndRunAsync(); SetState(RecordingWorkspaceState.RecordingComplete);
-            return workspace.Snapshot;
+            await workspace!.BarrierAsync();
+            pendingPlanning = planningWork; expectedRun = runId; stoppedWorkspace = workspace;
         }
-        catch (Exception error) { AddWarning("Finalization failed; completed checkpoints remain recoverable: " + error.Message); SetState(RecordingWorkspaceState.RecordingComplete); throw; }
-        finally { try { if (driver is IRecordingRunDriver run) await run.EndRunAsync(); } finally { transition.Release(); } }
+        catch (Exception error)
+        {
+            AddWarning("Finalization failed; completed checkpoints remain recoverable: " + error.Message);
+            if (driver is IRecordingRunDriver run) await run.EndRunAsync();
+            SetState(RecordingWorkspaceState.RecordingComplete);
+            throw;
+        }
+        finally { transition.Release(); }
+        await CompletePlanningAsync(expectedRun, pendingPlanning);
+        return stoppedWorkspace.Snapshot;
     }
     public async Task AddMarkerAsync(string label = "")
     {
@@ -223,29 +258,96 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             try { var library = presetLibrary(); var catalog = await library.ListAsync(); if (catalog.DefaultId is string id) checkpoint = await library.ApplyAsync(id, checkpoint, workspace.DirectoryPath); }
             catch (Exception error) { AddWarning(L.T("SDB4C03498049") + error.Message); }
         }
-        if (plan!.AutomaticZoom && plan.RecordPointer && plan.Android is null && media.Any(m => m.Kind == MediaKind.PointerEvents))
+        // Recovery must precede optional planning. No planner parsing or native
+        // camera computation runs while holding the recording transition lock.
+        if (!await workspace!.SaveAsync(checkpoint, workspace.SessionEpoch))
+            throw new IOException("The recording checkpoint was superseded before it could be saved.");
+        await WriteManifestAsync("recording");
+        QueueAutomaticZoom(checkpoint);
+    }
+    private void QueueAutomaticZoom(ProjectSnapshot checkpoint)
+    {
+        if (!plan!.AutomaticZoom || !plan.RecordPointer || plan.Android is not null ||
+            !checkpoint.Media.Any(m => m.Kind == MediaKind.PointerEvents)) return;
+        var previous = planningWork;
+        var target = workspace!;
+        var expectedRun = runId;
+        var planner = zoomPlanner;
+        var token = planningCancellation.Token;
+        planningWork = Task.Run(async () =>
         {
             try
             {
-                checkpoint = await Task.Run(async () => EngineSession.Edit(checkpoint,
-                    await AutomaticZoomPlanner.CreateCommandAsync(workspace!, checkpoint)));
-                revision = checkpoint.Revision;
+                await previous.ConfigureAwait(false);
+                if (PlanningBarrier is not null) await PlanningBarrier(token).ConfigureAwait(false);
+                var planned = await planner.AppendAsync(target, checkpoint, token).ConfigureAwait(false);
+                await transition.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    if (disposed || runId != expectedRun || workspace != target || token.IsCancellationRequested) return;
+                    var latest = target.Snapshot!;
+                    var authored = latest.Effects.Where(e => !AutomaticZoomPlanner.IsGenerated(e)).ToArray();
+                    var derived = planned.Effects.Where(AutomaticZoomPlanner.IsGenerated)
+                        .Where(e => !authored.Any(a => a.Id == e.Id || a.Kind == "zoom" &&
+                            VisualResources.Ticks(a.SourceStart) < VisualResources.Ticks(e.SourceStart) + VisualResources.Ticks(e.SourceDuration) &&
+                            VisualResources.Ticks(e.SourceStart) < VisualResources.Ticks(a.SourceStart) + VisualResources.Ticks(a.SourceDuration))).ToArray();
+                    // Merge only derived effects into the latest media checkpoint;
+                    // a slow earlier result must never roll back newer source tracks.
+                    revision = checked(Math.Max(revision, latest.Revision) + 1);
+                    var candidate = latest with { Revision = revision, Effects = authored.Concat(derived).ToArray() };
+                    if (!await target.SaveAsync(candidate, target.SessionEpoch).ConfigureAwait(false))
+                        throw new IOException("Automatic camera planning was superseded before commit.");
+                    await WriteManifestAsync(state == RecordingWorkspaceState.Pausing || state == RecordingWorkspaceState.Paused ? "paused" :
+                        state == RecordingWorkspaceState.Finalizing || state == RecordingWorkspaceState.RecordingComplete ? "complete" : "recording").ConfigureAwait(false);
+                }
+                finally { transition.Release(); }
             }
-            catch (Exception error) when (error is IOException or JsonException or EngineException or ProjectFormatException or InvalidOperationException or FormatException or OverflowException or KeyNotFoundException)
+            catch (Exception) when (token.IsCancellationRequested) { }
+            catch (Exception error) when (error is not OutOfMemoryException and not AccessViolationException)
             {
-                // Camera planning is optional; it must never discard finalized media.
-                AddWarning(L.T("S542AA18A92E5") + error.Message);
+                await transition.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (runId == expectedRun && workspace == target && !disposed)
+                    {
+                        AddWarning(L.T("S542AA18A92E5") + error.Message);
+                        try
+                        {
+                            await WriteManifestAsync(state == RecordingWorkspaceState.Finalizing ? "complete" :
+                                state == RecordingWorkspaceState.Pausing ? "paused" : "recording").ConfigureAwait(false);
+                        }
+                        catch (Exception manifestError) when (manifestError is IOException or UnauthorizedAccessException)
+                        {
+                            AddWarning("Planning warning could not update the recovery manifest: " + manifestError.Message);
+                        }
+                        Publish();
+                    }
+                }
+                finally { transition.Release(); }
             }
+        }, CancellationToken.None);
+    }
+    private async Task CompletePlanningAsync(Guid expectedRun, Task pendingPlanning)
+    {
+        // Await outside transition: the planner needs a brief commit turn under it.
+        await pendingPlanning.ConfigureAwait(false);
+        await transition.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (runId != expectedRun || state != RecordingWorkspaceState.Finalizing) return;
+            await WriteManifestAsync(media.Any(m => m.Kind == MediaKind.Screen) ? "complete" : "failed").ConfigureAwait(false);
+            await workspace!.BarrierAsync().ConfigureAwait(false);
+            if (driver is IRecordingRunDriver run) await run.EndRunAsync().ConfigureAwait(false);
+            SetState(RecordingWorkspaceState.RecordingComplete);
         }
-        await workspace!.SaveAsync(checkpoint, workspace.SessionEpoch);
-        await WriteManifestAsync("recording");
+        finally { transition.Release(); }
     }
     private ProjectSnapshot MakeSnapshot()
     {
         var main = media.First(m => m.Kind == MediaKind.Screen);
         return new() { SchemaVersion = plan!.Android is null ? 1 : 2,
             PrimarySource = plan.Android is null ? null : new() { Kind = "androidUsb", Width = main.Width, Height = main.Height },
-            ProjectId = workspace!.Snapshot?.ProjectId ?? projectIdentity(), Revision = ++revision,
+            ProjectId = workspace!.Snapshot?.ProjectId ?? projectIdentity(), Revision = revision = checked(Math.Max(revision, workspace.Snapshot?.Revision ?? 0) + 1),
             SourceDuration = MediaTime.FromTicks(sourceTicks), Media = media.ToArray(), Segments = segments.ToArray(),
             Effects = workspace.Snapshot?.Effects ?? Array.Empty<SourceEffect>(),
             Markers = markers.Where(m => m.Time.Ticks <= sourceTicks).ToArray(),
@@ -269,6 +371,7 @@ public sealed class RecordingCoordinator : IAsyncDisposable
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
             while (await timer.WaitForNextTickAsync(token))
             {
+                Task? finalPlanning = null;
                 await transition.WaitAsync(token);
                 try
                 {
@@ -279,9 +382,9 @@ public sealed class RecordingCoordinator : IAsyncDisposable
                     {
                         AddWarning(health.MainError ?? "Screen source ended."); SetState(RecordingWorkspaceState.Finalizing);
                         await CompleteSegmentAsync(Stopwatch.GetTimestamp()); await WriteManifestAsync("complete");
-                        if (driver is IRecordingRunDriver run) await run.EndRunAsync(); SetState(RecordingWorkspaceState.RecordingComplete); break;
+                        finalPlanning = planningWork;
                     }
-                    if (!checkpointDisabled && CurrentTicks() - sourceTicks >= TimeSpan.FromSeconds(plan!.CheckpointSeconds).Ticks)
+                    else if (!checkpointDisabled && CurrentTicks() - sourceTicks >= TimeSpan.FromSeconds(plan!.CheckpointSeconds).Ticks)
                     {
                         var previous = active;
                         try { await BeginSegmentAsync(token); }
@@ -292,6 +395,11 @@ public sealed class RecordingCoordinator : IAsyncDisposable
                     Publish();
                 }
                 finally { transition.Release(); }
+                if (finalPlanning is not null)
+                {
+                    await CompletePlanningAsync(expectedRun, finalPlanning);
+                    break;
+                }
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -306,12 +414,39 @@ public sealed class RecordingCoordinator : IAsyncDisposable
     private void AddWarning(string value) { if (warningSet.Add(value)) warnings.Add(value); }
     private void SetState(RecordingWorkspaceState value) { state = value; Publish(); }
     private void Publish() => StatusChanged?.Invoke(this, new(runId, state, TimeSpan.FromTicks(CurrentTicks()), workspace?.DirectoryPath, warnings.ToArray(), peak));
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+    {
+        lock (disposalGate) return new(disposal ??= DisposeCoreAsync());
+    }
+    private async Task DisposeCoreAsync()
     {
         if (disposed) return;
-        await StopAsync(); monitorCancellation?.Cancel(); if (monitor is not null) await monitor;
+        closing = true;
+        // Closing may abandon derived work; completed media is persisted before
+        // it is queued, and Stop still finalizes any active capture first.
         await transition.WaitAsync();
-        try { disposed = true; if (workspace is not null) await workspace.DisposeAsync(); }
-        finally { transition.Release(); monitorCancellation?.Dispose(); }
+        try { planningCancellation.Cancel(); }
+        finally { transition.Release(); }
+        try { await StopAsync(); }
+        finally
+        {
+            monitorCancellation?.Cancel();
+            try
+            {
+                await planningWork;
+                if (monitor is not null) await monitor;
+            }
+            finally
+            {
+                await transition.WaitAsync();
+                try
+                {
+                    disposed = true;
+                    if (active is not null) { await active.DisposeAsync(); active = null; }
+                    if (workspace is not null) await workspace.DisposeAsync();
+                }
+                finally { transition.Release(); monitorCancellation?.Dispose(); planningCancellation.Dispose(); }
+            }
+        }
     }
 }

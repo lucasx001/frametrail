@@ -6,12 +6,12 @@ namespace frametrail::core {
 // DogSC MotionStyle: sqrt(210 / 2.4) / (2*pi), 42 / (2*sqrt(210*2.4)).
 inline constexpr double default_spring_frequency = 1.4887581711534412;
 inline constexpr double default_spring_damping = 0.9354143466934853;
-struct FocusPoint { int64_t ticks{}; double x{0.5}, y{0.5}, from_x{0.5}, from_y{0.5}; };
+struct FocusPoint { int64_t ticks{}; double x{0.5}, y{0.5}, from_x{0.5}, from_y{0.5}; int64_t transition_start{-1}; };
 struct VisualEffect {
     std::string id, kind, mode, path, text, attachment{"screen"}, target{"screen"}, easing{"cubic"};
     int64_t start{}, duration{};
     Rect rect{0.25, 0.25, 0.5, 0.5};
-    double scale{1.6}, focus_x{0.5}, focus_y{0.5}, enter{0.7}, exit{0.7};
+    double scale{1.6}, focus_x{0.5}, focus_y{0.5}, enter{0.7}, exit{0.7}, focus_transition{0.7};
     double strength{16}, opacity{1}, angle_x{}, angle_y{}, rotation{}, frequency{default_spring_frequency}, damping{default_spring_damping};
     bool outside_hidden{};
     std::vector<FocusPoint> focus_points;
@@ -31,5 +31,6 @@ double motion_curve(double progress, std::string_view easing, double frequency =
 double effect_envelope(const VisualEffect& effect, int64_t source_ticks);
 VisualScene evaluate_visuals(const std::vector<VisualEffect>& effects, int64_t source_ticks);
 void generate_auto_zoom(Project& project, std::string_view command);
+void append_auto_zoom(Project& project, std::string_view command);
 std::array<double, 2> smooth_pointer(const std::vector<FocusPoint>& points, int64_t ticks, double smoothing_seconds);
 } // namespace frametrail::core
