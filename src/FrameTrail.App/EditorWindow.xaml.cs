@@ -17,22 +17,20 @@ public sealed partial class EditorWindow : Window
     private readonly EditorSession editor;
     private readonly PreviewSurface preview = new();
     private readonly EditorTimeline timeline = new();
-    private readonly Stopwatch playbackClock = new();
+    private readonly EditorTransportController transport = new();
+    private readonly EditorEditController editController;
+    private readonly EditorAssetCoordinator assetCoordinator = new();
+    private bool playing => transport.Playing;
+    private Task audioStopWork => transport.StopWork;
     private EngineSession mapper = new();
     private CancellationTokenSource exportCancellation = new();
-    private Channel<long>? thumbnails;
-    private readonly HashSet<long> pendingThumbnails = new();
-    private long position, playbackStart;
+    private long position;
     private string? selected, preparedAudio;
     private SdrColor background = new();
     private (CanvasSettings Canvas, EditorSettings Editor)? copiedPicture;
-    private bool ready, working, playing, rendering, allowClose, closing, streamedPlayback;
+    private bool ready, working, rendering, allowClose, closing;
     private string? validationDirectory;
     private int renderedFrames;
-    private readonly PlaybackFrameGate playbackFrames = new();
-    private readonly SemaphoreSlim audioTransport = new(1);
-    private Task audioStopWork = Task.CompletedTask;
-    private long playbackGeneration;
     private bool fittedTimeline, showingExport;
     private readonly TaskCompletionSource<bool> startup = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Func<string, Task>? openProject;
@@ -47,7 +45,9 @@ public sealed partial class EditorWindow : Window
 
     internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null, Action? browseProjects = null)
     {
-        editor = new EditorSession(workspace); this.validationDirectory = validationDirectory;
+        editor = new EditorSession(workspace);
+        editController = new EditorEditController(editor);
+        this.validationDirectory = validationDirectory;
         this.openProject = openProject;
         this.deleteProject = deleteProject;
         this.browseProjects = browseProjects;
@@ -68,15 +68,15 @@ public sealed partial class EditorWindow : Window
         editor.Changed += (_, _) => DispatcherQueue.TryEnqueue(UpdateState);
         timeline.Seek += async ticks => { if (!working && !editor.IsExporting) await SafeAsync(() => SeekAsync(ticks)); };
         timeline.SelectClip += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); RefreshTimeline(); }); };
-        timeline.BeginEdit += () => { if (working || editor.IsExporting) return; Pause(); editor.BeginTransaction(); };
+        timeline.BeginEdit += () => { if (working || editor.IsExporting) return; Pause(); editController.Begin(EditorEditOwner.Timeline); };
         timeline.PreviewEdit += command => {
             if (working || editor.IsExporting) return;
-            try { var candidate = editor.PreviewCommand(command); timeline.Set(EngineSession.ResolveTimeline(candidate), selected, position); }
+            try { var candidate = editController.Preview(EditorEditOwner.Timeline, command); timeline.Set(EngineSession.ResolveTimeline(candidate), selected, position); }
             catch (Exception error) { ShowNotice(L.T("S72DC2DB39CED"), error.Message); }
         };
         timeline.EndEdit += async commit => {
             if (working || editor.IsExporting) return;
-            if (commit) await PerformAsync(editor.CommitTransactionAsync); else { editor.CancelTransaction(); RefreshTimeline(); }
+            if (commit) await PerformAsync(() => editController.CommitAsync(EditorEditOwner.Timeline)); else { editController.CancelCurrent(); RefreshTimeline(); }
         };
         timeline.ThumbnailsNeeded += RequestThumbnails;
         preview.Failed += (_, error) => ShowNotice(L.T("SC759601593C2"), error.Message + L.T("SFC665652D1F0"), InfoBarSeverity.Warning);
@@ -188,7 +188,7 @@ public sealed partial class EditorWindow : Window
     private async Task ReloadAsync()
     {
         Pause(); await StopAssetsAsync(); audioCacheKey = null; mediaCache?.Unpin(preparedAudio);
-        preparedAudio = null; thumbnails = Channel.CreateBounded<long>(128); pendingThumbnails.Clear(); timeline.ClearAssets();
+        preparedAudio = null; timeline.ClearAssets();
         mapper.Dispose(); mapper = new EngineSession(); mapper.LoadProject(editor.Snapshot);
         if (!editor.Timeline.Clips.Any(c => c.Id == selected)) selected = editor.Timeline.Clips.First().Id;
         position = Math.Clamp(position, 0, Math.Max(0, editor.Timeline.Duration - 1));
@@ -268,31 +268,23 @@ public sealed partial class EditorWindow : Window
         if (cropEditing) await ToggleCropEditingAsync();
         canvasOverlay.Finish(true);await canvasCommitWork;
         if (position >= editor.Timeline.Duration - 1) position = 0;
-        var current=preview.Session;if(current is null)return;long request=++playbackGeneration;
-        await audioTransport.WaitAsync();
-        try {
-            if(request!=playbackGeneration||closing||current!=preview.Session)return;
-            streamedPlayback = !previewMuted && editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio);
-            if (streamedPlayback) await Task.Run(() => current.StreamAudio(position));
-            if(request!=playbackGeneration||closing)return;
-        } finally {audioTransport.Release();}
-        playbackStart = position; playbackClock.Restart(); playbackFrames.Reset(); playing = true; canvasOverlay.SetItems([]); PlayGlyph.Kind = "Pause";
+        var current = preview.Session;
+        if (current is null) return;
+        bool hasAudio = !previewMuted && editor.Snapshot.Media.Any(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio);
+        if (!await transport.StartAsync(position, hasAudio, () => Task.Run(() => current.StreamAudio(position)),
+            () => !closing && current == preview.Session)) return;
+        canvasOverlay.SetItems([]);
+        PlayGlyph.Kind = "Pause";
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += PlaybackRendering;
     }
     private void Pause(bool cancelBrowsing = true)
     {
         if (cancelBrowsing) CancelBrowsing();
-        playbackGeneration++;
-        playing = false; Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering; playbackClock.Stop(); PlayGlyph.Kind = "Play";
-        if (preview.Session is { } current) audioStopWork=StopPreviewAudioAsync(current);
+        transport.Pause(preview.Session is { } current ? () => Task.Run(current.StopAudio) : null, SafeDiagnostics.Record);
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering;
+        PlayGlyph.Kind = "Play";
         QueueCanvasGeometry();
-    }
-    private async Task StopPreviewAudioAsync(MediaSession current)
-    {
-        await audioTransport.WaitAsync();
-        try {await Task.Run(current.StopAudio);}catch(ObjectDisposedException){}catch(Exception error){SafeDiagnostics.Record(error);}
-        finally {audioTransport.Release();}
     }
     private async Task TickAsync()
     {
@@ -300,8 +292,8 @@ public sealed partial class EditorWindow : Window
         rendering = true;
         try {
             var status = preview.Session.Status;
-            if (streamedPlayback && status.AudioRunning == 3) { Pause(); ShowNotice(L.T("SC73025417431"), L.T("SF83C898D4E60")); return; }
-            var time = streamedPlayback && status.AudioTicks >= 0 ? status.AudioTicks : playbackStart + playbackClock.Elapsed.Ticks;
+            if (transport.UsesAudio && status.AudioRunning == 3) { Pause(); ShowNotice(L.T("SC73025417431"), L.T("SF83C898D4E60")); return; }
+            var time = transport.Position(status.AudioTicks);
             if (time >= editor.Timeline.Duration - TimeSpan.TicksPerMillisecond) { Pause(); position = Math.Max(0, editor.Timeline.Duration - 1); }
             else position = Math.Max(0, time);
             await preview.RenderAsync(position, false); renderedFrames++; UpdateClock();
@@ -310,7 +302,7 @@ public sealed partial class EditorWindow : Window
     }
     private async void PlaybackRendering(object? sender, object args)
     {
-        if (!playing || rendering || !playbackFrames.TryAdvance(playbackClock.Elapsed.Ticks)) return;
+        if (!playing || rendering || !transport.ShouldRender()) return;
         await TickAsync();
     }
     private async void Play_Click(object sender, RoutedEventArgs e) => await SafeAsync(async () => { if (playing) Pause(); else await StartPlaybackAsync(); });
@@ -435,7 +427,7 @@ public sealed partial class EditorWindow : Window
         else if (inspectorTab == 2 && e.Key == VirtualKey.Delete && selectedEffect is not null) { e.Handled = true; await PerformAsync(() => editor.DeleteEffectAsync(selectedEffect)); }
         else if (e.Key == VirtualKey.Space) { e.Handled = true; await SafeAsync(async () => { if (playing) Pause(); else await StartPlaybackAsync(); }); }
         else if (e.Key == VirtualKey.Left || e.Key == VirtualKey.Right) { e.Handled = true; await SafeAsync(() => SeekAsync(position + (e.Key == VirtualKey.Left ? -1 : 1) * TimeSpan.TicksPerSecond / editor.Snapshot.Export.Fps.Numerator)); }
-        else if (e.Key == VirtualKey.Escape) { e.Handled = true; timeline.CancelDrag(); editor.CancelTransaction(); RefreshTimeline(); }
+        else if (e.Key == VirtualKey.Escape) { e.Handled = true; timeline.CancelDrag(); editController.CancelCurrent(); RefreshTimeline(); }
         else if (e.Key == VirtualKey.S) { e.Handled = true; Split_Click(sender, e); }
         else if (e.Key == VirtualKey.Delete) { e.Handled = true; Delete_Click(sender, e); }
     }

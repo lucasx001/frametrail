@@ -133,7 +133,7 @@ Schema 1 增加可选 `editor` 对象；旧录制没有此字段时使用中性�
 
 | 效果 | 已知参数 |
 |---|---|
-| zoom | scale 1–4；focusX/Y 0–1，属于裁切并 fit 后的屏幕内容；可选 focusPoints 为严格递增的 `{ticks,x,y}` 源时间关键点，最多 10000 项 |
+| zoom | scale 1–4；focusX/Y 0–1，属于裁切并 fit 后的屏幕内容；可选 focusPoints 为严格递增的 `{ticks,x,y}` 源时间关键点，最多 10000 项；focusTransition 可独立指定 0–5 秒焦点过渡，默认使用 enter |
 | tilt | angleX/Y 为 −35°–35°；target 为 screen/camera |
 | mask | mode 为 solid/pixelate/blur；strength 1–64 源像素；归一化 x/y/width/height 必须完全位于 attachment 内 |
 | focus | 同样的矩形与 strength，矩形内部清晰、外部柔化 |
@@ -144,7 +144,11 @@ Schema 1 增加可选 `editor` 对象；旧录制没有此字段时使用中性�
 
 mask/focus/sticker 的 attachment 为 screen/canvas。screen 坐标相对裁切后的屏幕，光标/贴图随屏幕投影；canvas 坐标相对整个成片。图层顺序为背景 → 屏幕内容及其遮挡 → 光标/屏幕贴图及样机 → 屏幕投影 → 独立摄像头投影 → 画布贴图 → 画布遮挡。区域效果固定按聚焦、柔化、像素化、实心遮挡处理，防止后续柔化重新暴露实心遮挡区域。同一 attachment 最多同时 32 个区域，最多同时 64 个贴图，均在接受工程时验证。
 
-新增 autoZoom/effectUpsert/effectDelete/effectAtOutput 命令；后者把输出拖动位置交给唯一 TimelineMap 转为源时间，移动/裁边保留或重定位焦点关键点。效果时间线范围通过区间索引解析，最多 100 万个输出范围。origin 为 manual/automatic/edited；只有 origin=automatic 且 planner=dogsc-v1 的片段参与自动替换，编辑后保留。自动片段 ID 在与手工 ID 冲突时稳定加后缀。
+`autoZoom/effectUpsert/effectDelete/effectAtOutput` 中，effectAtOutput 把输出拖动位置交给唯一 TimelineMap 转为源时间，移动/裁边保留或重定位焦点关键点。效果时间线范围通过区间索引解析，最多 100 万个输出范围。origin 为 manual/automatic/edited；旧显式 autoZoom 只替换 origin=automatic 且 planner=dogsc-v1 的效果，旧工程不自动重算。自动片段 ID 在与手工 ID 冲突时稳定加后缀。
+
+新录制使用 `autoZoomAppend`，每批最多 8192 个活动事件，throughTicks 不超过 sourceDuration。自动效果标记 `planner=frametrail-incremental-v1`；末尾效果的私有 plannerState 只保存未闭合活动摘要，recentActivity 最多 128 项。录制器只合并该版本的派生效果，保留更新的素材、修订及人工效果；人工编辑、复制和属性粘贴移除 plannerState。增量效果每条最多 2048 个 focus key，更长轨迹拆为连续效果，仍受工程整体 16 MiB 等上限约束。
+
+焦点轨首 key 可带 fromX/fromY（0–1）延续拆分前的焦点；key 可带 phaseTicks（整数 0–50000000），表示已有过渡的相对相位。实际 ticks 仍须递增且位于效果区间内，复制只平移 ticks，保留相位；裁边保留过渡状态，移动与重开继续使用绝对内容时间求值。密集跨位置点击的新规划器将焦点 key 约束在对应点击之前或当时，避免批次切分改变轨迹，语义差异见 [R2 验证](validation/r2-incremental-zoom.md)。
 
 参数实时预览通过 `ft_media_update_effects` 传递 `{revision,effects}` 编辑候选及请求代际，不允许修改媒体、时间线、声音或画布。它在现有媒体会话内校验并原子替换场景，保持 swap chain 与解码器；请求代际控制预览回退/重做，修订可回到已接受快照，不能用该入口绕过工作区的持久化修订规则。像素渲染仍在原生层执行，参数仅在编辑时更新，不作为逐帧 IPC。
 

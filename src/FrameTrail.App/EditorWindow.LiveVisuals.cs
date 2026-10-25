@@ -14,7 +14,8 @@ public sealed partial class EditorWindow
 {
     private DispatcherQueueTimer? visualPreviewTimer, visualCommitTimer;
     private Task visualPreviewWork = Task.CompletedTask, visualCommitWork = Task.CompletedTask;
-    private bool visualPending, visualTransaction, committingVisuals;
+    private bool visualPending, committingVisuals;
+    private bool visualTransaction => editController.Owner == EditorEditOwner.Visual;
     private int visualPreviewCount;
     private EditorBarSlider[] visualSliders = [];
     private bool AnyVisualControlDragging => visualSliders.Any(s => s.IsDragging) || MockupKnobs.Any(s => s.IsDragging) || MockupMetadataFocused;
@@ -73,12 +74,12 @@ public sealed partial class EditorWindow
     private ProjectSnapshot? StageVisualDraft()
     {
         if (mockupEditing) {
-            if (!visualTransaction) { editor.BeginTransaction(); visualTransaction = true; }
-            return editor.PreviewCommand(new { op = "settings", editor = MockupDraft() });
+            if (!visualTransaction) { editController.Begin(EditorEditOwner.Visual); }
+            return editController.Preview(EditorEditOwner.Visual, new { op = "settings", editor = MockupDraft() });
         }
         var effect = SelectedVisualDraft(); if (effect is null) return null;
-        if (!visualTransaction) { editor.BeginTransaction(); visualTransaction = true; }
-        return editor.PreviewCommand(new { op = "effectUpsert", effectId = effect.Id, effect });
+        if (!visualTransaction) { editController.Begin(EditorEditOwner.Visual); }
+        return editController.Preview(EditorEditOwner.Visual, new { op = "effectUpsert", effectId = effect.Id, effect });
     }
     private void LocateVisualPreview(ProjectSnapshot candidate)
     {
@@ -136,7 +137,7 @@ public sealed partial class EditorWindow
             if (visualPending) { visualPending = false; var candidate = StageVisualDraft(); if (candidate is not null) LocateVisualPreview(candidate); }
             if (!visualTransaction) return;
             var revision = editor.Snapshot.Revision;
-            await editor.CommitTransactionAsync(); visualTransaction = false;
+            await editController.CommitAsync(EditorEditOwner.Visual);
             // Keep the same surface and controls: committing must not steal input focus.
             await UpdateVisualPreviewAsync(editor.Snapshot);
             mapper.Dispose(); mapper = new EngineSession(); mapper.LoadProject(editor.Snapshot);
@@ -148,7 +149,7 @@ public sealed partial class EditorWindow
             if (editor.Snapshot.Revision != revision) await RestartVisualAssetsAsync();
         }
         catch (Exception error) {
-            if (visualTransaction) { editor.CancelTransaction(); visualTransaction = false; }
+            if (visualTransaction) { editController.Cancel(EditorEditOwner.Visual); }
             ShowNotice(L.T("SD3E418C0AFC6"), error.Message);
         }
         finally {
@@ -165,7 +166,7 @@ public sealed partial class EditorWindow
         committingVisuals = true; visualPending = false;
         try {
             await visualPreviewWork;
-            if (visualTransaction) { editor.CancelTransaction(); visualTransaction = false; }
+            if (visualTransaction) { editController.Cancel(EditorEditOwner.Visual); }
             await UpdateVisualPreviewAsync(editor.Snapshot);
             mockupEditing = false; loadingVisuals = true; try { RefreshMockupInspector(forceText: true); } finally { loadingVisuals = false; }
             LoadSelectedVisual(); RefreshTimeline();

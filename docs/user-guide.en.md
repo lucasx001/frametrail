@@ -24,6 +24,8 @@ Frame controls select window, browser and device frames. Drag the turntable, cli
 
 Cursor settings control the recorded pointer or built-in pointer styles, click feedback, idle hiding and timing. Positive timing values advance cursor presentation; negative values delay it without changing source events. Click-driven auto zoom is chosen before desktop recording and saved with the project; phone recordings do not support it.
 
+Cursor timing and history continue across physical recording checkpoints within the current editing clip. MP4/M4A export mixes and encodes audio in bounded blocks without preparing a complete temporary WAV. Explicit PCM preparation still supports RIFF/RF64.
+
 Choose Canvas → Background → Image to browse 18 bundled desktop wallpapers. Click a thumbnail to apply it; the blue border marks the current selection. Import background image adds your own picture. Built-in wallpapers work offline, and the selected original is copied into the project for undo/redo, reopening, moving the project folder and export. Color, Gradient and Motion switch the background type.
 
 ## Keyboard

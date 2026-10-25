@@ -8,27 +8,18 @@ namespace FrameTrail.App;
 public sealed partial class EditorWindow
 {
     private EditorMediaCache? mediaCache;
-    private CancellationTokenSource thumbnailCancellation = new(), audioCancellation = new();
-    private Task thumbnailWorker = Task.CompletedTask, audioWorker = Task.CompletedTask;
-    private Task assetWorker => Task.WhenAll(thumbnailWorker, audioWorker);
     private string? audioCacheKey;
     private string? pinnedAudio;
     private int audioPreparationCount, thumbnailRenderCount;
     private Task? audioPreparationBarrier;
-    private HashSet<long> thumbnailDemand = new();
-    private long thumbnailInFlight = -1;
-    private void RequestThumbnails(IReadOnlyList<long> ticks)
-    {
-        Volatile.Write(ref thumbnailDemand, ticks.ToHashSet());
-        if (thumbnails is null) return;
-        // Replace queued work after a scroll/zoom; only the current decode may finish.
-        while (thumbnails.Reader.TryRead(out _)) { }
-        pendingThumbnails.Clear();
-        foreach (long value in ticks) if (value != Interlocked.Read(ref thumbnailInFlight) && pendingThumbnails.Add(value))
-            if (!thumbnails.Writer.TryWrite(value)) pendingThumbnails.Remove(value);
-    }
+    private bool IsWorkflowAudioPending => !assetCoordinator.AudioCompleted;
+    private void RequestThumbnails(IReadOnlyList<long> ticks) => assetCoordinator.RequestThumbnails(ticks);
     private async Task StopAssetsAsync()
-    { thumbnailCancellation.Cancel(); audioCancellation.Cancel(); await Task.WhenAll(assetWorker,audioStopWork); mediaCache?.Unpin(pinnedAudio); pinnedAudio = null; }
+    {
+        await assetCoordinator.StopAsync(transport.StopWork);
+        mediaCache?.Unpin(pinnedAudio);
+        pinnedAudio = null;
+    }
 
     private async Task StartAssetsAsync(bool prepareAudio, bool updateThumbnails)
     {
@@ -36,20 +27,19 @@ public sealed partial class EditorWindow
         var snapshot = editor.Snapshot;
         mediaCache.ProtectSources(snapshot.Media.Select(m=>m.Path).Concat(FrameTrail.Workspace.VisualResources.Paths(snapshot)));
         if (updateThumbnails) {
-            thumbnailCancellation.Cancel(); await thumbnailWorker; thumbnailCancellation.Dispose(); thumbnailCancellation = new();
-            thumbnails = Channel.CreateBounded<long>(128); pendingThumbnails.Clear();
-            var queue = thumbnails; var token = thumbnailCancellation.Token;
-            thumbnailWorker = Task.Run(() => BuildThumbnailsAsync(snapshot, queue, token));
+            await assetCoordinator.ReplaceThumbnailsAsync((queue, token) => BuildThumbnailsAsync(snapshot, queue, token));
             timeline.InvalidateThumbnails();
         }
         if (prepareAudio) {
             string key = EditorMediaCache.AudioKey(snapshot, editor.DirectoryPath);
-            if (audioCacheKey != key || audioWorker.IsCompleted && preparedAudio is null) {
-                audioCancellation.Cancel(); await audioWorker; audioCancellation.Dispose(); audioCancellation = new();
-                mediaCache.Unpin(pinnedAudio); preparedAudio = null; timeline.SetWaveform(null); audioCacheKey = key;
-                pinnedAudio = mediaCache.FilePath(key, "peaks.json");
-                var token = audioCancellation.Token;
-                audioWorker = Task.Run(() => BuildAudioAsync(snapshot, key, token));
+            if (audioCacheKey != key || assetCoordinator.AudioCompleted && preparedAudio is null) {
+                await assetCoordinator.ReplaceAudioAsync(() => {
+                    mediaCache.Unpin(pinnedAudio);
+                    preparedAudio = null;
+                    timeline.SetWaveform(null);
+                    audioCacheKey = key;
+                    pinnedAudio = mediaCache.FilePath(key, "peaks.json");
+                }, token => BuildAudioAsync(snapshot, key, token));
             }
         }
     }
@@ -103,8 +93,8 @@ public sealed partial class EditorWindow
             while (await requests.Reader.WaitToReadAsync(token)) {
                 var batch = new List<long>(); while (requests.Reader.TryRead(out var value)) batch.Add(value);
                 foreach (long ticks in batch) {
-                    if (!Volatile.Read(ref thumbnailDemand).Contains(ticks)) continue;
-                    Interlocked.Exchange(ref thumbnailInFlight, ticks);
+                    if (!assetCoordinator.WantsThumbnail(ticks)) continue;
+                    assetCoordinator.BeginThumbnail(ticks);
                     token.ThrowIfCancellationRequested(); string path = cache.FilePath(key, ticks + ".png");
                     cache.Pin(path);
                     try {
@@ -117,10 +107,10 @@ public sealed partial class EditorWindow
                         token.ThrowIfCancellationRequested();
                         DispatcherQueue.TryEnqueue(() => {
                             if (token.IsCancellationRequested) return;
-                            pendingThumbnails.Remove(ticks); timeline.AddThumbnail(ticks, path);
+                            assetCoordinator.PublishedThumbnail(ticks); timeline.AddThumbnail(ticks, path);
                             if (ticks == position || BackgroundPreview.Source is null) BackgroundPreview.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path));
                         });
-                    } finally { cache.Unpin(path); Interlocked.Exchange(ref thumbnailInFlight, -1); }
+                    } finally { cache.Unpin(path); assetCoordinator.EndThumbnail(); }
                     if (++rendered % 16 == 0) cache.Trim();
                 }
             }

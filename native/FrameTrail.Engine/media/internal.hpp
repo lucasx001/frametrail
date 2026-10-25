@@ -1,6 +1,7 @@
 #pragma once
 #include "media.h"
 #include "frametrail/core/scene.hpp"
+#include "pointer_sampling.hpp"
 #include <windows.h>
 #include <d3d11_4.h>
 #include <d3d10.h>
@@ -55,13 +56,6 @@ struct VideoReader {
     VideoReader(const std::filesystem::path& path, IMFDXGIDeviceManager* manager);
     ComPtr<ID3D11Texture2D> frame(int64_t ticks, ID3D11Device* device, ID3D11DeviceContext* context);
     ComPtr<ID3D11Texture2D> to_rgb(ID3D11Device* device, ID3D11DeviceContext* context);
-};
-struct PointerSample { int64_t ticks; float x, y; uint32_t shape; bool visible; uint32_t kind{}; int64_t activity{}; };
-struct PointerTrack {
-    std::vector<PointerSample> points;
-    std::vector<FocusPoint> smooth_points;
-    struct Shape { std::string file; float x{}, y{}; };
-    std::unordered_map<uint32_t, Shape> shapes;
 };
 class VisualGpu;
 struct Renderer {
@@ -134,7 +128,7 @@ struct Session {
     void progress(uint64_t n, uint64_t all) { completed = n; total = all; last_progress = GetTickCount64(); }
     void stop_audio();
     void stream_audio(int64_t ticks);
-    void mix_pcm(int64_t first, int64_t frames, const std::function<void(const float*, size_t)>& emit);
+    void mix_pcm(int64_t first, int64_t frames, const std::function<void(const float*, size_t)>& emit, bool report_status = true);
     void prepare_peaks(const std::filesystem::path& output);
     void mix_audio(const std::filesystem::path& output);
     void export_file(const std::filesystem::path& target, bool audio_only);

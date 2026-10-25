@@ -1,5 +1,7 @@
 # 0.4.0 development candidate
 
+2026-10-25: Fixed cursor timing, smoothing, idle hiding and click continuity across recording checkpoints. Recording now saves recoverable media before incremental camera planning. MP4/M4A export encodes continuous mixed PCM directly, removing the full temporary soundtrack. Editor lifecycle controllers and repeatable window workflow checks strengthen cancellation, project switching and shutdown. See [0031](0031-review-fixes.md) for local evidence; long-duration and hardware acceptance remain separate.
+
 2026-10-19: Added 18 desktop wallpapers from OpenScreen under Canvas → Background → Image, with thumbnail selection and custom image import. Selected originals travel with the project and support undo/redo. Large images use bounded decoding for shared preview/export rendering.
 
 FrameTrail provides Windows-native recording, non-destructive editing, motion effects, preview and MP4/M4A export. Android USB and distribution tooling have local implementation and automated evidence; hardware and release acceptance remain separate.

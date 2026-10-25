@@ -41,8 +41,8 @@ public sealed partial class EditorWindow
             if (editor.Snapshot.Effects.Count != count + 1) throw new InvalidOperationException("Paste redo failed.");
             checks.Add("Effect paste and toolbar undo/redo preserve authored parameters.");
             var zoom = editor.Snapshot.Effects.First(e => e.Kind == "zoom");
-            editor.BeginTransaction(); editor.PreviewCommand(new { op = "effectAtOutput", effectId = zoom.Id, outputTicks = 5_000_000, edge = "move" });
-            await PerformAsync(editor.CommitTransactionAsync);
+            editController.Begin(EditorEditOwner.Timeline); editController.Preview(EditorEditOwner.Timeline, new { op = "effectAtOutput", effectId = zoom.Id, outputTicks = 5_000_000, edge = "move" });
+            await PerformAsync(() => editController.CommitAsync(EditorEditOwner.Timeline));
             if (VisualResources.Ticks(editor.Snapshot.Effects.First(e => e.Id == zoom.Id).SourceStart) != 5_000_000) throw new InvalidOperationException("Effect drag transaction did not commit.");
             await PerformAsync(editor.UndoAsync);
             checks.Add("Effect timeline move commits in a single undo transaction.");

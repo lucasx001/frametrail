@@ -81,5 +81,31 @@ for numerator, denominator in [(1, 4), (1, 2), (1, 1), (3, 2), (2, 1), (4, 1)]:
 
 result = {"success": True, "previewVsH264": comparison, "streamDurations": stream_durations, "nativeSeekVsSourceFrame60": exact, "burnedFrameNumberScores": clock_scores, "twoTrackPowerRatio": system_power/microphone_power,
           "audioRms": {"muted": silent, "globalHalfGain": normal, "clipDoubleGain": boosted}, "pitch": pitch}
+
+def decoded_audio(path):
+    data = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path),
+                                    "-vn", "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "2", "-ar", "48000", "-"])
+    values = array.array("h", data)
+    if sys.byteorder != "little": values.byteswap()
+    return [v/32768 for v in values[::2]]
+
+streamed = []
+cases = [(f"pitch-{n}-{d}", "m4a") for n, d in [(1, 4), (1, 2), (1, 1), (3, 2), (2, 1), (4, 1)]]
+cases += [("fractional", "m4a"), ("fractional", "mp4"), ("fractional-cpu", "mp4")]
+for name, extension in cases:
+    reference = samples(output/("fractional.wav" if name == "fractional-cpu" else name+".wav"))
+    decoded = decoded_audio(output/f"{name}.{extension}")
+    assert 0 <= len(decoded)-len(reference) <= 1024, ("AAC sample tail", name, len(decoded), len(reference))
+    # Compare at identical output sample positions. Exclude only AAC endpoint
+    # transients; restarting WSOLA for each packet changes the waveform inside.
+    end = len(reference)-2048
+    a, b = reference[2048:end], decoded[2048:end]
+    signal = sum(v*v for v in a)
+    error = sum((x-y)**2 for x, y in zip(a, b))
+    correlation = sum(x*y for x, y in zip(a, b))/math.sqrt(signal*sum(v*v for v in b))
+    snr = 100 if error == 0 else 10*math.log10(signal/error)
+    assert correlation >= 0.98 and snr >= 20, ("Streaming AAC differs from continuous mix", name, correlation, snr)
+    streamed.append({"file": f"{name}.{extension}", "frames": len(reference), "decodedFrames": len(decoded), "correlation": correlation, "snrDb": snr})
+result["streamedAudio"] = streamed
 (output/"image-audio-metrics.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
 print(json.dumps(result))

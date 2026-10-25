@@ -79,10 +79,11 @@ std::vector<float> stretch_wsola(const std::vector<float>& input, double rate, s
     std::vector<float> result; result.reserve(output_frames * channels);
     wsola([&](int64_t first, int frames) { std::vector<float> v(static_cast<size_t>(frames) * channels); for (int i = 0; i < frames; ++i) for (int c = 0; c < channels; ++c) if (first + i >= 0 && static_cast<size_t>(first + i) * channels + c < input.size()) v[i * channels + c] = input[(first + i) * channels + c]; return v; }, rate, static_cast<int64_t>(output_frames), [&](const float* p, size_t frames) { result.insert(result.end(), p, p + frames * channels); }); return result;
 }
-void Session::mix_pcm(int64_t first, int64_t frames, const Emit& emit) {
+void Session::mix_pcm(int64_t first, int64_t frames, const Emit& emit, bool report_status) {
     const auto& timeline = evaluator.timeline();
     std::unordered_map<std::string, std::unique_ptr<AudioReader>> readers; const auto settings = Json::parse(project.editor_json);
-    stage = 1; progress(0, static_cast<uint64_t>(frames)); int64_t done = 0;
+    if (report_status) { stage = 1; progress(0, static_cast<uint64_t>(frames)); }
+    int64_t done = 0;
     for (const auto& clip : timeline.segments()) {
         check_cancel(); const auto clip_samples = ticks_samples(clip.source_duration), source_first = ticks_samples(clip.source_start);
         const auto clip_first = ticks_samples(clip.output_start);
@@ -108,10 +109,11 @@ void Session::mix_pcm(int64_t first, int64_t frames, const Emit& emit) {
         };
         wsola(fetch, static_cast<double>(clip.rate.numerator) / clip.rate.denominator, output_count, [&](const float* samples, size_t count) {
             check_cancel(); emit(samples, count);
-            done += static_cast<int64_t>(count); progress(static_cast<uint64_t>(done), static_cast<uint64_t>(frames));
+            done += static_cast<int64_t>(count);
+            if (report_status) progress(static_cast<uint64_t>(done), static_cast<uint64_t>(frames));
         }, begin - clip_first);
     }
-    stage = 0;
+    if (report_status) stage = 0;
 }
 void Session::mix_audio(const std::filesystem::path& target) {
     const auto frames = ticks_samples(evaluator.timeline().output_duration());

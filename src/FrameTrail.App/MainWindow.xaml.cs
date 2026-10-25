@@ -130,6 +130,8 @@ public sealed partial class MainWindow : Window
                 }); return;
             }
             await InitializeRecorderAsync();
+            int workflowTest = Array.IndexOf(args, "--workflow-self-test");
+            if (workflowTest >= 0 && args.Length > workflowTest + 1) { await RunWorkflowValidationAsync(args[workflowTest + 1]); return; }
             int cameraPreviewTest=Array.IndexOf(args,"--p1-camera-ui-self-test");
             if(cameraPreviewTest>=0&&args.Length>cameraPreviewTest+1){await RunCameraPreviewValidationAsync(args[cameraPreviewTest+1]);return;}
             var libraryTest = Array.IndexOf(args, "--project-library-self-test");

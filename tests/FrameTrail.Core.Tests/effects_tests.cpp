@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <cmath>
+#include <random>
 
 using namespace frametrail::core;
 using Json=nlohmann::json;
@@ -28,6 +29,96 @@ int main(){try{
     Json command{{"op","autoZoom"},{"events",events}};auto a=edit_project(p,command.dump());
     expect(a.effects.size()==1,"connected activity groups must merge into one zoom envelope");
     auto parameters=Json::parse(a.effects[0].parameters_json);expect(parameters["focusPoints"].size()==2,"nearby clicks must share one stable spatial focus");
+    {
+        auto one=p;
+        append_auto_zoom(one,Json{{"events",events},{"throughTicks",100'000'000}}.dump());
+        for (int seed=0;seed<20;++seed) {
+            std::mt19937 random(seed);auto split=p;size_t offset=0;
+            while(offset<events.size()) {
+                auto count=std::min<size_t>(1+random()%4,events.size()-offset);Json batch=Json::array();
+                for(size_t i=0;i<count;++i)batch.push_back(events[offset+i]);
+                auto horizon=batch.back()["ticks"].get<int64_t>()+1;
+                append_auto_zoom(split,Json{{"events",batch},{"throughTicks",horizon}}.dump());offset+=count;
+            }
+            append_auto_zoom(split,Json{{"events",Json::array()},{"throughTicks",100'000'000}}.dump());
+            expect(split.effects.size()==one.effects.size(),"batch splitting changed automatic effect count");
+            for(size_t i=0;i<one.effects.size();++i) {
+                expect(split.effects[i].parameters_json==one.effects[i].parameters_json,"batch splitting changed the saved trajectory");
+                expect(normalized_ticks(split.effects[i].source_duration)==normalized_ticks(one.effects[i].source_duration),"batch splitting changed the envelope");
+            }
+        }
+        for(int64_t t=0;t<100'000'000;t+=100'000) {
+            auto old=evaluate_visuals({parse_visual_effect(a.effects[0])},t).screen;
+            auto next=evaluate_visuals({parse_visual_effect(one.effects[0])},t).screen;
+            expect(std::abs(old.scale-next.scale)<1e-9 && std::abs(old.focus_x-next.focus_x)<1e-9 && std::abs(old.focus_y-next.focus_y)<1e-9,"incremental baseline differs from DogSC reference");
+        }
+        auto edited_incremental=one;auto authored=Json::parse(edited_incremental.effects[0].parameters_json);authored["origin"]="edited";
+        edited_incremental.effects[0].parameters_json=authored.dump();
+        append_auto_zoom(edited_incremental,Json{{"events",Json::array({{{"ticks",38'000'000},{"x",0.1},{"y",0.1},{"kind",1}}})},{"throughTicks",100'000'000}}.dump());
+        expect(edited_incremental.effects[0].parameters_json==authored.dump(),"incremental planning overwrote authored parameters");
+    }
+    {
+        Json boundary_events=Json::array({{{"ticks",0},{"x",0.2},{"y",0.4},{"kind",1}},
+            {{"ticks",14'000'000},{"x",0.8},{"y",0.4},{"kind",1}},
+            {{"ticks",28'000'000},{"x",0.2},{"y",0.4},{"kind",1}},
+            {{"ticks",39'000'000},{"x",0.3},{"y",0.4},{"kind",0}},
+            {{"ticks",41'000'000},{"x",0.4},{"y",0.4},{"kind",0}},
+            {{"ticks",42'000'001},{"x",0.8},{"y",0.4},{"kind",1}},
+            {{"ticks",80'000'000},{"x",0.4},{"y",0.5},{"kind",1}}});
+        auto whole=p;append_auto_zoom(whole,Json{{"events",boundary_events},{"throughTicks",100'000'000}}.dump());
+        for(size_t split_at=1;split_at<boundary_events.size();++split_at) {
+            auto partial=p;Json first=Json::array(),second=Json::array();
+            for(size_t i=0;i<boundary_events.size();++i)(i<split_at?first:second).push_back(boundary_events[i]);
+            append_auto_zoom(partial,Json{{"events",first},{"throughTicks",first.back()["ticks"].get<int64_t>()+1}}.dump());
+            append_auto_zoom(partial,Json{{"events",second},{"throughTicks",100'000'000}}.dump());
+            expect(partial.effects.size()==whole.effects.size(),"1.4 second boundary split changed camera count");
+            for(size_t i=0;i<whole.effects.size();++i)expect(partial.effects[i].parameters_json==whole.effects[i].parameters_json,"1.4 second or pre-click lead boundary depends on checkpoint split");
+        }
+    }
+    {
+        // More than the old lifetime event cap, including a single continuously
+        // retargeted burst. The saved tracks stay under their own schema limit.
+        auto long_plan=p;long_plan.source_duration=canonical_time(120'010'000'000LL);
+        int64_t tick=10'000'000;
+        for(int batch_index=0;batch_index<30;++batch_index) {
+            Json batch=Json::array();
+            for(int i=0;i<4000;++i,tick+=1'000'000)batch.push_back({{"ticks",tick},{"x",i%2?0.8:0.2},{"y",0.4},{"kind",1}});
+            append_auto_zoom(long_plan,Json{{"events",batch},{"throughTicks",tick}}.dump());
+        }
+        expect(long_plan.effects.size()>1,"continuous burst must split before exhausting focus-point capacity");
+        for(size_t i=0;i<long_plan.effects.size();++i) {
+            auto visual=parse_visual_effect(long_plan.effects[i]);
+            expect(visual.focus_points.size()<=2048,"incremental focus track exceeded bounded capacity");
+            if(i>0) {
+                auto boundary=normalized_ticks(long_plan.effects[i].source_start);
+                auto previous=parse_visual_effect(long_plan.effects[i-1]);
+                auto left=evaluate_visuals({previous},boundary-1).screen;
+                auto right=evaluate_visuals({visual},boundary).screen;
+                expect(std::abs(left.scale-right.scale)<1e-5,"bounded focus continuation introduced an enter/exit pulse");
+                expect(std::abs(left.focus_x-right.focus_x)<1e-5,"bounded focus continuation jumped at its boundary");
+            }
+        }
+        auto editable=long_plan;
+        auto screen=p.media.front();screen.duration=editable.source_duration;screen.start_offset=canonical_time(0);
+        editable.media={screen};editable.markers.clear();
+        editable.segments={{"continuous",canonical_time(0),editable.source_duration,{1,1}}};
+        editable.effects={long_plan.effects[1]};validate_project(editable);
+        auto original=editable.effects[0];auto start=normalized_ticks(original.source_start),end=start+normalized_ticks(original.source_duration);
+        auto source_visual=parse_visual_effect(original);
+        for(auto edge:{"start","end","move"}) {
+            auto destination=std::string_view(edge)=="start"?start+500'000:std::string_view(edge)=="end"?end-500'000:int64_t(0);
+            auto edited=edit_project(editable,Json{{"op","effectAtOutput"},{"effectId",original.id},{"edge",edge},{"outputTicks",destination}}.dump());
+            validate_project(edited);auto after=parse_visual_effect(edited.effects[0]);
+            auto moved=std::string_view(edge)=="move";auto new_start=normalized_ticks(edited.effects[0].source_start);
+            for(int64_t delta=0;delta<1'000'000;delta+=10'000) {
+                auto before=evaluate_visuals({source_visual},moved?start+delta:new_start+delta).screen;
+                auto now=evaluate_visuals({after},new_start+delta).screen;
+                expect(std::abs(before.focus_x-now.focus_x)<1e-9 && std::abs(before.focus_y-now.focus_y)<1e-9,"trim/move changed a continuation focus trajectory");
+            }
+            auto properties=Json::parse(edited.effects[0].parameters_json);
+            expect(properties["origin"]=="edited" && !properties.contains("plannerState"),"authored continuation retained mutable planner state");
+        }
+    }
     expect(normalized_ticks(a.effects[0].source_start)==8'740'000,"reference click lead must be 18 percent of enter duration");
     auto again=edit_project(a,command.dump());expect(again.effects.size()==1 && again.effects[0].id==a.effects[0].id && again.effects[0].parameters_json==a.effects[0].parameters_json,"regeneration must be idempotent");
     auto serialized=Json::parse(serialize_project(a));auto edited=serialized["effects"][0];edited["parameters"]["scale"]=2.1;

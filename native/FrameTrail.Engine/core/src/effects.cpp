@@ -32,6 +32,7 @@ VisualEffect parse_visual_effect(const Effect& effect) {
     v.scale = number(p,"scale",1.6,1,4); v.focus_x = number(p,"focusX",0.5,0,1); v.focus_y = number(p,"focusY",0.5,0,1);
     bool motion=effect.kind=="zoom" || effect.kind=="tilt";
     v.enter = number(p,"enter",motion || effect.kind=="intro" ? 0.7 : 0,0,5); v.exit = number(p,"exit",motion ? 0.7 : 0,0,5);
+    v.focus_transition = number(p,"focusTransition",v.enter,0,5);
     v.strength = number(p,"strength",16,1,64); v.opacity = number(p,"opacity",1,0,1);
     v.angle_x = number(p,"angleX",0,-35,35); v.angle_y = number(p,"angleY",0,-35,35); v.rotation = number(p,"rotation",0,-180,180);
     v.frequency = number(p,"springFrequency",default_spring_frequency,1,12); v.damping = number(p,"damping",default_spring_damping,0.2,2);
@@ -52,8 +53,12 @@ VisualEffect parse_visual_effect(const Effect& effect) {
             auto ticks = key["ticks"].get<int64_t>();
             if (ticks < v.start || ticks >= v.start + v.duration || ticks <= prior) throw ValidationError("effects.focusPoints", "focus keys must increase inside effect");
             FocusPoint point{ticks,number(key,"x",0.5,0,1),number(key,"y",0.5,0,1)};
-            if(v.focus_points.empty()){point.from_x=point.x;point.from_y=point.y;}
-            else {auto& before=v.focus_points.back();double amount=motion_curve((ticks-before.ticks)/double(time_scale)/std::max(0.001,v.enter),v.easing,v.frequency,v.damping);point.from_x=before.from_x+(before.x-before.from_x)*amount;point.from_y=before.from_y+(before.y-before.from_y)*amount;}
+            if(key.contains("phaseTicks") && !key["phaseTicks"].is_number_integer())throw ValidationError("effects.focusPoints.phaseTicks","integer phase ticks required");
+            auto phase=key.value("phaseTicks",int64_t(0));
+            if(phase<0 || phase>5*time_scale)throw ValidationError("effects.focusPoints.phaseTicks","phase must be between zero and five seconds");
+            point.transition_start=ticks-phase;
+            if(v.focus_points.empty()){point.from_x=number(key,"fromX",point.x,0,1);point.from_y=number(key,"fromY",point.y,0,1);}
+            else {auto& before=v.focus_points.back();double amount=motion_curve((ticks-before.transition_start)/double(time_scale)/std::max(0.001,v.focus_transition),v.easing,v.frequency,v.damping);point.from_x=before.from_x+(before.x-before.from_x)*amount;point.from_y=before.from_y+(before.y-before.from_y)*amount;}
             v.focus_points.push_back(point); prior = ticks;
         }
     }
@@ -122,7 +127,7 @@ VisualScene evaluate_visuals(const std::vector<VisualEffect>& effects, int64_t t
             if(!e.focus_points.empty()) {
                 auto next=std::upper_bound(e.focus_points.begin(),e.focus_points.end(),ticks,[](auto t,auto& p){return t<p.ticks;});
                 auto key=next==e.focus_points.begin()?next:std::prev(next); focus={key->x,key->y};
-                double focus_progress=motion_curve((ticks-key->ticks)/double(time_scale)/std::max(0.001,e.enter),e.easing,e.frequency,e.damping);
+                double focus_progress=motion_curve((ticks-key->transition_start)/double(time_scale)/std::max(0.001,e.focus_transition),e.easing,e.frequency,e.damping);
                 focus={key->from_x+(key->x-key->from_x)*focus_progress,key->from_y+(key->y-key->from_y)*focus_progress};
             }
             result.screen.scale=std::max(result.screen.scale,1+(e.scale-1)*amount); result.screen.focus_x=focus[0]; result.screen.focus_y=focus[1];
@@ -147,7 +152,7 @@ void generate_auto_zoom(Project& project,std::string_view text) {
     }
     std::stable_sort(ordered.begin(),ordered.end(),[](auto&a,auto&b){return a.ticks<b.ticks;});
     for(auto&e:ordered)if(e.kind==1 || e.kind==3)clicks.push_back(e);
-    std::erase_if(project.effects,[](auto&e){auto p=Json::parse(e.parameters_json);return e.kind=="zoom" && p.value("origin","")=="automatic" && p.value("planner","")=="dogsc-v1";});
+    std::erase_if(project.effects,[](auto&e){auto p=Json::parse(e.parameters_json);auto planner=p.value("planner","");return e.kind=="zoom" && p.value("origin","")=="automatic" && (planner=="dogsc-v1" || planner=="frametrail-incremental-v1");});
     int64_t earliest=0;
     for(size_t first=0;first<clicks.size();) {
         size_t end=first+1; while(end<clicks.size() && clicks[end].ticks-clicks[end-1].ticks<=14*time_scale/10)++end;
@@ -192,5 +197,149 @@ void generate_auto_zoom(Project& project,std::string_view text) {
             }}prior=next;
     }
     std::erase_if(project.effects,[&](auto&e){return std::find(remove.begin(),remove.end(),e.id)!=remove.end();});
+}
+// Recording consumes a bounded batch once. The final automatic effect carries
+// only the open burst's sufficient statistics, never the historical event list.
+void append_auto_zoom(Project& project, std::string_view text) {
+    const auto command = Json::parse(text);
+    const auto& input = command.at("events");
+    if (!input.is_array() || input.size() > 8192) throw ValidationError("autoZoomAppend.events", "batch limit exceeded");
+    const auto total = normalized_ticks(project.source_duration);
+    const auto through = command.at("throughTicks").get<int64_t>();
+    if (through <= 0 || through > total) throw ValidationError("autoZoomAppend.throughTicks", "outside source duration");
+    const double scale = number(command, "scale", 1.6, 1.05, 4), transition = 0.7;
+    constexpr int64_t activity_gap = 14 * time_scale / 10;
+    constexpr int64_t advance = 126 * time_scale / 1000;
+    struct Event { int64_t ticks; double x, y; int kind; };
+    std::vector<Event> events;
+    for (auto& e : input) {
+        auto t = e.at("ticks").get<int64_t>();
+        if (t < 0 || t >= through) throw ValidationError("autoZoomAppend.events", "event outside batch horizon");
+        events.push_back({t, number(e,"x",0.5,0,1), number(e,"y",0.5,0,1), e.value("kind",0)});
+    }
+    std::stable_sort(events.begin(), events.end(), [](auto& a, auto& b) { return a.ticks < b.ticks; });
+    size_t current = project.effects.size();
+    Json parameters, state;
+    for (size_t i = project.effects.size(); i > 0; --i) {
+        const auto& effect = project.effects[i - 1];
+        auto p = Json::parse(effect.parameters_json);
+        if (effect.kind == "zoom" && p.value("origin", "") == "automatic" &&
+            p.value("planner", "") == "frametrail-incremental-v1" && p.contains("plannerState")) {
+            current = i - 1; parameters = p; state = p["plannerState"]; break;
+        }
+    }
+    auto exists = [&] { return current < project.effects.size(); };
+    auto hold_until = [&](int64_t activity) {
+        auto hold = std::max(state["lastClick"].get<int64_t>() + 9 * time_scale / 10,
+                             state["groupStart"].get<int64_t>() + 7 * time_scale / 10);
+        if (activity > state["lastClick"].get<int64_t>()) hold = std::max(hold, activity + 55 * time_scale / 100);
+        return hold;
+    };
+    auto materialize = [&](int64_t horizon, int64_t activity) {
+        auto& effect = project.effects[current];
+        const auto start = normalized_ticks(effect.source_start);
+        const auto hold = hold_until(activity);
+        auto end = std::min(horizon, hold + 7 * time_scale / 10);
+        // Authored effects always win. Never extend an automatic camera into one.
+        for (const auto& other : project.effects) {
+            if (other.kind != "zoom" || other.id == effect.id) continue;
+            auto p = Json::parse(other.parameters_json);
+            if (p.value("origin", "") == "automatic") continue;
+            auto t = normalized_ticks(other.source_start);
+            if (t >= start) end = std::min(end, t);
+        }
+        end = std::max(start + 1, end);
+        effect.source_duration = canonical_time(end - start);
+        parameters["exit"] = std::min(transition, std::max(0.0, (end - hold) / double(time_scale)));
+        parameters["focusX"]=parameters["focusPoints"][0]["x"];
+        parameters["focusY"]=parameters["focusPoints"][0]["y"];
+        parameters["plannerState"] = state;
+        effect.parameters_json = parameters.dump();
+    };
+    auto new_effect = [&](int64_t start, double x, double y, double enter, Json first) {
+        auto id = "auto-zoom-" + std::to_string(start), base = id;
+        size_t suffix = 0;
+        while (std::any_of(project.effects.begin(),project.effects.end(),[&](auto& e){return e.id==id;})) id=base+"-"+std::to_string(++suffix);
+        parameters = Json{{"origin","automatic"},{"planner","frametrail-incremental-v1"},{"scale",scale},
+            {"focusX",x},{"focusY",y},{"focusPoints",Json::array({first})},{"enter",enter},{"focusTransition",transition},
+            {"exit",0},{"easing","spring"},{"plannerState",state}};
+        current = project.effects.size();
+        project.effects.push_back({id,"zoom",canonical_time(start),canonical_time(std::max<int64_t>(1,through-start)),parameters.dump()});
+    };
+    auto add_focus = [&](int64_t ticks, int64_t click_ticks, double x, double y) {
+        auto& keys = parameters["focusPoints"];
+        ticks = std::min(click_ticks, std::max(keys.back()["ticks"].get<int64_t>() + 16 * time_scale / 100, ticks));
+        if (ticks <= keys.back()["ticks"].get<int64_t>()) {
+            keys.back()["x"]=x; keys.back()["y"]=y; return;
+        }
+        // Limit each saved focus track below the schema limit without changing
+        // its trajectory: the successor starts with the sampled previous focus.
+        if (keys.size() >= 2048) {
+            materialize(std::max(through, ticks + 1), state["activity"].get<int64_t>());
+            auto visual = parse_visual_effect(project.effects[current]);
+            auto focus = evaluate_visuals({visual}, ticks).screen;
+            auto start = normalized_ticks(project.effects[current].source_start);
+            project.effects[current].source_duration = canonical_time(ticks - start);
+            parameters["exit"] = 0; parameters.erase("plannerState");
+            project.effects[current].parameters_json = parameters.dump();
+            new_effect(ticks,x,y,0,Json{{"ticks",ticks},{"x",x},{"y",y},{"fromX",focus.focus_x},{"fromY",focus.focus_y}});
+        } else keys.push_back({{"ticks",ticks},{"x",x},{"y",y}});
+    };
+    for (const auto& event : events) {
+        const bool click = event.kind == 1 || event.kind == 3;
+        if (!click) {
+            if (exists() && event.ticks - state["activity"].get<int64_t>() <= activity_gap) {
+                state["activity"] = event.ticks;
+                auto& recent = state["recentActivity"];
+                recent.push_back(event.ticks);
+                while (recent.size() > 1 && recent[1].get<int64_t>() < event.ticks - advance) recent.erase(recent.begin());
+                while (recent.size() > 128) recent.erase(recent.begin()+1);
+            }
+            continue;
+        }
+        bool same_group = exists() && event.ticks - state["lastClick"].get<int64_t>() <= activity_gap;
+        bool joined = false;
+        int64_t start = std::max<int64_t>(0,event.ticks-advance);
+        if (exists() && !same_group) {
+            auto activity = state["lastClick"].get<int64_t>();
+            for (auto& value : state["recentActivity"]) if (value.get<int64_t>() < start) activity=std::max(activity,value.get<int64_t>());
+            auto previous_start = normalized_ticks(project.effects[current].source_start);
+            start = std::max(start,previous_start+1);
+            materialize(start,activity);
+            auto end = previous_start + normalized_ticks(project.effects[current].source_duration);
+            joined = parameters["exit"].get<double>() <= 0.000001 && end == start;
+            if (!joined) {
+                parameters.erase("plannerState"); project.effects[current].parameters_json=parameters.dump();
+                current=project.effects.size();
+            }
+        }
+        if (!exists()) {
+            auto end = std::min(through,event.ticks+16*time_scale/10);
+            if (std::any_of(project.effects.begin(),project.effects.end(),[&](auto& e){return e.kind=="zoom" && overlaps(e,start,end);})) continue;
+            state=Json{{"lastClick",event.ticks},{"activity",event.ticks},{"groupStart",start},
+                {"minX",event.x},{"maxX",event.x},{"minY",event.y},{"maxY",event.y},{"recentActivity",Json::array({event.ticks})}};
+            auto x=std::clamp(event.x,0.12,0.88),y=std::clamp(event.y,0.12,0.88);
+            new_effect(start,x,y,transition,Json{{"ticks",start},{"x",x},{"y",y}});
+        } else {
+            double minx=std::min(state["minX"].get<double>(),event.x),maxx=std::max(state["maxX"].get<double>(),event.x);
+            double miny=std::min(state["minY"].get<double>(),event.y),maxy=std::max(state["maxY"].get<double>(),event.y);
+            bool spatial_group=same_group && maxx-minx<=0.5/scale && maxy-miny<=0.7/scale;
+            if (!spatial_group) {
+                minx=maxx=event.x;miny=maxy=event.y;
+                add_focus(joined ? start : event.ticks-7*time_scale/10,event.ticks,std::clamp(event.x,0.12,0.88),std::clamp(event.y,0.12,0.88));
+            } else {
+                auto& key=parameters["focusPoints"].back();
+                key["x"]=std::clamp((minx+maxx)/2,0.12,0.88);key["y"]=std::clamp((miny+maxy)/2,0.12,0.88);
+            }
+            state["minX"]=minx;state["maxX"]=maxx;state["minY"]=miny;state["maxY"]=maxy;
+            state["lastClick"]=event.ticks;state["activity"]=event.ticks;
+            if (!same_group) {state["groupStart"]=start;state["recentActivity"]=Json::array();}
+            auto& recent=state["recentActivity"];
+            if(recent.empty() || recent.back().get<int64_t>()!=event.ticks)recent.push_back(event.ticks);
+            while(recent.size()>1 && recent[1].get<int64_t>()<event.ticks-advance)recent.erase(recent.begin());
+            while(recent.size()>128)recent.erase(recent.begin()+1);
+        }
+    }
+    if (exists()) materialize(through,state["activity"].get<int64_t>());
 }
 } // namespace frametrail::core

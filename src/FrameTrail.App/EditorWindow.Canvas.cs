@@ -8,7 +8,8 @@ namespace FrameTrail.App;
 public sealed partial class EditorWindow
 {
     private readonly EditorCanvasOverlay canvasOverlay = new();
-    private bool cropEditing, canvasTransaction;
+    private bool cropEditing;
+    private bool canvasTransaction => editController.Owner == EditorEditOwner.Canvas;
     private Task canvasRenderWork = Task.CompletedTask, canvasCommitWork = Task.CompletedTask;
     private ProjectSnapshot? canvasPending;
     private int geometryRequest;
@@ -18,18 +19,18 @@ public sealed partial class EditorWindow
         canvasOverlay.Selected += id => { if(id!="crop"){selectedEffect=id;ShowInspector(2);RefreshVisualInspector();} };
         canvasOverlay.Begin += () => {
             if(working||playing||editor.IsExporting||visualPending||visualTransaction||!canvasCommitWork.IsCompleted){canvasOverlay.Finish(false);return;}
-            editor.BeginTransaction();canvasTransaction=true;timeline.EditingEnabled=false;
+            editController.Begin(EditorEditOwner.Canvas);timeline.EditingEnabled=false;
         };
         canvasOverlay.Changed += (id,rect) => {
             if(!canvasTransaction)return;
             try {
-                if(id=="crop") canvasPending=editor.PreviewCommand(new {op="settings",editor=(editor.Snapshot.Editor??new()) with {Crop=rect}});
+                if(id=="crop") canvasPending=editController.Preview(EditorEditOwner.Canvas, new {op="settings",editor=(editor.Snapshot.Editor??new()) with {Crop=rect}});
                 else {
                     var effect=editor.Snapshot.Effects.First(e=>e.Id==id);
                     var p=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(effect.Parameters.GetRawText())!;
                     p["x"]=JsonSerializer.SerializeToElement(rect.X);p["y"]=JsonSerializer.SerializeToElement(rect.Y);
                     p["width"]=JsonSerializer.SerializeToElement(rect.Width);p["height"]=JsonSerializer.SerializeToElement(rect.Height);
-                    canvasPending=editor.PreviewCommand(new {op="effectUpsert",effectId=id,effect=effect with {Parameters=JsonSerializer.SerializeToElement(p)}});
+                    canvasPending=editController.Preview(EditorEditOwner.Canvas, new {op="effectUpsert",effectId=id,effect=effect with {Parameters=JsonSerializer.SerializeToElement(p)}});
                 }
                 if(canvasRenderWork.IsCompleted)canvasRenderWork=RenderCanvasDraftsAsync();
             } catch(Exception error){canvasOverlay.Finish(false);ShowNotice(L.T("S5052355CD087"),error.Message);}
@@ -52,10 +53,10 @@ public sealed partial class EditorWindow
         working=true;var before=editor.Snapshot;
         try {
             await canvasRenderWork;
-            if(commit)await editor.CommitTransactionAsync();else editor.CancelTransaction();canvasTransaction=false;
+            if(commit)await editController.CommitAsync(EditorEditOwner.Canvas);else editController.Cancel(EditorEditOwner.Canvas);
             await UpdateEditedProjectAsync(before,null);
             if(cropEditing)await preview.UpdateProjectAsync(CanvasDisplay(editor.Snapshot),position);
-        } catch(Exception error){editor.CancelTransaction();canvasTransaction=false;ShowNotice(L.T("S4551264BF6C0"),error.Message);}
+        } catch(Exception error){editController.CancelCurrent();ShowNotice(L.T("S4551264BF6C0"),error.Message);}
         finally {working=false;timeline.EditingEnabled=true;UpdateState();QueueCanvasGeometry();}
     }
     private async void QueueCanvasGeometry()

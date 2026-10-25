@@ -41,6 +41,11 @@ internal static class M2Validation
             var levels = new EditorSettings { SystemGain = 0.5, MicrophoneMuted = true, ClipAudio = new Dictionary<string, AudioLevel> { ["c"] = new() { SystemMuted = true }, ["b"] = new() { SystemGain = 2 } }, CornerRadius = 18, Shadow = 0.4 };
             await editor.ExecuteAsync(new { op = "settings", editor = levels }); await editor.FlushAsync();
             checks.Add("Trim + split + reorder + 2x rate => 2.25s, undo/redo, cancel, global/clip audio settings and autosave.");
+            var temporaryAudio = new System.Collections.Concurrent.ConcurrentQueue<string>();
+            using var audioWatcher = new FileSystemWatcher(output, ".frametrail-*.wav");
+            audioWatcher.Created += (_, e) => temporaryAudio.Enqueue(e.Name ?? "unknown");
+            audioWatcher.Error += (_, _) => temporaryAudio.Enqueue("watcher-overflow");
+            audioWatcher.EnableRaisingEvents = true;
             var mp4 = Path.Combine(output, "edited-30.mp4"); await editor.ExportAsync(mp4, false, null, CancellationToken.None);
             await editor.ExportAsync(Path.Combine(output, "edited.m4a"), true, null, CancellationToken.None);
             using (var media = new MediaSession(editor.Snapshot, projectPath)) {
@@ -49,8 +54,37 @@ internal static class M2Validation
             }
             foreach (var rate in new[] { (1, 4), (1, 2), (1, 1), (3, 2), (2, 1), (4, 1) }) {
                 var p = initial with { Segments = new[] { initial.Segments[0] with { Rate = new Rational { Numerator = rate.Item1, Denominator = rate.Item2 } } }, Editor = new() { MicrophoneMuted = true } };
-                using var media = new MediaSession(p, projectPath); media.PrepareAudio(Path.Combine(output, $"pitch-{rate.Item1}-{rate.Item2}.wav"));
+                using var media = new MediaSession(p, projectPath);
+                media.PrepareAudio(Path.Combine(output, $"pitch-{rate.Item1}-{rate.Item2}.wav"));
+                media.Export(Path.Combine(output, $"pitch-{rate.Item1}-{rate.Item2}.m4a"), true);
+                var status = media.Status;
+                if (status.Stage != 4 || status.Completed != status.Total || status.Total != (ulong)(status.Duration * 48000 / TimeSpan.TicksPerSecond))
+                    throw new Exception("Streaming audio export lost its sample progress or completion stage.");
             }
+            // Odd tick boundaries exercise PCM sample rounding independently of
+            // video frame boundaries, across three different continuous rates.
+            var fractional = initial with {
+                Segments = new[] {
+                    new RecordingSegment { Id = "fraction-a", SourceStart = MediaTime.FromTicks(0), SourceDuration = MediaTime.FromTicks(8_765_431), Rate = new() { Numerator = 3, Denominator = 2 } },
+                    new RecordingSegment { Id = "fraction-b", SourceStart = MediaTime.FromTicks(10_000_003), SourceDuration = MediaTime.FromTicks(9_876_543), Rate = new() { Numerator = 1, Denominator = 4 } },
+                    new RecordingSegment { Id = "fraction-c", SourceStart = MediaTime.FromTicks(22_345_679), SourceDuration = MediaTime.FromTicks(7_654_321), Rate = new() { Numerator = 4 } }
+                },
+                Editor = new() { SystemGain = 0.7, MicrophoneGain = 0.4, ClipAudio = new Dictionary<string, AudioLevel> { ["fraction-b"] = new() { MicrophoneMuted = true } } },
+                Export = initial.Export with { Width = 320, Height = 180 }
+            };
+            using (var media = new MediaSession(fractional, projectPath)) {
+                media.PrepareAudio(Path.Combine(output, "fractional.wav"));
+                media.Export(Path.Combine(output, "fractional.m4a"), true);
+                media.Export(Path.Combine(output, "fractional.mp4"));
+                var probe = await ProbeAsync(Path.Combine(output, "fractional.mp4"));
+                var video = probe.GetProperty("streams").EnumerateArray().First(s => s.GetProperty("codec_type").GetString() == "video");
+                var expectedFrames = (media.Status.Duration * 30 + TimeSpan.TicksPerSecond - 1) / TimeSpan.TicksPerSecond;
+                if (video.GetProperty("nb_read_frames").GetString() != expectedFrames.ToString()) throw new Exception("Fractional mixed-rate export lost its scheduled video tail.");
+                media.ForceCpuExport(true);
+                media.Export(Path.Combine(output, "fractional-cpu.mp4"));
+                measurements.Add(new { fractionalDurationTicks = media.Status.Duration, expectedFrames, cpu = media.ExportMetrics, probe });
+            }
+            checks.Add("AAC streams from the continuous mixer at 0.25/0.5/1/1.5/2/4x; odd source ticks and three mixed rates retain sample/frame tails on default and CPU export paths.");
             using (var both = new MediaSession(initial, projectPath)) both.PrepareAudio(Path.Combine(output, "both-tracks.wav"));
             var exactFrame = initial with { Canvas = initial.Canvas with { Padding = 0, Camera = new() }, Editor = new() { CornerRadius = 0, Shadow = 0, CursorScale = 0 } };
             using (var media = new MediaSession(exactFrame, projectPath)) media.Render(20_000_000, png: Path.Combine(output, "exact-source-frame60.png"));
@@ -91,6 +125,35 @@ internal static class M2Validation
             }
             if (await File.ReadAllTextAsync(cancelled) != "keep-cancelled-target" || Directory.EnumerateFiles(output, ".frametrail-*").Any()) throw new Exception("Cancellation left damage or temporary files.");
             checks.Add("Occupied destination and mid-job cancellation preserve existing targets and clean job-local temporary files.");
+            const int repeats = 600;
+            var longAudio = initial with {
+                SourceDuration = MediaTime.FromTicks(30_000_000L * repeats),
+                Media = Enumerable.Range(0, repeats).SelectMany(i => initial.Media.Where(m => m.Kind is MediaKind.Screen or MediaKind.SystemAudio or MediaKind.Microphone)
+                    .Select(m => m with { Id = m.Id + "-" + i, StartOffset = MediaTime.FromTicks(i * 30_000_000L) })).ToArray(),
+                Segments = Enumerable.Range(0, repeats).Select(i => new RecordingSegment { Id = "long-" + i, SourceStart = MediaTime.FromTicks(i * 30_000_000L), SourceDuration = MediaTime.FromTicks(30_000_000) }).ToArray(),
+                Canvas = initial.Canvas with { Camera = new() }, Markers = Array.Empty<RecordingMarker>()
+            };
+            var cancelledAudio = Path.Combine(output, "cancelled.m4a");
+            await File.WriteAllTextAsync(cancelledAudio, "keep-audio-target");
+            using (var media = new MediaSession(longAudio, projectPath)) {
+                var watch = Stopwatch.StartNew();
+                var job = Task.Run(() => media.Export(cancelledAudio, true));
+                bool streamed = false;
+                while (!job.IsCompleted && watch.ElapsedMilliseconds < 10_000) {
+                    var status = media.Status;
+                    if (status.Stage == 2 && status.Completed >= 4096) { streamed = true; break; }
+                    await Task.Delay(2);
+                }
+                media.Cancel();
+                try { await job; throw new Exception("Audio cancellation was not observed."); } catch (OperationCanceledException) { }
+                if (!streamed) throw new Exception("Long audio export did not begin encoding before preparing its entire soundtrack.");
+                measurements.Add(new { logicalAudioMinutes = 30, firstStreamingPacketsAtMilliseconds = watch.ElapsedMilliseconds, cancelledStage = media.Status.Stage });
+            }
+            if (await File.ReadAllTextAsync(cancelledAudio) != "keep-audio-target" || Directory.EnumerateFiles(output, ".frametrail-*").Any()) throw new Exception("Audio cancellation damaged destination or leaked job files.");
+            checks.Add("30-minute logical audio export begins encoding immediately; mid-mix audio cancellation preserves destination and cleans temporary output.");
+            await Task.Delay(100); // Drain asynchronous FileSystemWatcher delivery.
+            if (!temporaryAudio.IsEmpty) throw new Exception("Export created temporary PCM audio: " + string.Join(", ", temporaryAudio));
+            checks.Add("No job-local .frametrail-*.wav was created during audio/video exports or cancellation.");
             var copy = Path.Combine(output, "素材副本.frametrailproject"); await editor.CopySourcesAsync(copy, CancellationToken.None);
             await using (var reopened = await ProjectWorkspace.OpenAsync(copy)) { if (ProjectJson.Serialize(reopened.Snapshot!) != ProjectJson.Serialize(editor.Snapshot)) throw new Exception("Copied/reopened project differs."); }
             checks.Add("Source copy opens with all media and edited snapshot, without cache or write lease files.");

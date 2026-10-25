@@ -36,6 +36,27 @@ public sealed class ProjectWorkspace : IAsyncDisposable
     private long acceptedRevision = -1;
     private string? projectId;
     private ProjectSnapshot? snapshot;
+    // Only this writable lease may reuse finalized-media validation. Never persist
+    // the cache: reopening must validate independent of a previous process.
+    private readonly Dictionary<string, ValidatedMedia> validatedMedia = new(StringComparer.OrdinalIgnoreCase);
+    private sealed record ValidatedMedia(MediaAsset Asset, long Length, uint Volume, ulong FileId, long Written, long Created);
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint Attributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+        public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle file, out ByHandleFileInformation info);
+    private static ValidatedMedia MediaStamp(MediaAsset asset, FileStream stream)
+    {
+        if (!GetFileInformationByHandle(stream.SafeFileHandle, out var info))
+            throw new IOException("Cannot identify media file.", new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+        static long Time(System.Runtime.InteropServices.ComTypes.FILETIME time) => (long)(((ulong)(uint)time.dwHighDateTime << 32) | (uint)time.dwLowDateTime);
+        return new(asset, stream.Length, info.Volume, ((ulong)info.IndexHigh << 32) | info.IndexLow, Time(info.Write), Time(info.Creation));
+    }
     public string DirectoryPath { get; private set; }
     public Guid SessionEpoch => epoch;
     public ProjectSnapshot? Snapshot => snapshot;
@@ -239,10 +260,18 @@ public sealed class ProjectWorkspace : IAsyncDisposable
             await using var file = new FileStream(Resolve(asset), FileMode.Open, FileAccess.Read, FileShare.Read);
             if (file.Length == 0) throw new IOException($"Empty visual asset: {asset}");
         }
+        var checkedMedia = new Dictionary<string, ValidatedMedia>(StringComparer.OrdinalIgnoreCase);
         foreach (var media in value.Media)
         {
+            // Resolve rechecks every component on cache hits. Opening detects deletion.
             await using var stream = new FileStream(Resolve(media.Path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             if (stream.Length == 0) throw new IOException($"Empty media: {media.Path}");
+            var stamp = MediaStamp(media, stream);
+            if (validatedMedia.TryGetValue(media.Path, out var previous) && previous == stamp)
+            {
+                checkedMedia[media.Path] = stamp;
+                continue;
+            }
             // Finalized MP4 needs a moov box; truncated last fragments must not be declared recoverable.
             if (media.Kind is MediaKind.Screen or MediaKind.Camera)
             {
@@ -259,7 +288,7 @@ public sealed class ProjectWorkspace : IAsyncDisposable
             }
             if (media.Kind == MediaKind.PointerEvents)
             {
-                using var reader = new StreamReader(stream, Encoding.UTF8);
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
                 string? line;
                 while ((line = await reader.ReadLineAsync()) is not null)
                 {
@@ -268,7 +297,13 @@ public sealed class ProjectWorkspace : IAsyncDisposable
                     catch (JsonException error) { throw new IOException("Invalid pointer event JSON.", error); }
                 }
             }
+            if (MediaStamp(media, stream) != stamp) throw new IOException($"Media changed during validation: {media.Path}");
+            checkedMedia[media.Path] = stamp;
         }
+        // Failed candidates do not seed the cache. Calls are serialized by the
+        // writer, or occur during open before the lease is exposed to callers.
+        validatedMedia.Clear();
+        foreach (var entry in checkedMedia) validatedMedia.Add(entry.Key, entry.Value);
     }
     private static async Task<bool> HasMp4MoovAsync(FileStream stream)
     {

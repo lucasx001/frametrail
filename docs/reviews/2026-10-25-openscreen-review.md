@@ -3,6 +3,8 @@
 日期：2026-10-25。FrameTrail 基线：`ffb401be0bdcaabfc66ee2408eb51d3ca84abf25`。
 Open Screen 对照：`siddharthvaddem/openscreen`，`ca8104c279da0d4b4481ec992ff103949e22c772`。
 
+2026-10-25 实施更新：用户选择仅执行 R1–R5 五项实现问题；五个独立 sub-agent 已交付，主 agent 完成集成审阅并补修缩略图取消边界。最终 Release、9 组原生/265 项托管、光标像素、独立媒体和三链窗口方法集成通过。实际鼠标/键盘因 Windows 锁屏未执行，保留待验收；新功能建议不纳入本轮。见 [0031 任务](../0031-review-fixes.md)、[主验证](../validation/0031-review-fixes.md)。下文保留实施前的审阅依据。
+
 ## 结论与范围
 
 FrameTrail 应继续围绕 Windows 本地软件教程、产品演示、操作说明，以及 Android USB 演示展开。已有录制、恢复、非破坏性剪辑、自动运镜、画面包装和原生导出闭环。下一阶段优先修复跨分段的一致性与长录制成本，再补少量帮助观众看懂操作的功能。
