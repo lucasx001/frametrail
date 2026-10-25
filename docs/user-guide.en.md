@@ -41,7 +41,7 @@ Choose Canvas → Background → Image to browse 18 bundled desktop wallpapers. 
 
 Open existing project shows a searchable local project list, sorted by last saved time. Other location adds a folder; you do not need to locate `project.json` manually. Switch project saves the active project first. Cancellation or failure keeps the current editor open. The list supports arrow selection and Enter; Enter in search opens a unique usable match.
 
-Each project is a `.frametrailproject` directory containing its media. Copy the whole directory when moving it. The default location is FrameTrail under Videos. Delete actions require confirmation and move the selected project to Windows Recycle Bin. The default is Cancel. Windows may ask separately about permanent deletion on unsupported locations. Active media tasks and external writer leases prevent unsafe deletion.
+Each project is a `.frametrailproject` directory containing its media. Copy the whole directory when moving it. The default location is FrameTrail under Videos. Click the cross in the upper-right corner of a project card to open its delete confirmation without opening the project. Confirmed deletion moves the selected project to Windows Recycle Bin. The default is Cancel. Windows may ask separately about permanent deletion on unsupported locations. Active media tasks and external writer leases prevent unsafe deletion.
 
 Recovery reopens valid completed checkpoints. Unfinished tail files remain on disk; repair is not guaranteed. Corrupted JSON may fall back to a valid previous snapshot. Future schema versions require a compatible application.
 
