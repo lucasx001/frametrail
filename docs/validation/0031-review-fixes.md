@@ -1,6 +1,6 @@
 # 0031 主 agent 集成审阅与验证
 
-日期：2026-10-25（Asia/Singapore）。工作区：`C:/Users/lucas/.codex/worktrees/openscreen-review-integration/frametrail`。分支：`codex/openscreen-review-fixes`。基线：`ffb401be0bdcaabfc66ee2408eb51d3ca84abf25`；最终代码构建修订：`d878b5f`，后续文档独立提交。
+日期：2026-10-25（Asia/Singapore）。工作区：`C:/Users/lucas/.codex/worktrees/openscreen-review-integration/frametrail`。分支：`codex/openscreen-review-fixes`。基线：`ffb401be0bdcaabfc66ee2408eb51d3ca84abf25`；首轮组合代码构建修订：`d878b5f`，后续文档独立提交。
 
 ## 独立任务与主审阅
 
@@ -59,4 +59,6 @@ python scripts/verify-cursor-continuity.py --native-bin artifacts/native-release
 
 主 agent 更新 0031 任务页、progress/todo、spec/schema、0016/0024、双语使用指南与版本说明，并在原审阅报告增加本轮实施状态。实现、独立子任务证据、主组合回归和未完成的实际输入/硬件验收分别保留；没有新增功能列表中的箭头、字幕、GIF 等承诺。
 
-所有改动保留在独立集成分支，本轮未 push、发布或合并到原仓库正在使用的 `codex/project-card-delete` 分支。子任务工作区归档工具返回“Another active task still uses this worktree”，因此保留这些受占用的工作区，没有绕过工具删除；验证证据已复制到主集成目录。
+实现阶段的改动保留在独立集成分支，当时未 push、发布或合并到原仓库正在使用的 `codex/project-card-delete` 分支。子任务工作区归档工具返回“Another active task still uses this worktree”，因此保留这些受占用的工作区，没有绕过工具删除；验证证据已复制到主集成目录。
+
+PR 准备阶段：用户要求提交此 worktree 的 PR。合入最新 `origin/main`（`a0474da`，含项目卡片删除改进），两处文档冲突保留双方记录；合并修订 `201992c` 再次执行完整 Release 构建、9 组原生和 265 项托管测试，0 警告、0 错误，全部通过，日志为 `artifacts/pr-build.log`。前述窗口/像素/媒体结果来自首轮组合构建；本轮没有重复实际输入验收，也没有改变其待验收状态。
