@@ -58,3 +58,5 @@ python scripts/verify-cursor-continuity.py --native-bin artifacts/native-release
 ## 文档同步
 
 主 agent 更新 0031 任务页、progress/todo、spec/schema、0016/0024、双语使用指南与版本说明，并在原审阅报告增加本轮实施状态。实现、独立子任务证据、主组合回归和未完成的实际输入/硬件验收分别保留；没有新增功能列表中的箭头、字幕、GIF 等承诺。
+
+所有改动保留在独立集成分支，本轮未 push、发布或合并到原仓库正在使用的 `codex/project-card-delete` 分支。子任务工作区归档工具返回“Another active task still uses this worktree”，因此保留这些受占用的工作区，没有绕过工具删除；验证证据已复制到主集成目录。
