@@ -17,6 +17,9 @@ internal sealed class EditorAssetCoordinator
         thumbnail.ReplaceAsync(() => {
             requests = Channel.CreateBounded<long>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait });
             pending.Clear();
+            // A cancelled worker can exit before its per-frame finally runs.
+            // The old job is drained here, so its abandoned frame is requestable again.
+            Interlocked.Exchange(ref inFlight, -1);
         }, token => build(requests!, token));
 
     internal Task ReplaceAudioAsync(Action reset, Func<CancellationToken, Task> build) => audio.ReplaceAsync(reset, build);

@@ -141,6 +141,31 @@ public sealed class EditorControllerTests
     }
 
     [Fact]
+    public async Task ReplacingCancelledThumbnailWorkCanRequestTheAbandonedFrameAgain()
+    {
+        var assets = new EditorAssetCoordinator();
+        var entered = Signal();
+        var release = Signal();
+        long[] observed = [];
+        await assets.ReplaceThumbnailsAsync(async (_, token) => {
+            assets.BeginThumbnail(42);
+            entered.SetResult(true);
+            await Task.Delay(Timeout.Infinite, token);
+        });
+        await entered.Task;
+        await assets.ReplaceThumbnailsAsync(async (queue, _) => {
+            await release.Task;
+            var items = new List<long>();
+            while (queue.Reader.TryRead(out var ticks)) items.Add(ticks);
+            observed = items.ToArray();
+        });
+        assets.RequestThumbnails([42]);
+        release.SetResult(true);
+        await assets.StopAsync(Task.CompletedTask);
+        Assert.Equal(new long[] { 42 }, observed);
+    }
+
+    [Fact]
     public async Task ThumbnailRequestsKeepOnlyCurrentDemandAndRemainBounded()
     {
         var assets = new EditorAssetCoordinator();
