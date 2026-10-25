@@ -16,9 +16,13 @@
 
 `ProjectCatalog` 在后台仅读元数据，不获取写租约、不创建工程内缓存、不解码媒体；直接枚举 `.frametrailproject`，不递归普通目录，排除经过符号链接 / 目录联接的路径。偏好保存在当前 Windows 用户的 `FrameTrail/project-catalog.json`，原子替换，最多保留 100 个已打开项目与 20 个额外位置。偏好损坏、已移走的项目和不存在的位置不阻止其他列表项显示。
 
-`ProjectLibraryWindow` 复用原生主题与编辑器样式，项目行与删除按钮为相邻控件，删除操作固定捕获对应目录。加载 / 操作中禁止重复操作；错误留在列表内显示。打开和删除经由 `MainWindow` 复用既有项目切换、输入保存、首帧验证、写入屏障、资源释放、独占租约及 Windows 回收站路径。新打开的工程预览仍默认 4K。
+`ProjectLibraryWindow` 复用原生主题与编辑器样式。项目卡片右上角内嵌 28 DIP 叉号删除按钮，距上方和右侧各 8 DIP；文字为该按钮预留空间，点击不会触发打开项目。列表容器的悬停底色透明，卡片与叉号分别绘制自身的悬停效果，避免卡片外出现第二层背景。删除操作固定捕获对应目录。确认删除后，仅从可通知集合中移除已删除的一项，由系统增删 / 补位过渡更新界面，不重新扫描并替换整列数据源；其余卡片保持原控件，取消或失败保留原行。忙碌状态通过阻止点击和动作处理防止重复操作，不再禁用整张列表导致所有卡片变灰。错误留在列表内显示。打开和删除经由 `MainWindow` 复用既有项目切换、输入保存、首帧验证、写入屏障、资源释放、独占租约及 Windows 回收站路径。新打开的工程预览仍默认 4K。
 
 ## 验证
+
+- 2026-10-25 补充删除闪烁修复：`artifacts/validation/project-card-delete/smooth-01/project-library-validation.json` 为 `success=true`。实际应用回归在成功、取消和占用失败等路径监听集合变化及列表启用状态，校验数据源不替换、没有 Reset、列表不被禁用、其余已显示卡片保留同一容器和内容；成功时恰有一次 Remove，取消 / 失败没有集合变化。额外 Release 输出为 `artifacts/project-card-smooth-app`，构建 0 警告 / 0 错误。
+
+- 2026-10-25：删除入口改为卡片内右上角叉号。独立 Release 输出 `artifacts/project-card-app` 构建 0 警告 / 0 错误；`artifacts/validation/project-card-delete/run-03/project-library-validation.json` 为 `success=true`，覆盖浅 / 深色悬停图、紧凑布局、右上角位置、默认取消、实际回收受控副本、占用保护和切换保存。尺寸断言容许 1 DIP 的物理像素取整差异。另在真实窗口点击「项目 B」的叉号，确认只弹出该项目的删除确认，并用 Esc 取消，三个测试项目全部保留。未操作用户工程；原有运行实例保持不变。
 
 - `scripts/build.cmd -Configuration Release`：应用 0 警告 / 0 错误，7 组原生及 209 项默认托管测试通过（App 30、Capture 6、Domain 111、Workspace 62；真实音频硬件测试不在默认集合）。新增 8 项目录 / 元数据 / 偏好测试覆盖去重、排序、时间基准、损坏 / 未完成工程、缺失位置、占用时列出和取消扫描。
 - `FrameTrail.App.exe --project-library-self-test <新的输出目录> <有效测试工程> --inspect-ui`：只复制可丢弃工程，实际回收自己创建的副本，不操作用户项目。

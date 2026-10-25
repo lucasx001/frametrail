@@ -1,11 +1,13 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.ObjectModel;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using Windows.System;
 
 namespace FrameTrail.App;
@@ -26,6 +28,7 @@ internal sealed partial class ProjectLibraryWindow : Window
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer searchDelay;
     private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private IReadOnlyList<ProjectCatalogEntry> entries = [];
+    private ObservableCollection<ProjectCatalogEntry> visibleEntries = [];
     private bool working, confirming, closed, allowClose;
     private ContentDialog? confirmation;
     internal Task Ready => ready.Task;
@@ -52,6 +55,10 @@ internal sealed partial class ProjectLibraryWindow : Window
         AutomationProperties.SetAutomationId(search, "projects.search"); AutomationProperties.SetName(search, L.T("SDFB59EA2B7A2"));
         search.Resources["TextControlBorderBrushFocused"] = Application.Current.Resources["EditorBlue"];
         AutomationProperties.SetAutomationId(list, "projects.list"); AutomationProperties.SetName(list, L.T("S909A4F288125"));
+        list.ItemContainerTransitions = new TransitionCollection { new AddDeleteThemeTransition(), new RepositionThemeTransition() };
+        // The card owns its hover surface; the recycled ListViewItem must not draw a second one.
+        foreach (string key in new[] { "ListViewItemBackgroundPointerOver", "ListViewItemBackgroundPressed", "ListViewItemBackgroundSelected", "ListViewItemBackgroundSelectedPointerOver", "ListViewItemBackgroundSelectedPressed" })
+            list.Resources[key] = new SolidColorBrush(Colors.Transparent);
         AutomationProperties.SetAutomationId(browse, "projects.browse"); AutomationProperties.SetAutomationId(refresh, "projects.refresh");
         searchDelay=DispatcherQueue.CreateTimer();searchDelay.Interval=TimeSpan.FromMilliseconds(150);searchDelay.IsRepeating=false;
         searchDelay.Tick+=(_,_)=>RenderRows();
@@ -60,6 +67,7 @@ internal sealed partial class ProjectLibraryWindow : Window
         void BindRow(ListViewBase sender,ContainerContentChangingEventArgs args){
             if(args.InRecycleQueue){if(args.ItemContainer.ContentTemplateRoot is Grid old)old.Children.Clear();return;}
             args.ItemContainer.Padding=new Thickness(0);args.ItemContainer.HorizontalContentAlignment=HorizontalAlignment.Stretch;
+            args.ItemContainer.Margin=new Thickness(0,0,0,6);args.ItemContainer.CornerRadius=new CornerRadius(12);
             args.ItemContainer.IsTabStop=true;
             if(args.ItemContainer.ContentTemplateRoot is not Grid host){if(args.Phase==0)args.RegisterUpdateCallback(1,BindRow);return;}
             if(args.Item is ProjectCatalogEntry entry){host.Children.Clear();host.Children.Add(CreateRow(entry));args.Handled=true;}
@@ -95,7 +103,13 @@ internal sealed partial class ProjectLibraryWindow : Window
     private IEnumerable<ProjectCatalogEntry> Filtered() => entries.Where(entry => string.IsNullOrWhiteSpace(search.Text) ||
         entry.Name.Contains(search.Text.Trim(), StringComparison.OrdinalIgnoreCase) || entry.Directory.Contains(search.Text.Trim(), StringComparison.OrdinalIgnoreCase));
     private static string EntryId(ProjectCatalogEntry entry) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(entry.Directory.ToUpperInvariant())))[..16];
-    private void SetBusy(bool value) { working = value; search.IsEnabled = list.IsEnabled = browse.IsEnabled = refresh.IsEnabled = !value; }
+    private void SetBusy(bool value)
+    {
+        working = value;
+        search.IsEnabled = browse.IsEnabled = refresh.IsEnabled = !value;
+        // Block actions without switching every card into its dimmed disabled visual state.
+        list.IsHitTestVisible = list.IsTabStop = !value;
+    }
     private void ShowError(Exception error) { notice.Title = L.T("S79BE13BDF0C5"); notice.Message = error.Message; notice.Severity = InfoBarSeverity.Error; notice.IsOpen = true; }
 
     private async Task RefreshAsync()
@@ -110,17 +124,27 @@ internal sealed partial class ProjectLibraryWindow : Window
     private void RenderRows()
     {
         if (closed) return;
-        searchDelay.Stop(); var visible = Filtered().ToArray();
-        list.ItemsSource = visible;
-        count.Text = L.T("S90B234CEB9F7", visible.Length);
-        empty.Visibility = visible.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        searchDelay.Stop(); visibleEntries = new(Filtered());
+        list.ItemsSource = visibleEntries;
+        UpdateSummary();
+    }
+    private void UpdateSummary()
+    {
+        count.Text = L.T("S90B234CEB9F7", visibleEntries.Count);
+        empty.Visibility = visibleEntries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         empty.Text = entries.Count == 0 ? L.T("S2BF4A30A3122") : L.T("S4306AF5EF8E0");
+    }
+    private void RemoveDeletedEntry(string path)
+    {
+        entries = entries.Where(entry => !string.Equals(entry.Directory, path, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var visible = visibleEntries.FirstOrDefault(entry => string.Equals(entry.Directory, path, StringComparison.OrdinalIgnoreCase));
+        if (visible is not null) visibleEntries.Remove(visible);
+        UpdateSummary();
     }
     private Grid CreateRow(ProjectCatalogEntry entry)
     {
-            var row = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 0, 0, 6) };
-            row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            var content = new Grid { ColumnSpacing = 14 }; content.ColumnDefinitions.Add(new() { Width = new GridLength(42) }); content.ColumnDefinitions.Add(new());
+            var row = new Grid();
+            var content = new Grid { ColumnSpacing = 14, Margin = new Thickness(0, 0, 32, 0) }; content.ColumnDefinitions.Add(new() { Width = new GridLength(42) }); content.ColumnDefinitions.Add(new());
             content.Children.Add(new Border { Width = 42, Height = 44, CornerRadius = new CornerRadius(12), Background = Brush("EditorWell"), Child = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorBlue") } });
             var details = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
             var title = Text(entry.Name, 14); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; details.Children.Add(title);
@@ -136,9 +160,9 @@ internal sealed partial class ProjectLibraryWindow : Window
             if (string.Equals(entry.Directory, currentProject, StringComparison.OrdinalIgnoreCase)) {
                 title.Text += L.T("S94FB17438C8C");
             }
-            var remove = new Button { Content = new EditorGlyph { Kind = "Trash", Foreground = new SolidColorBrush(Colors.IndianRed) }, Style = (Style)Application.Current.Resources["EditorButton"], Width = 40, Height = 40, VerticalAlignment = VerticalAlignment.Center };
+            var remove = new Button { Content = new EditorGlyph { Kind = "Close", Width = 14, Height = 14, Foreground = new SolidColorBrush(Colors.IndianRed) }, Style = (Style)Application.Current.Resources["EditorIconButton"], Width = 28, Height = 28, MinWidth = 0, MinHeight = 0, CornerRadius = new CornerRadius(8), Margin = new Thickness(8), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
             AutomationProperties.SetName(remove, L.T("SA19F315BE5D3") + entry.Name); AutomationProperties.SetAutomationId(remove, "projects.delete." + EntryId(entry)); ToolTipService.SetToolTip(remove, L.T("SF6DC6A110D09"));
-            remove.Click += async (_, _) => await DeleteAsync(entry); Grid.SetColumn(remove, 1); row.Children.Add(remove);
+            remove.Click += async (_, _) => await DeleteAsync(entry); row.Children.Add(remove);
             return row;
     }
     private async Task OpenAsync(ProjectCatalogEntry entry)
@@ -164,7 +188,13 @@ internal sealed partial class ProjectLibraryWindow : Window
         try { await delete(entry.Directory); }
         catch (OperationCanceledException) { }
         catch (Exception error) { if (!closed) ShowError(error); }
-        finally { if (!closed) { SetBusy(false); await RefreshAsync(); Activate(); } }
+        finally {
+            if (!closed) {
+                // Only remove the confirmed missing entry; keep the source and surviving containers attached.
+                if (!Directory.Exists(entry.Directory)) RemoveDeletedEntry(entry.Directory);
+                SetBusy(false); Activate();
+            }
+        }
     }
     private async Task BrowseAsync()
     {
