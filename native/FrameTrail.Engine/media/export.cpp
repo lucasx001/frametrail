@@ -1,10 +1,10 @@
 #include "internal.hpp"
-#include "pcm_wave.hpp"
 #include "../codecs/video_codec.hpp"
 #include <algorithm>
 #include <array>
 #include <propvarutil.h>
 #include <chrono>
+#include <cmath>
 #include <mftransform.h>
 
 namespace frametrail::media {
@@ -116,8 +116,9 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
     }
     const bool has_audio = std::any_of(project.media.begin(), project.media.end(), [](auto& m) { return m.kind == MediaKind::microphone || m.kind == MediaKind::system_audio || m.kind == MediaKind::android_audio; });
     if (audio_only && !has_audio) throw ValidationError("audio", "project has no recorded audio track");
-    auto id = job_id(); const auto temp = target.parent_path() / (L".frametrail-" + id + L".mp4"), wav = target.parent_path() / (L".frametrail-" + id + L".wav");
-    Cleanup cleanup{{temp, wav}};
+    auto id = job_id();
+    const auto temp = target.parent_path() / (L".frametrail-" + id + L".mp4");
+    Cleanup cleanup{{temp}};
     const auto duration = evaluator.timeline().output_duration(); const auto fps = project.export_settings.fps.numerator;
     const uint64_t frame_count = static_cast<uint64_t>((duration * fps + time_scale - 1) / time_scale);
     const auto audio_frames = ticks_samples(duration); DWORD video_stream{}, audio_stream{};
@@ -145,30 +146,56 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         auto type = pcm_type(); FT_MEDIA_CHECK(type->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC)); FT_MEDIA_CHECK(type->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24000));
         FT_MEDIA_CHECK(type->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0)); FT_MEDIA_CHECK(type->SetUINT32(MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29));
         FT_MEDIA_CHECK(writer->AddStream(type.Get(), &audio_stream)); auto pcm = pcm_type(); FT_MEDIA_CHECK(writer->SetInputMediaType(audio_stream, pcm.Get(), nullptr));
-        mix_audio(wav);
     }
     check_cancel(); FT_MEDIA_CHECK(writer->BeginWriting()); stage = 2; progress(0, audio_only ? static_cast<uint64_t>(audio_frames) : frame_count);
     if(converter)converter->enable_pool(writer.Get(),video_stream,video_input.Get(),export_force_cpu);
-    std::ifstream audio; if (has_audio) { audio.open(wav, std::ios::binary); audio.seekg(static_cast<std::streamoff>(pcm_data_offset(audio))); }
-    int64_t audio_position = 0;
-    auto write_audio = [&](int64_t until) {
-        if (!has_audio) return;
-        while (audio_position < until) {
-            check_cancel(); auto n = static_cast<DWORD>(std::min<int64_t>(1024, until - audio_position)); std::vector<BYTE> bytes(n * channels * 2);
-            audio.read(reinterpret_cast<char*>(bytes.data()), bytes.size()); if (audio.gcount() != static_cast<std::streamsize>(bytes.size())) throw ValidationError("audio", "truncated prepared audio");
-            auto sample = sample_bytes(bytes.data(), static_cast<DWORD>(bytes.size()), sample_ticks(audio_position), sample_ticks(audio_position + n) - sample_ticks(audio_position)); FT_MEDIA_CHECK(writer->WriteSample(audio_stream, sample.Get())); audio_position += n;
-            if (audio_only) progress(static_cast<uint64_t>(audio_position), static_cast<uint64_t>(audio_frames));
-        }
-    };
-    if (audio_only) write_audio(audio_frames);
-    else for (uint64_t i = 0; i < frame_count; ++i) {
-        check_cancel(); const auto ticks = static_cast<int64_t>(i) * time_scale / fps, end = std::min<int64_t>(duration, static_cast<int64_t>(i + 1) * time_scale / fps);
-        const auto scene = evaluator.evaluate(ticks); if (!scene) throw ValidationError("export", "missing scheduled output frame");
+    uint64_t video_position = 0;
+    auto write_video = [&] {
+        check_cancel();
+        const auto ticks = static_cast<int64_t>(video_position) * time_scale / fps;
+        const auto end = std::min<int64_t>(duration, static_cast<int64_t>(video_position + 1) * time_scale / fps);
+        const auto scene = evaluator.evaluate(ticks);
+        if (!scene) throw ValidationError("export", "missing scheduled output frame");
         auto* texture = gpu().render(project, *scene, project.export_settings.width, project.export_settings.height);
-        auto sample=converter->convert(texture,ticks,end-ticks,*this);auto started=std::chrono::steady_clock::now();FT_MEDIA_CHECK(writer->WriteSample(video_stream,sample.Get()));export_write_us+=Nv12::elapsed(started);
-        write_audio(ticks_samples(end)); progress(i + 1, frame_count);
+        auto sample = converter->convert(texture, ticks, end - ticks, *this);
+        auto started = std::chrono::steady_clock::now();
+        FT_MEDIA_CHECK(writer->WriteSample(video_stream, sample.Get()));
+        export_write_us += Nv12::elapsed(started);
+        progress(++video_position, frame_count);
+    };
+    if (has_audio) {
+        int64_t audio_position = 0;
+        std::array<int16_t, 1024 * channels> pcm{};
+        // Keep one uninterrupted mixer pass so WSOLA retains its overlap/search
+        // history across AAC packets. Interleave video with each bounded PCM
+        // packet instead of preparing or retaining the complete soundtrack.
+        mix_pcm(0, audio_frames, [&](const float* samples, size_t count) {
+            for (size_t offset = 0; offset < count;) {
+                check_cancel();
+                const auto n = std::min<size_t>(1024, count - offset);
+                const auto until = audio_position + static_cast<int64_t>(n);
+                if (!audio_only) {
+                    while (video_position < frame_count &&
+                        static_cast<int64_t>(video_position) * time_scale / fps < sample_ticks(until)) write_video();
+                }
+                for (size_t i = 0; i < n * channels; ++i)
+                    pcm[i] = static_cast<int16_t>(std::lround(std::clamp(samples[offset * channels + i], -1.0f, 1.0f) * 32767));
+                auto sample = sample_bytes(reinterpret_cast<const BYTE*>(pcm.data()), static_cast<DWORD>(n * channels * sizeof(int16_t)),
+                    sample_ticks(audio_position), sample_ticks(until) - sample_ticks(audio_position));
+                FT_MEDIA_CHECK(writer->WriteSample(audio_stream, sample.Get()));
+                audio_position = until;
+                offset += n;
+                if (audio_only) progress(static_cast<uint64_t>(audio_position), static_cast<uint64_t>(audio_frames));
+            }
+        }, false);
+        if (audio_position != audio_frames) throw ValidationError("audio", "streamed mix duration differs from output timeline");
     }
-    check_cancel(); stage = 3; FT_MEDIA_CHECK(writer->Finalize()); writer.Reset(); audio.close(); check_cancel();
+    if (!audio_only) while (video_position < frame_count) write_video();
+    check_cancel();
+    stage = 3;
+    FT_MEDIA_CHECK(writer->Finalize());
+    writer.Reset();
+    check_cancel();
     validate_output(temp, !audio_only, duration); check_cancel();
     if (!MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) FT_MEDIA_CHECK(HRESULT_FROM_WIN32(GetLastError()));
     stage = 4; progress(total, total);
