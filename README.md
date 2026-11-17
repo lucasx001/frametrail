@@ -1,130 +1,129 @@
-# FrameTrail
+<p align="center">
+  <img src="src/FrameTrail.App/Assets/Brand/FrameTrail.Icon.v1.png" width="128" alt="FrameTrail">
+</p>
 
-面向 Windows 11 的原生录屏与演示视频编辑软件。
+<h1 align="center">FrameTrail</h1>
 
-> **项目来源说明：FrameTrail 改编自 [DogSC](https://github.com/laogou717/dogsc)，原作者为 [laogou717](https://github.com/laogou717)。**
->
-> 本项目以 DogSC 的产品设计、界面布局和编辑领域模型为基础，将其录屏与编辑体验移植到 Windows，采集、编辑、预览和导出采用 Windows 原生技术重写。感谢原作者开源分享；来源、原项目 MIT 许可及相关版权声明见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+<p align="center">
+  <b>录得清楚，剪得轻松，运镜自然。</b><br>
+  Windows 11 原生的录屏与演示视频编辑工具。
+</p>
 
-M0–M3 已形成录制、非破坏性编辑、运镜包装与 MP4/M4A 导出的本机闭环；M4 已提供可靠性修复和开发候选包。长时同步、跨硬件和正式分发验收仍待完成，当前任务以 [进度](docs/progress.md) 和 [待办](docs/todo.md) 为准。
+<p align="center">
+  <img src="https://img.shields.io/badge/Windows%2011-22H2%2B-111111?style=flat-square" alt="Windows 11 22H2+">
+  <img src="https://img.shields.io/badge/Architecture-x64-111111?style=flat-square" alt="x64">
+  <img src="https://img.shields.io/badge/简体中文%20%7C%20English-111111?style=flat-square" alt="简体中文 | English">
+  <img src="https://img.shields.io/badge/license-MIT-5aaeff?style=flat-square" alt="MIT License">
+</p>
 
-移动设备录屏方向为 [通过 USB 数据线连接 Android 手机](docs/0012-android-usb-recording.md)，M5 的本地实现与自动媒体验证已完成；USB 真机、长时同步与安装矩阵待验收，见 [M5 验证记录](docs/validation/0012-android-usb-validation.md)。
+<p align="center">
+  <a href="https://github.com/lucasx001/frametrail/releases/latest"><b>下载安装包</b></a>
+  &nbsp;·&nbsp;
+  <a href="#从源码构建">从源码构建</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/lucasx001/frametrail/issues">反馈问题</a>
+</p>
 
-录屏界面已参照 DogSC 重做为悬浮胶囊与输入配置面板，包含来源选择遮罩、区域拖框、录制条、完成卡片和备忘录。实现与验证边界见 [录屏 UI 记录](docs/validation/0005-recorder-ui.md)。
+<p align="center">
+  <img src="docs/images/editor.png" alt="FrameTrail 编辑器：画面预览、背景壁纸与多轨时间线">
+</p>
 
-编辑器、六项检查器、通栏时间线、导出与设置界面也已按 DogSC 截图及设计源码重做，支持统一的明暗外观。M3 已接通点击自动运镜、手动缩放/透视、聚焦与遮挡、贴图、开场/摄像头动画、工程内背景和场景预设，见 [M3 验证](docs/validation/m3-motion-effects.md)；参考来源与许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+## 功能
 
-P1 体验补充已接入画布对象与裁切框直接编辑、共享摄像头实时预览、无需整片缓存的有声播放，以及 RF64 与缓存管理。实现与验收边界见 [P1 验证](docs/validation/p1-editor-recording.md)。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <b>录制</b><br>
+      显示器、窗口、自定义区域，或用 USB 数据线连接的 Android 手机。同时录制摄像头、麦克风和系统声音。
+    </td>
+    <td width="50%" valign="top">
+      <b>剪辑</b><br>
+      分割、裁剪、重排、0.25–4× 变速与恢复剪辑。连续缩略图和音频波形随时切换，时间线边界自动吸附。
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>运镜</b><br>
+      点击自动跟随光标缩放与手动运镜；屏幕 3D 倾斜、透视与聚焦虚化；屏幕与摄像头开场动效。
+    </td>
+    <td valign="top">
+      <b>画面</b><br>
+      比例、画布裁切、留白、圆角、阴影、内置壁纸／渐变背景与窗口／浏览器／设备样机外框；贴图、遮挡与场景预设。
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <b>光标与摄像头</b><br>
+      光标样式、平滑轨迹、点击反馈、静止隐藏与时间校准；摄像头实时预览、形状布局与出场动画。
+    </td>
+    <td valign="top">
+      <b>导出</b><br>
+      MP4（H.264／HEVC／AV1）或 M4A 音频；支持 1080p、1440p、4K 及 30／60 FPS。工程自动保存，随时继续编辑。
+    </td>
+  </tr>
+</table>
 
-P2 补充了时间线悬停与属性复用、长列表优化、GPU 表面导出与兼容回退、官方版本检查，以及中英文/首次使用/键盘可访问性。语言在下次启动生效；本机证据和扩展验收见 [P2 验证](docs/validation/p2-workflow-performance.md)。
+<p align="center">
+  <img src="docs/images/motion.png" alt="FrameTrail 运镜：缩放焦点、动画曲线与时间线片段">
+</p>
 
-2026-10-25 审阅修复已接通光标跨录制检查点连续性、素材先保存的增量运镜、直接流式音频导出、编辑器生命周期控制组件，以及三条统一窗口验收入口；五项独立实现和主 agent 集成 review 见 [0031](docs/0031-review-fixes.md)。
+## 小技巧
 
-- [产品规格](docs/spec.md)
-- [实现进度与任务顺序](docs/progress.md)
-- [当前待办与验收入口](docs/todo.md)
-- [媒体缓存、光标、连续缩略图与预设管理](docs/validation/editor-polish.md)
-- [工具链与构建](docs/toolchain.md)
-- [M0/M1 主 agent 审阅与验证](docs/validation/m0-m1-review.md)
-- [M2 编辑与导出验证](docs/validation/m2-editor-export.md)
-- [M4 可靠性与分发验证](docs/validation/m4-reliability-distribution.md)
-- [使用指南](docs/user-guide.md) / [隐私说明](docs/privacy.md) / [版本说明](docs/release-notes.md)
+- 录制前默认开启「点击自动缩放」，录制中的点击与光标操作会自动生成平滑运镜片段，进入编辑器即可直接预览和微调。
+- 悬浮备忘录可以当提词器使用，支持自由拖动与字号调节，录制时不会被录进画面。
+- 在时间线上用 <kbd>Ctrl</kbd>+<kbd>C</kbd>／<kbd>Ctrl</kbd>+<kbd>V</kbd> 复制效果片段，<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> 只粘贴同类属性。
+- 双击预览画面或按 <kbd>F11</kbd> 可切换 4K 全屏预览；完整快捷键速查见「设置 → 编辑器」。
 
-技术方向：WinUI 3 / C# 应用层，C++ 原生媒体引擎，Windows.Graphics.Capture、WASAPI、Direct3D 11、Media Foundation。
+## 安装与开始使用
 
-开发时按 `docs/000x-*.md` 的顺序推进。每步完成后更新任务验收项与 `progress.md`，保留构建、自动测试和实机验收之间的区别。
+### 方式一：安装包 / 便携包直接安装（推荐）
 
-## 下载、安装与发布
+1. 前往 [GitHub Releases](https://github.com/lucasx001/frametrail/releases/latest) 下载最新版本：
+   - **安装版**：下载 `FrameTrail-X.Y.Z-x64-Setup.exe`，双击即可按当前用户完成安装。
+   - **便携版**：下载 `FrameTrail-X.Y.Z-x64-Portable.zip`，完整解压到任意目录后运行 `FrameTrail.App.exe`。
+2. 安装包已内置所需运行时，无需额外安装 .NET 或开发工具（支持 Windows 11 x64，22H2 及以上版本）。
+3. 界面语言可在「设置 → 常规」中切换（跟随系统／简体中文／English），重启应用后生效。
 
-版本安装包位于 [GitHub Releases](https://github.com/lucasx001/frametrail/releases)。选择 `FrameTrail-X.Y.Z-x64-Setup.exe` 即可按当前用户安装；也可下载便携 ZIP，完整解压后运行。安装包包含运行时，无需开发工具，支持 Windows 11 x64（最低 build 22621）。已提供公开发行版本；当前 EXE 未签名，Windows 可能显示未知发布者或 SmartScreen 提示。
+> [!NOTE]
+> 当前公开发行版尚未附带商业代码签名证书。首次运行安装程序或应用时，若遇到 Windows SmartScreen 提示“Windows 已保护你的电脑”，请点击 **更多信息 → 仍要运行**。请仅从本仓库官方 Releases 页面下载安装包。
 
-维护者可在 **Actions → Release Windows application → Run workflow** 输入 `0.0.1`，或推送 `v0.0.1` tag，自动构建、测试、打包并发布对应版本。支持先保留草稿，已公开版本不会被覆盖；下一版使用 `0.0.2`。工作流已完成 v0.0.1 公开与附件验证。操作与更新说明见 [分发文档](docs/distribution.md)，执行状态见 [0019](docs/0019-github-releases.md)。
+### 方式二：从源码构建
 
-也提供 **Build Microsoft Store MSIX** 工作流：注册商店应用并配置三个身份变量后生成提交包，由 Microsoft 在通过认证后签名，无需自购代码签名证书。尚未注册可开启 `test_only` 生成打包测试 MSIX。配置、版本映射和上传步骤见 [Microsoft Store 分发](docs/microsoft-store.md)。
+<details>
+<summary>克隆仓库到本地并自行编译启动（需要 Windows 11 x64、.NET 8 SDK、Visual Studio 2022 C++ 工具集与 CMake）</summary>
 
-## 构建与启动
-
-Windows 11 x64，准备工具链后在本目录运行：
+<br>
 
 ```powershell
+# 1. 克隆仓库到本地
+git clone https://github.com/lucasx001/frametrail.git
+cd frametrail
+
+# 2. 编译 Release 版本（包含 C++ 原生媒体引擎与 WinUI 3 桌面应用）
 .\scripts\build.cmd -Configuration Release
+
+# 3. 启动应用
 .\scripts\run.cmd -Configuration Release
 ```
 
-`.cmd` 入口适用于默认禁止脚本的 Windows PowerShell，通过独立子进程执行对应 `.ps1`；执行策略仅对子进程生效，不修改用户或系统的持久设置。若直接运行 `.ps1` 遇到“在此系统上禁止运行脚本”，请使用以上命令。
+- 如果需要使用 **Android USB 手机录屏** 功能，可在首次构建前执行 `.\scripts\setup-android.cmd` 自动准备固定版本的 `adb` 与 `scrcpy-server` 运行组件，随后再运行上述构建与启动命令。
+- 也可以在启动时直接指定打开某个已有工程：
+  ```powershell
+  .\scripts\run.cmd -Configuration Release -ProjectPath "C:\Videos\Demo.frametrailproject"
+  ```
+- 如需在本地打包生成便携包与 `Setup.exe` 安装程序：
+  ```powershell
+  .\scripts\package.cmd -OutputDirectory artifacts\packages\release -BuildInstaller
+  ```
 
-默认测试排除需要实际设备的托管检查；实机补充运行 `.\scripts\test.cmd -Configuration Release -IncludeHardware`。具体依赖、原生输出目录和验证命令见工具链文档。
+</details>
 
-三条实际窗口工作流可用 `.\scripts\validate-workflows.cmd` 重复运行，包含受控窗口录制、编辑导出、效果撤销重开，以及播放/后台任务中的切换与关闭。它们属于应用方法集成自测，真实鼠标/键盘输入另行验收；证据层级、命令与记录格式见 [测试与验收](docs/testing.md)。
+## 致谢与来源说明
 
-当前是开发候选版。摄像头自动分段已复用持续采集源；60 FPS 长时表现、30 分钟联合音画同步及外设矩阵尚未全面验收，请查看规格中的实现边界。
+- **参考项目**：FrameTrail 改编自 [laogou717](https://github.com/laogou717) 开发的 macOS 原生录屏工具 **[DogSC](https://github.com/laogou717/dogsc)**。本项目以 DogSC 的产品设计、界面布局、运镜规划与编辑领域模型为基础，采用 Windows 原生技术（WinUI 3 / C#、C++20、Windows.Graphics.Capture、WASAPI、Direct3D 11、Media Foundation）重写移植到 Windows 11。感谢原作者的开源分享！
+- **内置壁纸**：编辑器内置的 18 张桌面壁纸来自 **[OpenScreen](https://github.com/siddharthvaddem/openscreen)**（作者 Siddharth Vaddem，MIT License）。
+- **Android 录屏组件**：Android USB 录屏功能基于 **[scrcpy](https://github.com/Genymobile/scrcpy)**（Apache-2.0 License）与 Android SDK Platform-Tools。
 
-## M4 候选包与回归
+## 开源协议
 
-```powershell
-.\scripts\package.cmd -OutputDirectory artifacts\packages\my-candidate
-.\scripts\verify-package.cmd -PackageDirectory artifacts\packages\my-candidate -SmokeTest
-# 登录桌面上执行真实录制、编辑和导出；会记录测试区域画面
-.\scripts\verify-package.cmd -PackageDirectory artifacts\packages\my-candidate -WorkflowTest
-.\scripts\validate-m4.cmd -DurationSeconds 60
-.\scripts\validate-recovery.cmd
-```
-
-输出自包含便携 ZIP、未签名 MSIX、依赖/载荷清单与 SHA-256。未签名 MSIX 仅供开发验证，便携包解压后运行 `FrameTrail.App.exe`。增加 `-BuildInstaller` 可生成每用户 Setup.exe；GitHub Release 流程默认包含安装器并排除未签名 MSIX。脚本保留旧产物，每次使用新目录；工具准备、可选已有证书签名和 App Installer 来源配置见 [分发说明](docs/distribution.md)。正式签名、干净机器安装/升级/卸载和公开发布状态分别记录。
-
-## 编辑与导出
-
-录制完成后点击“开始编辑”，或在录制条的更多菜单打开工程目录内的 `project.json`。也可以直接启动：
-
-```powershell
-.\scripts\run.cmd -Configuration Release -ProjectPath "C:\Videos\Demo.frametrailproject"
-```
-
-编辑器支持分割、裁剪、重排、恢复、0.25–4 倍速、撤销/重做、画布与摄像头布局，以及系统音/麦克风的全局和片段音量。提交编辑后自动保存，保存失败保留内存编辑并提供重试。导出支持 H.264/AAC MP4、M4A 和工程素材副本；先写临时文件，成功校验后替换目标。
-
-M2 媒体验证入口（额外需要本机 ffmpeg/ffprobe 和 Python，仅用于测试，不是产品运行依赖）：
-
-```powershell
-.\scripts\validate-m2.cmd -Matrix
-```
-
-M3 效果回归（先按相同原生目录构建 Release，同样需要 ffmpeg/ffprobe/Python）：
-
-```powershell
-.\scripts\build.cmd -Configuration Release -NativeBuildDirectory "$PWD\artifacts\native-release" -LockedRestore
-.\scripts\validate-m3.cmd
-```
-
-录制准备胶囊的「点击自动缩放」默认开启，按录制中的点击和实际光标活动自动生成运镜；Android 来源不生成 Windows 点击运镜。录制完成后，在编辑器「运镜」页调整已有自动效果或添加手动效果，参数实时预览，无需点击应用。滑块拖动过程中预览，松手后自动保存并合并为一次撤销；数字/文字输入短暂停顿后保存，输入焦点保持。当前播放头不在效果有效区间时，会定位到该效果的可见时刻。时间线可选择效果，再拖动片段或两端裁边；Ctrl+C / Ctrl+V 复制到播放头，Delete 删除当前效果，Ctrl+Z / Ctrl+Y 撤销重做。效果按源时间保存，剪辑和变速通过统一映射同步处理。
-
-「画面」支持工程内图片、循环视频和渐变背景，「样机」选择窗口/浏览器/设备边框；「开场」设置屏幕或摄像头的动画，「摄像头」选择形状，「光标」调整样式、大小、平滑、点击反馈、静止隐藏和时间偏移。场景预设菜单可应用内置预设，或保存/恢复当前工程预设。素材复制进工程后重开无需原始导入路径；视觉预设保留当前声音设置。
-
-「画面 → 背景 → 壁纸」提供 OpenScreen 同款 18 张桌面壁纸，点击缩略图即可应用，支持撤销 / 重做；也可导入自己的图片。壁纸随应用离线提供，选择后将原图复制到工程，移动工程或重开后仍可预览、导出。来源和原始许可见 [第三方声明](THIRD_PARTY_NOTICES.md)。
-
-## Android USB 录屏（M5）
-
-首次准备运行组件，然后重新构建并启动：
-
-```powershell
-.\scripts\setup-android.cmd
-.\scripts\build.cmd -Configuration Release -NativeBuildDirectory "$PWD\artifacts\native-release" -LockedRestore
-.\scripts\run.cmd -Configuration Release
-```
-
-在来源轮盘选择「手机」，或从更多菜单打开「Android USB 录屏」。手机通过数据线连接后，开启开发者选项和 USB 调试、解锁并允许本机授权，选择设备并连接预览，再开始录制。电脑麦克风在录制条上选择；手机内部音频在手机连接面板单独设置。预览默认静音。Android 11+ 才能尝试内部音频，不可用时可明确选择继续无声视频或取消。应用不会自动安装 USB 驱动或改动手机设置。
-
-手机原始画面通过版本固定的 scrcpy server 直接传入 C++，以 H.264 保存；声音保存为独立 WAV。录制期间方向固定，暂停时继续排空 USB 流，恢复/分段等待下一个关键帧。断线后可使用已完成分段；断开手机后工程仍可编辑、预览和导出。首轮不支持无线连接、手机遥控、动态旋转连续录制、Windows loopback 与手机音频同时采集。手机不会产生 Windows 光标或虚构触摸事件。
-
-无需手机的自动验证（真实 H.264/PCM、协议模拟端、恢复与独立解码）：
-
-```powershell
-.\scripts\validate-m5.cmd
-```
-
-生成带 .NET/Windows App SDK、固定 Android 组件及许可的本地便携测试包：
-
-```powershell
-.\scripts\package-android.cmd
-```
-
-以上是本地开发/测试交付，不代表干净机器、真实手机、30 分钟音画同步、安装更新或 M4 发布验收通过。
+本项目源代码采用 [MIT License](LICENSE) 开源。各参考项目、随附字体与第三方运行组件的完整版权说明及许可证全文见 [第三方声明 (THIRD_PARTY_NOTICES.md)](THIRD_PARTY_NOTICES.md)。
