@@ -65,29 +65,48 @@ public sealed partial class EditorWindow
         var kinds = new[] { "zoom", "mask", "focus", "tilt", "sticker" };
         for (int i = 0; i < kinds.Length; i++) { if (i % 2 == 0) add.RowDefinitions.Add(new()); var kind = kinds[i]; var button = VisualButton(L.T("AddEffect", EffectName(kind)), () => AddVisualAsync(kind), "editor.effect.add." + kind); Grid.SetColumn(button, i % 2); Grid.SetRow(button, i / 2); add.Children.Add(button); }
         motionSettings.Children.Add(add); motionSettings.Children.Add(effectPicker); motionSettings.Children.Add(VisualTile(effectProperties));
-        void Field(string label, FrameworkElement control, params string[] supported)
+        int fieldCount = 0;
+        Border SectionDivider() => new() { Height = 1, Background = RecorderTheme.Brush(Root, "EditorLine"), Margin = new Thickness(0, 4, 0, 2) };
+        var dividers = new List<Border>();
+        void Field(string label, FrameworkElement control, StackPanel target, params string[] supported)
         {
-            var row = new StackPanel { Spacing = 6 }; if (label.Length > 0) row.Children.Add(new TextBlock { Text = label, Style = (Style)Root.Resources["SmallLabel"] }); row.Children.Add(control); effectProperties.Children.Add(row); visualVisibility[row] = supported;
-            string key = control == effectStart ? "start" : control == effectEnd ? "end" : control == effectX ? "x" : control == effectY ? "y" : control == effectScale ? "scale" : label.Length > 0 ? label : control is Control c ? c.GetType().Name + "." + effectProperties.Children.Count : "field." + effectProperties.Children.Count;
+            fieldCount++;
+            var row = new StackPanel { Spacing = 6 }; if (label.Length > 0) row.Children.Add(new TextBlock { Text = label, Style = (Style)Root.Resources["SmallLabel"] }); row.Children.Add(control); target.Children.Add(row); visualVisibility[row] = supported;
+            string key = control == effectStart ? "start" : control == effectEnd ? "end" : control == effectX ? "x" : control == effectY ? "y" : control == effectScale ? "scale" : label.Length > 0 ? label : control is Control c ? c.GetType().Name + "." + fieldCount : "field." + fieldCount;
             if (string.IsNullOrEmpty(AutomationProperties.GetAutomationId(control))) AutomationProperties.SetAutomationId(control, "editor.effect." + key);
             if (label.Length > 0) AutomationProperties.SetName(control, L.T("EffectField", label));
         }
-        Field("", effectStart); Field("", effectEnd); Field(L.T("SB762AEC769A3"), effectScale, "zoom");
-        Field("X", effectX, "zoom", "mask", "focus", "sticker"); Field("Y", effectY, "zoom", "mask", "focus", "sticker");
-        Field(L.T("S3B730DA0AD1A"), effectWidth, "mask", "focus", "sticker"); Field(L.T("S968DD036CBB1"), effectHeight, "mask", "focus", "sticker");
-        Field("", effectMode, "mask"); Field(L.T("SA2846644A638"), effectStrength, "mask", "focus"); Field(L.T("S04405E4A9FFD"), effectOpacity, "mask", "focus", "sticker");
-        Field(L.T("SA4B0DE41E601"), effectAngleX, "tilt"); Field(L.T("SD82466A62832"), effectAngleY, "tilt");
-        Field(L.T("S68EB90FA809E"), stickerRotation, "sticker");
-        Field("", effectAttachment, "mask", "focus", "sticker"); Field("", effectEasing, "zoom", "tilt", "intro");
-        Field(L.T("SC19C240FA18F"), springFrequency, "zoom", "tilt", "intro"); Field(L.T("SDE95E14AC3BD"), springDamping, "zoom", "tilt", "intro");
-        Field("", effectEnter, "zoom", "tilt", "intro"); Field("", effectExit, "zoom", "tilt", "intro"); Field("", effectTarget, "intro", "tilt");
-        Field("", stickerText, "sticker"); Field("", visualAssetLabel, "sticker");
-        Field("", VisualButton(L.T("SA24E971FE950"), async () => { var path = await PickVisualAsync(false); if (path is not null && CurrentEffect is { } prior) { var p = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(prior.Parameters.GetRawText())!; p["path"] = JsonSerializer.SerializeToElement(path); await editor.UpsertEffectAsync(prior with { Parameters = JsonSerializer.SerializeToElement(p) }); } }, "editor.effect.image"), "sticker");
-        Field("", VisualButton(L.T("S164BCC78FC98"), async () => { if (CurrentEffect is { } prior) { var p = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(prior.Parameters.GetRawText())!; p.Remove("path"); await editor.UpsertEffectAsync(prior with { Parameters = JsonSerializer.SerializeToElement(p) }); } }, "editor.effect.text"), "sticker");
-        effectProperties.Children.Add(VisualButton(L.T("S4D269086BCC1"), () => { copiedEffect = CurrentEffect; ShowNotice(L.T("S61639C86E5FF"), L.T("S91952A32E4CC")); return Task.CompletedTask; }, "editor.effect.copy"));
+        effectScale.DefaultValue = 1; effectOpacity.DefaultValue = 100;
+        effectAngleX.DefaultValue = 0; effectAngleY.DefaultValue = 0; stickerRotation.DefaultValue = 0;
+        springFrequency.DefaultValue = MotionDefaults.SpringFrequency; springDamping.DefaultValue = MotionDefaults.SpringDamping;
+        cursorSmooth.DefaultValue = 0;
+        Field("", effectStart, effectProperties); Field("", effectEnd, effectProperties); Field(L.T("SB762AEC769A3"), effectScale, effectProperties, "zoom");
+        Field("X", effectX, effectProperties, "zoom", "mask", "focus", "sticker"); Field("Y", effectY, effectProperties, "zoom", "mask", "focus", "sticker");
+        Field(L.T("S3B730DA0AD1A"), effectWidth, effectProperties, "mask", "focus", "sticker"); Field(L.T("S968DD036CBB1"), effectHeight, effectProperties, "mask", "focus", "sticker");
+        Field("", effectMode, effectProperties, "mask"); Field(L.T("SA2846644A638"), effectStrength, effectProperties, "mask", "focus"); Field(L.T("S04405E4A9FFD"), effectOpacity, effectProperties, "mask", "focus", "sticker");
+        Field(L.T("SA4B0DE41E601"), effectAngleX, effectProperties, "tilt"); Field(L.T("SD82466A62832"), effectAngleY, effectProperties, "tilt");
+        Field(L.T("S68EB90FA809E"), stickerRotation, effectProperties, "sticker");
+        Field("", effectAttachment, effectProperties, "mask", "focus", "sticker");
+        var physicsDivider = SectionDivider(); dividers.Add(physicsDivider); effectProperties.Children.Add(physicsDivider); visualVisibility[physicsDivider] = ["zoom", "tilt", "intro"];
+        var physicsHeader = new TextBlock { Text = AppText.Language == "en" ? "Timing & Physics" : "时间与物理", Style = (Style)Root.Resources["SectionLabel"], Margin = new Thickness(4, 2, 0, 0) };
+        effectProperties.Children.Add(physicsHeader); visualVisibility[physicsHeader] = ["zoom", "tilt", "intro"];
+        var physicsGroup = new StackPanel { Spacing = 10 }; effectProperties.Children.Add(physicsGroup); visualVisibility[physicsGroup] = ["zoom", "tilt", "intro"];
+        Field("", effectEasing, physicsGroup, "zoom", "tilt", "intro");
+        Field(L.T("SC19C240FA18F"), springFrequency, physicsGroup, "zoom", "tilt", "intro"); Field(L.T("SDE95E14AC3BD"), springDamping, physicsGroup, "zoom", "tilt", "intro");
+        Field("", effectEnter, physicsGroup, "zoom", "tilt", "intro"); Field("", effectExit, physicsGroup, "zoom", "tilt", "intro"); Field("", effectTarget, physicsGroup, "intro", "tilt");
+        Field("", stickerText, effectProperties, "sticker"); Field("", visualAssetLabel, effectProperties, "sticker");
+        Field("", VisualButton(L.T("SA24E971FE950"), async () => { var path = await PickVisualAsync(false); if (path is not null && CurrentEffect is { } prior) { var p = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(prior.Parameters.GetRawText())!; p["path"] = JsonSerializer.SerializeToElement(path); await editor.UpsertEffectAsync(prior with { Parameters = JsonSerializer.SerializeToElement(p) }); } }, "editor.effect.image"), effectProperties, "sticker");
+        Field("", VisualButton(L.T("S164BCC78FC98"), async () => { if (CurrentEffect is { } prior) { var p = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(prior.Parameters.GetRawText())!; p.Remove("path"); await editor.UpsertEffectAsync(prior with { Parameters = JsonSerializer.SerializeToElement(p) }); } }, "editor.effect.text"), effectProperties, "sticker");
+        var actionsDivider = SectionDivider(); dividers.Add(actionsDivider); effectProperties.Children.Add(actionsDivider);
+        var actionsPanel = new StackPanel { Spacing = 6 };
+        actionsPanel.Children.Add(VisualButton(L.T("S4D269086BCC1"), () => { copiedEffect = CurrentEffect; ShowNotice(L.T("S61639C86E5FF"), L.T("S91952A32E4CC")); return Task.CompletedTask; }, "editor.effect.copy"));
         motionSettings.Children.Add(VisualButton(L.T("SF87CEC6C5646"), PasteCopiedVisualAsync, "editor.effect.paste"));
-        effectProperties.Children.Add(VisualButton(L.T("S5FC2029B8F1F"), PasteAttributesAsync, "editor.effect.pasteAttributes"));
-        effectProperties.Children.Add(VisualButton(L.T("SEEB94B34ECA0"), async () => { if (selectedEffect is not null) await editor.DeleteEffectAsync(selectedEffect); }, "editor.effect.delete"));
+        actionsPanel.Children.Add(VisualButton(L.T("S5FC2029B8F1F"), PasteAttributesAsync, "editor.effect.pasteAttributes"));
+        var deleteEffectButton = VisualButton(L.T("SEEB94B34ECA0"), async () => { if (selectedEffect is not null) await editor.DeleteEffectAsync(selectedEffect); }, "editor.effect.delete");
+        deleteEffectButton.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62));
+        actionsPanel.Children.Add(deleteEffectButton);
+        effectProperties.Children.Add(actionsPanel);
+        Root.ActualThemeChanged += (_, _) => { var line = RecorderTheme.Brush(Root, "EditorLine"); foreach (var d in dividers) d.Background = line; };
         effectPicker.SelectionChanged += async (_, _) => { if (loadingVisuals) return; await SafeAsync(async () => { await FlushVisualChangesAsync(); selectedEffect = (effectPicker.SelectedItem as EffectEntry)?.Id; LoadSelectedVisual(); timeline.SelectVisual(selectedEffect); }); };
         timeline.SelectEffect += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selectedEffect = id; ShowInspector(2); RefreshVisualInspector(); }); };
         openingSettings.Children.Add(VisualLabel(L.T("SD50922830D9E"))); introDuration.Value = 0.7;

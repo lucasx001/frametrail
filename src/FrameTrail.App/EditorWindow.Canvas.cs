@@ -16,7 +16,13 @@ public sealed partial class EditorWindow
     private void InitializeCanvasEditing()
     {
         PreviewMount.Children.Add(canvasOverlay);
-        canvasOverlay.Selected += id => { if(id!="crop"){selectedEffect=id;ShowInspector(2);RefreshVisualInspector();} };
+        canvasOverlay.Selected += id => {
+            if (id == "camera") {
+                if (inspectorTab != 4) ShowInspector(4);
+            } else if (id != "crop") {
+                selectedEffect = id; ShowInspector(2); RefreshVisualInspector();
+            }
+        };
         canvasOverlay.Begin += () => {
             if(working||playing||editor.IsExporting||visualPending||visualTransaction||!canvasCommitWork.IsCompleted){canvasOverlay.Finish(false);return;}
             editController.Begin(EditorEditOwner.Canvas);timeline.EditingEnabled=false;
@@ -25,6 +31,20 @@ public sealed partial class EditorWindow
             if(!canvasTransaction)return;
             try {
                 if(id=="crop") canvasPending=editController.Preview(EditorEditOwner.Canvas, new {op="settings",editor=(editor.Snapshot.Editor??new()) with {Crop=rect}});
+                else if(id=="camera") {
+                    double width = Math.Clamp(rect.Width, 0.05, 0.60);
+                    double height = Math.Clamp(rect.Height, 0.05, 0.95);
+                    var cam = editor.Snapshot.Canvas.Camera with {
+                        X = Math.Clamp(rect.X, 0, 1 - width),
+                        Y = Math.Clamp(rect.Y, 0, 1 - height),
+                        Width = width,
+                        Height = height
+                    };
+                    canvasPending = editController.Preview(EditorEditOwner.Canvas, new { op = "settings", canvas = editor.Snapshot.Canvas with { Camera = cam } });
+                    loadingInspector = true;
+                    try { CameraX.Value = cam.X * 100; CameraY.Value = cam.Y * 100; CameraSize.Value = cam.Width * 100; }
+                    finally { loadingInspector = false; }
+                }
                 else {
                     var effect=editor.Snapshot.Effects.First(e=>e.Id==id);
                     var p=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(effect.Parameters.GetRawText())!;
@@ -72,8 +92,19 @@ public sealed partial class EditorWindow
                 var r=editor.Snapshot.Editor?.Crop??new NormalizedRect();var plane=new CanvasPlane(item.Base);
                 var q=new[]{plane.Map(r.X,r.Y),plane.Map(r.X+r.Width,r.Y),plane.Map(r.X+r.Width,r.Y+r.Height),plane.Map(r.X,r.Y+r.Height)};
                 items=new[]{item with {Rect=r,Quad=q.Select(v=>new[]{v.X,v.Y}).ToArray()}};
+            } else if (!cropEditing && editor.Snapshot.Canvas.Camera.Enabled && editor.Snapshot.Media.Any(m => m.Kind == MediaKind.Camera) && (inspectorTab == 4 || selectedEffect is null || !items.Any(i => i.Id == selectedEffect))) {
+                var cam = editor.Snapshot.Canvas.Camera;
+                var cameraItem = new CanvasEditItem(
+                    "camera",
+                    "camera",
+                    new NormalizedRect { X = cam.X, Y = cam.Y, Width = cam.Width, Height = cam.Height },
+                    [[cam.X, cam.Y], [cam.X + cam.Width, cam.Y], [cam.X + cam.Width, cam.Y + cam.Height], [cam.X, cam.Y + cam.Height]],
+                    [[0, 0], [1, 0], [1, 1], [0, 1]],
+                    0,
+                    cam.Width / Math.Max(0.01, cam.Height));
+                items = new[] { cameraItem }.Concat(items).ToArray();
             }
-            canvasOverlay.Selection=cropEditing?"crop":selectedEffect;canvasOverlay.SetItems(items);
+            canvasOverlay.Selection=cropEditing?"crop":inspectorTab==4?"camera":selectedEffect;canvasOverlay.SetItems(items);
         } catch(OperationCanceledException) { }
         catch(ObjectDisposedException) { }
         catch(Exception error){SafeDiagnostics.Record(error);canvasOverlay.SetItems([]);}

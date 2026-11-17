@@ -145,7 +145,22 @@ internal sealed partial class ProjectLibraryWindow : Window
     {
             var row = new Grid();
             var content = new Grid { ColumnSpacing = 14, Margin = new Thickness(0, 0, 32, 0) }; content.ColumnDefinitions.Add(new() { Width = new GridLength(42) }); content.ColumnDefinitions.Add(new());
-            content.Children.Add(new Border { Width = 42, Height = 44, CornerRadius = new CornerRadius(12), Background = Brush("EditorWell"), Child = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorBlue") } });
+            UIElement thumbnail = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorBlue") };
+            try {
+                string cacheDir = Path.Combine(entry.Directory, "cache");
+                if (Directory.Exists(cacheDir)) {
+                    string? png = Directory.EnumerateFiles(cacheDir, "*.png").FirstOrDefault();
+                    if (png is not null) {
+                        var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage { DecodePixelWidth = 96, UriSource = new Uri(png) };
+                        var preview = new Image { Source = bitmap, Stretch = Stretch.UniformToFill };
+                        preview.ImageFailed += (_, _) => {
+                            if (preview.Parent is Border host) host.Child = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorBlue") };
+                        };
+                        thumbnail = preview;
+                    }
+                }
+            } catch { }
+            content.Children.Add(new Border { Width = 42, Height = 44, CornerRadius = new CornerRadius(12), Background = Brush("EditorWell"), Child = thumbnail });
             var details = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
             var title = Text(entry.Name, 14); title.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold; details.Children.Add(title);
             string duration = entry.RecordingSeconds is double seconds ? L.T("S63D1E10A091A", (int)(seconds / 60), (int)seconds % 60, entry.Width, entry.Height) : "";
@@ -179,7 +194,17 @@ internal sealed partial class ProjectLibraryWindow : Window
         var details = new StackPanel { Spacing = 12 };
         details.Children.Add(new TextBlock { Text = L.T("S858392592478"), TextWrapping = TextWrapping.Wrap });
         details.Children.Add(new TextBlock { Text = entry.Directory, TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = .65 });
-        confirmation = new ContentDialog { Title = L.T("S591F8EBAE3D1", entry.Name), Content = details, PrimaryButtonText = L.T("S6A5B1CB18FB6"), CloseButtonText = L.T("S2CD0F3BE8738"), DefaultButton = ContentDialogButton.Close, XamlRoot = root.XamlRoot, RequestedTheme = root.RequestedTheme };
+        confirmation = new ContentDialog {
+            Title = L.T("S591F8EBAE3D1", entry.Name),
+            Content = details,
+            PrimaryButtonText = L.T("S6A5B1CB18FB6"),
+            CloseButtonText = L.T("S2CD0F3BE8738"),
+            DefaultButton = ContentDialogButton.Close,
+            PrimaryButtonStyle = DeleteButtonStyle(),
+            CloseButtonStyle = (Style)Application.Current.Resources["EditorButton"],
+            XamlRoot = root.XamlRoot,
+            RequestedTheme = root.RequestedTheme
+        };
         confirming = true; ContentDialogResult result;
         try { result = await confirmation.ShowAsync(); }
         finally { confirming = false; confirmation = null; }
@@ -195,6 +220,17 @@ internal sealed partial class ProjectLibraryWindow : Window
                 SetBusy(false); Activate();
             }
         }
+    }
+    private static Style DeleteButtonStyle()
+    {
+        if (Application.Current.Resources.TryGetValue("EditorDangerButton", out var existing) && existing is Style danger)
+            return danger;
+        var style = new Style(typeof(Button)) { BasedOn = (Style)Application.Current.Resources["EditorButton"] };
+        style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62))));
+        style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Colors.White)));
+        style.Setters.Add(new Setter(Control.FontFamilyProperty, (FontFamily)Application.Current.Resources["RecorderSemiboldFont"]));
+        style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14, 0, 14, 0)));
+        return style;
     }
     private async Task BrowseAsync()
     {

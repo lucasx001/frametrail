@@ -17,6 +17,7 @@ internal sealed partial class EditorSettingsWindow : Window
     private readonly EditorMediaCache? mediaCache;
     private readonly string[] names = [L.T("S40FAE00B7C6D"), L.T("S3B7F5965BDBF"), L.T("S4B6EF790032F"), L.T("S978CBCA6265D"), L.T("S52D25A9E30BA")];
     private readonly string[] icons = ["Sliders", "Scene", "Opening", "Check", "Settings"];
+    private bool languageChanged;
     internal EditorSettingsWindow(string directory, Action<ElementTheme> setAppearance, EditorMediaCache? mediaCache = null)
     {
         this.directory = directory; this.setAppearance = setAppearance; this.mediaCache = mediaCache; Title = L.T("S888F02152174");
@@ -48,8 +49,23 @@ internal sealed partial class EditorSettingsWindow : Window
         if (index == 0) {
             var language=new ComboBox{Header=L.T("S3D13868593AE"),HorizontalAlignment=HorizontalAlignment.Stretch,ItemsSource=new[]{L.T("S217CFE7DB1E3"),L.T("S9937E365AAF3"),"English"}};
             language.SelectedIndex=FrameTrail.Domain.AppText.Preference switch{"zh-Hans"=>1,"en"=>2,_=>0};
-            language.SelectionChanged+=(_,_)=>{try{FrameTrail.Domain.AppText.SavePreference(new[]{"system","zh-Hans","en"}[language.SelectedIndex]);}catch(Exception error){page.Children.Add(Text(error.Message));}};
-            page.Children.Add(language);page.Children.Add(Text(L.T("S1CF8288F24FE"),11,true));
+            var restart = new Button {
+                Content = FrameTrail.Domain.AppText.Language == "en" ? "Restart FrameTrail now" : "立即重启应用",
+                Style = (Style)Application.Current.Resources["EditorPrimaryButton"],
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Visibility = languageChanged ? Visibility.Visible : Visibility.Collapsed
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(restart, "settings.language.restart");
+            restart.Click += (_, _) => {
+                try {
+                    if (!string.IsNullOrEmpty(Environment.ProcessPath))
+                        Process.Start(new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = true });
+                    Close();
+                    Application.Current.Exit();
+                } catch (Exception error) { page.Children.Add(Text(error.Message)); }
+            };
+            language.SelectionChanged+=(_,_)=>{try{FrameTrail.Domain.AppText.SavePreference(new[]{"system","zh-Hans","en"}[language.SelectedIndex]);languageChanged=true;restart.Visibility=Visibility.Visible;}catch(Exception error){page.Children.Add(Text(error.Message));}};
+            page.Children.Add(language);page.Children.Add(Text(L.T("S1CF8288F24FE"),11,true));page.Children.Add(restart);
             page.Children.Add(Text(L.T("S18A461562395"), 12, true)); var content = new StackPanel { Spacing = 12 }; content.Children.Add(Text(L.T("SBF962B2B913F"))); content.Children.Add(Text(directory, 11, true)); var reveal = Button(L.T("S9E3FC11213B9")); reveal.Click += (_, _) => Process.Start(new ProcessStartInfo("explorer.exe", directory) { UseShellExecute = true }); content.Children.Add(reveal); page.Children.Add(Tile(content));
             page.Children.Add(Tile(Text(L.T("S21E709788CF5"), 12, true)));
         } else if (index == 1) {

@@ -39,7 +39,10 @@ internal sealed class RecordingCompletionWindow : Window
         notice.Margin = new Thickness(10, 8, 10, 0); column.Children.Add(notice);
         var buttons = new Grid { ColumnSpacing = 8, Margin = new Thickness(0, 14, 0, 0), Height = 44 };
         buttons.ColumnDefinitions.Add(new ColumnDefinition()); buttons.ColumnDefinitions.Add(new ColumnDefinition());
-        var again = new Button { Content = L.T("S377F85C59DC4"), Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
+        var againLabel = AppText.Language == "en" ? "New Recording" : "新录制";
+        var again = new Button { Content = againLabel, Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
+        ToolTipService.SetToolTip(again, againLabel);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(again, againLabel);
         again.Click += (_, _) => Finish(); buttons.Children.Add(again);
         var open = new Button { Content = edit is null ? L.T("S13B1B6FE3F5C") : L.T("SE0B7815E2DB5"), Style = (Style)Application.Current.Resources["RecorderPillButton"], HorizontalAlignment = HorizontalAlignment.Stretch };
         open.Click += (_, _) => { try { if (edit is not null) edit(); else Process.Start(new ProcessStartInfo("explorer.exe", directory) { UseShellExecute = true }); } catch (Exception error) { SetNotice(error.Message); } };

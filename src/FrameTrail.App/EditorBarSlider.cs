@@ -16,17 +16,19 @@ public sealed class EditorBarSlider : Slider
     private Border? range, thumb;
     private TranslateTransform? thumbPosition;
     private TextBlock? valueLabel;
-    private bool held, thumbHovered;
-    private double dragStart, dragOffset;
+    private bool held, thumbHovered, userInteracting;
+    private double dragStart, dragOffset, lastPointerX, dragRawValue, lastKnownMin, lastKnownMax;
     internal bool IsDragging => held;
     public event EventHandler? Committed;
     internal event Action<bool>? InteractionEnded;
     public static readonly DependencyProperty SuffixProperty = DependencyProperty.Register(nameof(Suffix), typeof(string), typeof(EditorBarSlider), new PropertyMetadata("", Changed));
     public static readonly DependencyProperty AccentProperty = DependencyProperty.Register(nameof(Accent), typeof(Brush), typeof(EditorBarSlider), new PropertyMetadata(null, Changed));
     public static readonly DependencyProperty InkProperty = DependencyProperty.Register(nameof(Ink), typeof(Brush), typeof(EditorBarSlider), new PropertyMetadata(null, Changed));
+    public static readonly DependencyProperty DefaultValueProperty = DependencyProperty.Register(nameof(DefaultValue), typeof(double), typeof(EditorBarSlider), new PropertyMetadata(double.NaN));
     public string Suffix { get => (string)GetValue(SuffixProperty); set => SetValue(SuffixProperty, value); }
     public Brush Accent { get => (Brush)GetValue(AccentProperty); set => SetValue(AccentProperty, value); }
     public Brush Ink { get => (Brush)GetValue(InkProperty); set => SetValue(InkProperty, value); }
+    public double DefaultValue { get => (double)GetValue(DefaultValueProperty); set => SetValue(DefaultValueProperty, value); }
     private static void Changed(DependencyObject d, DependencyPropertyChangedEventArgs e) => ((EditorBarSlider)d).Draw();
     public EditorBarSlider()
     {
@@ -57,10 +59,16 @@ public sealed class EditorBarSlider : Slider
             </Grid>
           </ControlTemplate>
           """);
-        ValueChanged += (_, _) => { Draw(); if (!held) Committed?.Invoke(this, EventArgs.Empty); };
+        lastKnownMin = Minimum; lastKnownMax = Maximum;
+        ValueChanged += (_, e) => {
+            if (!userInteracting && !held && double.IsNaN(DefaultValue) && Math.Abs(Minimum - lastKnownMin) < 1e-9 && Math.Abs(Maximum - lastKnownMax) < 1e-9)
+                DefaultValue = e.NewValue;
+            Draw();
+            if (!held) Committed?.Invoke(this, EventArgs.Empty);
+        };
         SizeChanged += (_, _) => Draw(); ActualThemeChanged += (_, _) => Draw();
-        RegisterPropertyChangedCallback(MinimumProperty, (_, _) => Draw());
-        RegisterPropertyChangedCallback(MaximumProperty, (_, _) => Draw());
+        RegisterPropertyChangedCallback(MinimumProperty, (_, _) => { lastKnownMin = Minimum; Draw(); });
+        RegisterPropertyChangedCallback(MaximumProperty, (_, _) => { lastKnownMax = Maximum; Draw(); });
         RegisterPropertyChangedCallback(StepFrequencyProperty, (_, _) => Draw());
         PointerCaptureLost += (_, _) => FinishDrag(true);
         IsEnabledChanged += (_, _) => { Opacity = IsEnabled ? 1 : 0.5; if (!IsEnabled) FinishDrag(true); UpdateFeedback(); };
@@ -86,7 +94,8 @@ public sealed class EditorBarSlider : Slider
         var accent = Accent ?? (Brush)Application.Current.Resources["EditorBlue"];
         range.Background = thumb.BorderBrush = accent;
         if (GetTemplateChild("ThumbRing") is Border ring) ring.BorderBrush = accent;
-        valueLabel.Text = Value.ToString(StepFrequency >= 1 ? "0" : "0.##", System.Globalization.CultureInfo.CurrentCulture) + Suffix;
+        string format = StepFrequency >= 1 && Math.Abs(Value - Math.Round(Value)) <= 0.001 ? "0" : "0.##";
+        valueLabel.Text = Value.ToString(format, System.Globalization.CultureInfo.CurrentCulture) + Suffix;
         valueLabel.Foreground = Ink ?? RecorderTheme.Brush(this, "EditorSecondary");
     }
     private void UpdateFeedback(bool animate = true) => VisualStateManager.GoToState(this,
@@ -102,13 +111,18 @@ public sealed class EditorBarSlider : Slider
     }
     protected override void OnPointerEntered(PointerRoutedEventArgs e) { base.OnPointerEntered(e); UpdateHover(e); }
     protected override void OnPointerExited(PointerRoutedEventArgs e) { base.OnPointerExited(e); thumbHovered = false; UpdateFeedback(); }
+    private static bool Shift => InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift).HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
     private void ChangeAt(double x)
     {
         double fraction = Math.Clamp((x - 8) / Math.Max(1, track?.ActualWidth ?? 0), 0, 1);
         if (FlowDirection == FlowDirection.RightToLeft) fraction = 1 - fraction;
         Value = Snap(Minimum + fraction * (Maximum - Minimum));
     }
-    private double Snap(double value) => Math.Clamp(Minimum + Math.Round((value - Minimum) / Math.Max(0.0001, StepFrequency)) * StepFrequency, Minimum, Maximum);
+    private double Snap(double value, double? stepOverride = null)
+    {
+        double step = Math.Max(0.0001, stepOverride ?? StepFrequency);
+        return Math.Round(Math.Clamp(Minimum + Math.Round((value - Minimum) / step) * step, Minimum, Maximum), 6);
+    }
     protected override void OnPointerPressed(PointerRoutedEventArgs e)
     {
         if (!IsEnabled || trackArea is null || (e.Pointer.PointerDeviceType == PointerDeviceType.Mouse && !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)) return;
@@ -118,11 +132,27 @@ public sealed class EditorBarSlider : Slider
         if (!CapturePointer(e.Pointer)) return;
         double fromCenter = point.X - (thumbPosition?.X ?? 0) - 8;
         dragOffset = Math.Abs(fromCenter) <= 8 ? fromCenter : 0;
-        dragStart = Value; held = true; ChangeAt(point.X - dragOffset); UpdateFeedback(); e.Handled = true;
+        dragStart = Value; held = true;
+        if (!Shift) ChangeAt(point.X - dragOffset);
+        dragRawValue = Value; lastPointerX = point.X;
+        UpdateFeedback(); e.Handled = true;
     }
     protected override void OnPointerMoved(PointerRoutedEventArgs e)
     {
-        if (held && trackArea is not null) { ChangeAt(e.GetCurrentPoint(trackArea).Position.X - dragOffset); e.Handled = true; }
+        if (held && trackArea is not null) {
+            var point = e.GetCurrentPoint(trackArea).Position;
+            if (Shift) {
+                double dx = point.X - lastPointerX;
+                if (FlowDirection == FlowDirection.RightToLeft) dx = -dx;
+                dragRawValue = Math.Clamp(dragRawValue + (dx / Math.Max(1, track?.ActualWidth ?? 0)) * (Maximum - Minimum) * 0.2, Minimum, Maximum);
+                Value = Snap(dragRawValue, StepFrequency * 0.2);
+            } else {
+                ChangeAt(point.X - dragOffset);
+                dragRawValue = Value;
+            }
+            lastPointerX = point.X;
+            e.Handled = true;
+        }
         else UpdateHover(e);
     }
     protected override void OnPointerReleased(PointerRoutedEventArgs e)
@@ -131,6 +161,31 @@ public sealed class EditorBarSlider : Slider
         FinishDrag(true); ReleasePointerCapture(e.Pointer); UpdateHover(e); e.Handled = true;
     }
     protected override void OnPointerCanceled(PointerRoutedEventArgs e) { if (held) { FinishDrag(false); ReleasePointerCapture(e.Pointer); e.Handled = true; } }
+    protected override void OnPointerWheelChanged(PointerRoutedEventArgs e)
+    {
+        if (!IsEnabled) return;
+        int sign = Math.Sign(e.GetCurrentPoint(this).Properties.MouseWheelDelta);
+        if (sign == 0) return;
+        double step = Shift ? StepFrequency * 0.2 : StepFrequency;
+        userInteracting = true;
+        try { Value = Snap(Value + sign * step, step); }
+        finally { userInteracting = false; }
+        e.Handled = true;
+    }
+    protected override void OnDoubleTapped(DoubleTappedRoutedEventArgs e)
+    {
+        base.OnDoubleTapped(e);
+        if (!IsEnabled || !double.IsFinite(DefaultValue) || Math.Abs(Value - DefaultValue) <= 0.0001) return;
+        double target = Snap(DefaultValue);
+        double prior = Value;
+        held = false;
+        userInteracting = true;
+        try { Value = target; }
+        finally { userInteracting = false; }
+        if (Value == prior) Committed?.Invoke(this, EventArgs.Empty);
+        InteractionEnded?.Invoke(true);
+        e.Handled = true;
+    }
     private void FinishDrag(bool commit)
     {
         if (!held) return;
@@ -147,8 +202,12 @@ public sealed class EditorBarSlider : Slider
         if (e.Key is VirtualKey.Left or VirtualKey.Down or VirtualKey.Right or VirtualKey.Up or VirtualKey.Home or VirtualKey.End or VirtualKey.PageUp or VirtualKey.PageDown) {
             double direction = e.Key is VirtualKey.Left or VirtualKey.Down or VirtualKey.PageDown ? -1 : 1;
             if (FlowDirection == FlowDirection.RightToLeft && e.Key is VirtualKey.Left or VirtualKey.Right) direction *= -1;
-            double increment = e.Key is VirtualKey.PageUp or VirtualKey.PageDown ? Math.Max(StepFrequency, (Maximum - Minimum) / 10) : StepFrequency;
-            Value = e.Key switch { VirtualKey.Home => Minimum, VirtualKey.End => Maximum, _ => Snap(Value + direction * increment) }; e.Handled = true;
+            double step = Shift ? StepFrequency * 0.2 : StepFrequency;
+            double increment = e.Key is VirtualKey.PageUp or VirtualKey.PageDown ? Math.Max(step, (Maximum - Minimum) / 10) : step;
+            userInteracting = true;
+            try { Value = e.Key switch { VirtualKey.Home => Minimum, VirtualKey.End => Maximum, _ => Snap(Value + direction * increment, step) }; }
+            finally { userInteracting = false; }
+            e.Handled = true;
         } else base.OnKeyDown(e);
     }
 }

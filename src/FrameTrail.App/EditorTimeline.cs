@@ -1,5 +1,6 @@
 using FrameTrail.Interop;
 using Microsoft.UI;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -7,19 +8,25 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using Windows.Foundation;
+using Windows.System;
 
 namespace FrameTrail.App;
 
 // Only visible clips, ruler marks and waveform buckets become XAML elements.
 internal sealed partial class EditorTimeline : ContentControl
 {
+    private static readonly string[] CanonicalEffectOrder = ["zoom", "tilt", "intro", "mask", "focus", "sticker"];
     private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled };
-    private readonly Canvas canvas = new() { Height = 148, Background = new SolidColorBrush(Colors.Transparent) };
+    private readonly Grid scrollSurface = new() { Background = new SolidColorBrush(Colors.Transparent) };
+    private readonly Canvas canvas = new() { Height = 148, Background = new SolidColorBrush(Colors.Transparent), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+    private readonly InputSystemCursor arrowCursor = InputSystemCursor.Create(InputSystemCursorShape.Arrow), moveCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeAll), resizeHorizontalCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeWestEast);
     private ResolvedTimeline? timeline;
     private string? selected;
     private long playhead;
     private double scale = 80;
-    private bool dragging;
+    private bool dragging, dragPending;
+    private Point pressPoint;
+    private long pressTicks;
     private string? dragKind;
     private ResolvedClip? dragClip;
     private ResolvedEffect? dragEffect;
@@ -31,6 +38,8 @@ internal sealed partial class EditorTimeline : ContentControl
     private ResolvedMarker[] markers = Array.Empty<ResolvedMarker>();
     private TimelineIntervalIndex<ResolvedEffect> effects = new([],e=>e.OutputStart,e=>e.OutputStart+e.OutputDuration);
     private Dictionary<string,int> effectOrdinals = new();
+    private readonly Dictionary<string, int> effectRows = new();
+    private static Dictionary<string, int>? lastEffectRows;
     private readonly Dictionary<string,Border> clipViews = new(), effectViews = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer hoverTimer;
     private long? pendingHover;
@@ -41,12 +50,14 @@ internal sealed partial class EditorTimeline : ContentControl
     private readonly Border playHandle = new() { Width = 8, Height = 15, CornerRadius = new CornerRadius(4), Background = Brush(255, 69, 59), IsHitTestVisible = false };
     internal event Action<long>? Seek;
     internal event Action<string>? SelectClip;
+    internal event Action<string>? ClipDoubleClicked;
     internal event Action<string>? SelectEffect;
+    internal event Action<double>? ZoomChanged;
     internal event Action? BeginEdit;
     internal event Action<object>? PreviewEdit;
     internal event Action<bool>? EndEdit;
     internal event Action<IReadOnlyList<long>>? ThumbnailsNeeded;
-    internal double PixelsPerSecond { get => scale; set { scale = Math.Clamp(value, 0.05, 1000); Draw(); } }
+    internal double PixelsPerSecond { get => scale; set { double next = Math.Clamp(value, 0.05, 1000); if (Math.Abs(scale - next) < 0.00001) return; scale = next; Draw(); } }
     internal bool EditingEnabled { get; set; } = true;
     internal bool ThumbnailsEnabled { get; set; } = true;
     internal bool SnappingEnabled { get; set; } = true;
@@ -57,15 +68,35 @@ internal sealed partial class EditorTimeline : ContentControl
     internal int RenderedElementCount => canvas.Children.Count;
     internal EditorTimeline()
     {
-        Content = scroll; HorizontalContentAlignment=HorizontalAlignment.Stretch;VerticalContentAlignment=VerticalAlignment.Stretch;IsTabStop=true; UseSystemFocusVisuals=true; scroll.Content = canvas; scroll.ViewChanged += (_, _) => Draw(); SizeChanged += (_, _) => Draw();
+        Content = scroll; HorizontalContentAlignment=HorizontalAlignment.Stretch;VerticalContentAlignment=VerticalAlignment.Stretch;IsTabStop=true; UseSystemFocusVisuals=true;
+        scrollSurface.Children.Add(canvas); scroll.Content = scrollSurface;
+        scroll.ViewChanged += (_, _) => Draw(); SizeChanged += (_, _) => Draw();
         hoverTimer=DispatcherQueue.CreateTimer();hoverTimer.Interval=TimeSpan.FromMilliseconds(100);hoverTimer.IsRepeating=false;
         hoverTimer.Tick+=(_,_)=>Hover?.Invoke(pendingHover);
-        canvas.PointerExited+=(_,_)=>{HideHover();Hover?.Invoke(null);};
+        canvas.PointerExited+=(_,_)=>{HideHover();Hover?.Invoke(null);ProtectedCursor=arrowCursor;};
         canvas.PointerPressed += Pressed; canvas.PointerMoved += Moved; canvas.PointerReleased += Released;
-        canvas.PointerCaptureLost += (_, _) => { if (dragging) Finish(false); };
+        canvas.DoubleTapped += OnCanvasDoubleTapped;
+        scrollSurface.PointerWheelChanged += WheelChanged;
+        canvas.PointerCaptureLost += (_, _) => { dragPending = false; dragClip = null; dragEffect = null; if (dragging) Finish(false); };
         ActualThemeChanged += (_, _) => Draw();
     }
-    internal void Set(ResolvedTimeline value, string? selection, long ticks) { timeline = value; selected = selection; playhead = ticks; clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i); markers = value.Markers.OrderBy(m => m.Ticks).ToArray(); effects=new(value.Effects,e=>e.OutputStart,e=>e.OutputStart+e.OutputDuration); effectOrdinals=value.Effects.Select((e,i)=>(Key:e.Id+":"+e.OutputStart,Index:i)).ToDictionary(v=>v.Key,v=>v.Index); canvas.Height = value.Effects.Count > 0 ? 294 : 148; DescribeSelection(); Draw(); }
+    internal void Set(ResolvedTimeline value, string? selection, long ticks)
+    {
+        timeline = value; selected = selection; playhead = ticks;
+        clipIndices = value.Clips.Select((c, i) => (c.Id, i)).ToDictionary(k => k.Id, k => k.i);
+        markers = value.Markers.OrderBy(m => m.Ticks).ToArray();
+        effects = new(value.Effects, e => e.OutputStart, e => e.OutputStart + e.OutputDuration);
+        effectOrdinals = value.Effects.Select((e, i) => (Key: e.Id + ":" + e.OutputStart, Index: i)).ToDictionary(v => v.Key, v => v.Index);
+        var presentKinds = value.Effects.Select(e => e.Kind).ToHashSet();
+        var orderedKinds = CanonicalEffectOrder.Where(presentKinds.Contains)
+            .Concat(presentKinds.Where(k => !CanonicalEffectOrder.Contains(k)).OrderBy(k => k))
+            .ToList();
+        effectRows.Clear();
+        for (int i = 0; i < orderedKinds.Count; i++) effectRows[orderedKinds[i]] = 148 + i * 24;
+        lastEffectRows = new Dictionary<string, int>(effectRows);
+        canvas.Height = value.Effects.Count > 0 ? 148 + orderedKinds.Count * 24 + 6 : 148;
+        DescribeSelection(); Draw();
+    }
     internal void Position(long ticks) { playhead = ticks; Canvas.SetLeft(playLine, X(playhead)); Canvas.SetLeft(playHandle, X(playhead) - 3.5); }
     internal void SetWaveform(float[]? values) { waveform = values; Draw(); }
     private readonly HashSet<long> staleThumbnails = new();
@@ -77,7 +108,7 @@ internal sealed partial class EditorTimeline : ContentControl
         if (thumbnails.Count >= 160 && !thumbnails.ContainsKey(ticks)) { var first = thumbnails.Keys.First(); thumbnails.Remove(first); staleThumbnails.Remove(first); }
         thumbnails[ticks] = new BitmapImage(new Uri(path)) { DecodePixelWidth = 384 }; staleThumbnails.Remove(ticks); Draw();
     }
-    internal void CancelDrag() { if (dragging) { Finish(false); canvas.ReleasePointerCaptures(); } }
+    internal void CancelDrag() { dragPending = false; dragClip = null; dragEffect = null; if (dragging) { Finish(false); canvas.ReleasePointerCaptures(); } }
     internal void HideHover(){hoverTimer.Stop();pendingHover=null;}
     internal void Reveal(long ticks)=>scroll.ChangeView(Math.Max(0,X(ticks)-ActualWidth/2),null,null,true);
     internal bool FocusTimeline(FocusState state)=>Focus(state);
@@ -171,10 +202,11 @@ internal sealed partial class EditorTimeline : ContentControl
             lastEffectX[effect.Kind]=x;
             // A source effect can appear in multiple edited intervals.
             string viewKey=effect.Id+":"+effect.OutputStart;
-            if(!effectViews.TryGetValue(viewKey,out var body))effectViews[viewKey]=body=new Border{Height=20,CornerRadius=new CornerRadius(6),BorderBrush=Brush(90,174,255),IsHitTestVisible=false};
-            usedEffects.Add(viewKey);body.Width=width;body.Background=new SolidColorBrush(Windows.UI.Color.FromArgb(effect.Id==selectedVisual?(byte)190:(byte)65,90,174,255));body.BorderThickness=new Thickness(effect.Id==selectedVisual?2:1);body.Child=null;
-            if(width > 38) body.Child = new TextBlock { Text = effect.Kind switch { "zoom" => L.T("SB762AEC769A3"), "tilt" => L.T("S17E14283A497"), "mask" => L.T("SAC7CE836857B"), "focus" => L.T("SED19BD5E2620"), "intro" => L.T("SFD0D4B7258C2"), _ => L.T("S622DA0460277") }, FontSize = 10, Margin = new Thickness(6,0,3,0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = RecorderTheme.Brush(this, "EditorInk") };
-            At(body, x, EffectY(effect.Kind));
+            if(!effectViews.TryGetValue(viewKey,out var body))effectViews[viewKey]=body=new Border{Height=20,CornerRadius=new CornerRadius(6),IsHitTestVisible=false};
+            var (r, g, b) = EffectColor(effect.Kind);
+            usedEffects.Add(viewKey);body.Width=width;body.BorderBrush=Brush(r,g,b);body.Background=new SolidColorBrush(Windows.UI.Color.FromArgb(effect.Id==selectedVisual?(byte)190:(byte)65,r,g,b));body.BorderThickness=new Thickness(effect.Id==selectedVisual?2:1);body.Child=null;
+            if(width > 38) body.Child = new TextBlock { Text = effect.Kind switch { "zoom" => L.T("SB762AEC769A3"), "tilt" => L.T("S17E14283A497"), "mask" => L.T("SAC7CE836857B"), "focus" => L.T("SED19BD5E2620"), "intro" => L.T("SFD0D4B7258C2"), _ => L.T("S622DA0460277") }, FontSize = 10, Margin = new Thickness(6,0,3,0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, Foreground = effect.Id == selectedVisual ? Brush(20, 22, 26) : RecorderTheme.Brush(this, "EditorInk") };
+            At(body, x, InstanceEffectY(effect.Kind));
         }
         playLine.Height = canvas.Height - 14; At(playLine, X(playhead), 14); At(playHandle, X(playhead) - 3.5, 6);
         foreach(var id in clipViews.Keys.Where(id=>!usedClips.Contains(id)).ToArray())clipViews.Remove(id);
@@ -201,28 +233,51 @@ internal sealed partial class EditorTimeline : ContentControl
         if (timeline is null) return; var point = e.GetCurrentPoint(canvas); if (!point.Properties.IsLeftButtonPressed) return;
         HideHover(); FocusTimeline(FocusState.Pointer);
         var p = point.Position; var ticks = T(p.X); var clip = VisibleClips(p.X,p.X).FirstOrDefault(c=>ticks<c.OutputStart+c.OutputDuration);
-        var effect = effects.Query(ticks,ticks).Where(c => ticks < c.OutputStart + c.OutputDuration && p.Y >= EffectY(c.Kind) && p.Y <= EffectY(c.Kind) + 20).MaxBy(c=>effectOrdinals[c.Id+":"+c.OutputStart]);
+        var effect = effects.Query(ticks,ticks).Where(c => ticks < c.OutputStart + c.OutputDuration && p.Y >= InstanceEffectY(c.Kind) && p.Y <= InstanceEffectY(c.Kind) + 20).MaxBy(c=>effectOrdinals[c.Id+":"+c.OutputStart]);
         if(effect is not null) {
-            bool already = selectedVisual == effect.Id; selectedVisual = effect.Id; SelectEffect?.Invoke(effect.Id);
-            if(EditingEnabled && already) { dragEffect = effect; effectGrabOffset = ticks-effect.OutputStart; dragKind = Math.Abs(p.X-X(effect.OutputStart)) <= 10 ? "start" : Math.Abs(p.X-X(effect.OutputStart+effect.OutputDuration)) <= 10 ? "end" : "move"; BeginEdit?.Invoke(); dragging = true; }
+            selectedVisual = effect.Id; SelectEffect?.Invoke(effect.Id);
+            if(EditingEnabled) {
+                dragEffect = effect; dragClip = null; effectGrabOffset = ticks - effect.OutputStart;
+                dragKind = Math.Abs(p.X - X(effect.OutputStart)) <= 10 ? "start" : Math.Abs(p.X - X(effect.OutputStart + effect.OutputDuration)) <= 10 ? "end" : "move";
+                dragPending = true; pressPoint = p; pressTicks = ticks;
+            }
             else { Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration-1))); dragKind = "seek"; }
             canvas.CapturePointer(e.Pointer); e.Handled = true; Draw(); return;
         }
         if (clip is not null && p.Y >= 32 && p.Y <= 96) {
-            var prior = selected; SelectClip?.Invoke(clip.Id); selected = clip.Id; dragClip = clip;
-            if (EditingEnabled && prior == clip.Id) {
+            SelectClip?.Invoke(clip.Id); selected = clip.Id; dragClip = clip; dragEffect = null;
+            if (EditingEnabled) {
                 dragKind = Math.Abs(p.X - X(clip.OutputStart)) <= 12 ? "start" : Math.Abs(p.X - X(clip.OutputStart + clip.OutputDuration)) <= 12 ? "end" : "move";
-                BeginEdit?.Invoke(); dragging = true;
+                dragPending = true; pressPoint = p; pressTicks = ticks;
+            } else {
+                Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); dragKind = "seek";
             }
+            canvas.CapturePointer(e.Pointer); e.Handled = true; Draw(); return;
         }
-        if (!dragging) { Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); dragKind = "seek"; }
+        Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); dragKind = "seek";
         canvas.CapturePointer(e.Pointer); e.Handled = true; Draw();
     }
     private void Moved(object sender, PointerRoutedEventArgs e)
     {
         if (timeline is null) return;
-        if(!e.GetCurrentPoint(canvas).Properties.IsLeftButtonPressed){if(!dragging&&EditingEnabled){pendingHover=T(e.GetCurrentPoint(canvas).Position.X);if(!hoverTimer.IsRunning)hoverTimer.Start();}return;}
-        var ticks = Snap(T(e.GetCurrentPoint(canvas).Position.X));
+        var point = e.GetCurrentPoint(canvas);
+        var p = point.Position;
+        if(!point.Properties.IsLeftButtonPressed){
+            if(!dragging && !dragPending){
+                if(EditingEnabled){
+                    pendingHover=T(p.X);
+                    if(!hoverTimer.IsRunning)hoverTimer.Start();
+                    UpdateHoverCursor(p);
+                } else ProtectedCursor = arrowCursor;
+            }
+            return;
+        }
+        if (dragPending && !dragging) {
+            if (Math.Abs(p.X - pressPoint.X) < 3 && Math.Abs(p.Y - pressPoint.Y) < 3) return;
+            if (!EditingEnabled) { dragPending = false; dragClip = null; dragEffect = null; dragKind = "seek"; return; }
+            dragPending = false; dragging = true; BeginEdit?.Invoke();
+        }
+        var ticks = Snap(T(p.X));
         if (!dragging) { if (dragKind == "seek") Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); return; }
         if(dragEffect is not null) { PreviewEdit?.Invoke(new { op = "effectAtOutput", effectId = dragEffect.Id, outputTicks = dragKind == "move" ? ticks-effectGrabOffset : ticks, edge = dragKind }); e.Handled = true; return; }
         if (dragClip is null) return;
@@ -233,9 +288,82 @@ internal sealed partial class EditorTimeline : ContentControl
         } else command = new { op = "trimOutput", segmentId = dragClip.Id, outputTicks = ticks, edge = dragKind };
         PreviewEdit?.Invoke(command); e.Handled = true;
     }
-    private void Released(object sender, PointerRoutedEventArgs e) { if (dragging) Finish(true); dragKind = null; canvas.ReleasePointerCapture(e.Pointer); e.Handled = true; }
-    private void Finish(bool commit) { dragging = false; dragKind = null; dragClip = null; dragEffect = null; EndEdit?.Invoke(commit); }
-    private static int EffectY(string kind) => kind switch { "zoom" => 148, "tilt" => 172, "intro" => 196, "mask" => 220, "focus" => 244, _ => 268 };
+    private void Released(object sender, PointerRoutedEventArgs e)
+    {
+        if (dragPending) {
+            dragPending = false; dragClip = null; dragEffect = null; dragKind = null;
+            if (timeline is not null) Seek?.Invoke(Math.Min(pressTicks, Math.Max(0, timeline.Duration - 1)));
+        } else if (dragging) {
+            Finish(true);
+        }
+        dragKind = null; canvas.ReleasePointerCapture(e.Pointer); e.Handled = true;
+    }
+    private void Finish(bool commit) { dragging = false; dragPending = false; dragKind = null; dragClip = null; dragEffect = null; EndEdit?.Invoke(commit); }
+    private void OnCanvasDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (timeline is null) return;
+        var p = e.GetPosition(canvas);
+        if (p.Y < 32 || p.Y > 96) return;
+        var ticks = T(p.X);
+        var clip = VisibleClips(p.X, p.X).FirstOrDefault(c => ticks < c.OutputStart + c.OutputDuration);
+        if (clip is null) return;
+        selected = clip.Id;
+        ClipDoubleClicked?.Invoke(clip.Id);
+        e.Handled = true;
+        Draw();
+    }
+    private void WheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (timeline is null) return;
+        bool ctrl = (InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control) & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0;
+        if (!ctrl) return;
+        int delta = e.GetCurrentPoint(canvas).Properties.MouseWheelDelta;
+        if (delta == 0) return;
+        e.Handled = true;
+        double factor = delta > 0 ? 1.25 : 0.8;
+        double next = Math.Clamp(scale * factor, 0.05, 1000);
+        if (Math.Abs(next - scale) < 0.0001) return;
+        PixelsPerSecond = next;
+        ZoomChanged?.Invoke(next);
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => {
+            scroll.UpdateLayout();
+            Reveal(playhead);
+        });
+    }
+    private void UpdateHoverCursor(Point p)
+    {
+        if (timeline is null) { ProtectedCursor = arrowCursor; return; }
+        var ticks = T(p.X);
+        var effect = effects.Query(ticks, ticks)
+            .Where(c => ticks < c.OutputStart + c.OutputDuration && p.Y >= InstanceEffectY(c.Kind) && p.Y <= InstanceEffectY(c.Kind) + 20)
+            .MaxBy(c => effectOrdinals[c.Id + ":" + c.OutputStart]);
+        if (effect is not null) {
+            bool edge = Math.Abs(p.X - X(effect.OutputStart)) <= 10 || Math.Abs(p.X - X(effect.OutputStart + effect.OutputDuration)) <= 10;
+            ProtectedCursor = edge ? resizeHorizontalCursor : moveCursor;
+            return;
+        }
+        if (p.Y >= 32 && p.Y <= 96) {
+            var clip = VisibleClips(p.X, p.X).FirstOrDefault(c => ticks < c.OutputStart + c.OutputDuration);
+            if (clip is not null) {
+                bool edge = Math.Abs(p.X - X(clip.OutputStart)) <= 12 || Math.Abs(p.X - X(clip.OutputStart + clip.OutputDuration)) <= 12;
+                ProtectedCursor = edge ? resizeHorizontalCursor : moveCursor;
+                return;
+            }
+        }
+        ProtectedCursor = arrowCursor;
+    }
+    private int InstanceEffectY(string kind) => effectRows.TryGetValue(kind, out int y) ? y : DefaultEffectY(kind);
+    private static int EffectY(string kind) => lastEffectRows is not null && lastEffectRows.TryGetValue(kind, out int y) ? y : DefaultEffectY(kind);
+    private static int DefaultEffectY(string kind) => kind switch { "zoom" => 148, "tilt" => 172, "intro" => 196, "mask" => 220, "focus" => 244, _ => 268 };
+    private static (byte R, byte G, byte B) EffectColor(string kind) => kind switch {
+        "zoom" => (90, 174, 255),
+        "focus" => (255, 184, 48),
+        "mask" => (255, 107, 146),
+        "tilt" => (255, 133, 80),
+        "intro" => (61, 219, 176),
+        "sticker" => (181, 230, 85),
+        _ => (90, 174, 255)
+    };
 }
 
 internal static class ReadOnlyListExtensions

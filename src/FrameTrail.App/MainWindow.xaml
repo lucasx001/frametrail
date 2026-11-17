@@ -1,7 +1,7 @@
 <Window x:Class="FrameTrail.App.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="using:FrameTrail.App" Title="FrameTrail">
  <Grid x:Name="RecorderRoot" Background="{ThemeResource RecorderBase}" CornerRadius="28" BorderBrush="{ThemeResource RecorderEdge}" BorderThickness="1" KeyDown="Root_KeyDown">
   <Grid.Resources>
-   <Flyout x:Name="MicrophoneFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
+   <Flyout x:Name="MicrophoneFlyout" Placement="Bottom" FlyoutPresenterStyle="{StaticResource RecorderFlyout}" Opened="MicrophoneFlyout_Opened" Closed="MicrophoneFlyout_Closed">
     <StackPanel Width="268" Spacing="4">
      <ToggleButton x:Name="MicEnabled" Content="{local:Loc Key=S714CAC30E2FF}" Style="{StaticResource RecorderInputToggle}" Checked="Input_Changed" Unchecked="Input_Changed" AutomationProperties.Name="{local:Loc Key=S512DFD986720}" />
      <StackPanel x:Name="MicrophoneDevices" /><TextBlock x:Name="MicrophoneEmpty" Text="{local:Loc Key=S94C8595ED8ED}" Style="{StaticResource RecorderCaption}" Margin="10,8" />
@@ -49,6 +49,7 @@
       </Grid>
       <ToggleButton x:Name="PointerEnabled" Content="{local:Loc Key=S260F88241E2D}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" Style="{StaticResource RecorderSettingToggle}" />
       <ToggleButton x:Name="ExcludeControl" Content="{local:Loc Key=S86F0BE597E0B}" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" Style="{StaticResource RecorderSettingToggle}" />
+      <ToggleButton x:Name="CountdownEnabled" IsChecked="False" Style="{StaticResource RecorderSettingToggle}" />
       <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
       <Button Style="{StaticResource RecorderMenuButton}" Click="Android_Click" Content="{local:Loc Key=S0E824A1AC951}" />
       <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="{local:Loc Key=S55255C7EB609}" />
@@ -65,9 +66,11 @@
        <StackPanel Width="232" Spacing="10">
         <CheckBox x:Name="SoftwareAllowed" Content="{local:Loc Key=SF02CEC690826}" FontSize="12" />
         <TextBlock Text="{local:Loc Key=S9AF7D38925BA}" Style="{StaticResource RecorderCaption}" />
-        <ComboBox x:Name="StopKey" SelectedIndex="3" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
+        <ComboBox x:Name="StopKey" SelectedIndex="3" SelectionChanged="Hotkey_Changed" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
+        <TextBlock x:Name="PauseKeyLabel" Style="{StaticResource RecorderCaption}" />
+        <ComboBox x:Name="PauseKey" SelectedIndex="2" SelectionChanged="Hotkey_Changed" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
         <TextBlock Text="{local:Loc Key=SEC3C16FDCEA5}" Style="{StaticResource RecorderCaption}" />
-        <ComboBox x:Name="MarkerKey" SelectedIndex="4" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
+        <ComboBox x:Name="MarkerKey" SelectedIndex="4" SelectionChanged="Hotkey_Changed" HorizontalAlignment="Stretch" FontSize="12"><ComboBoxItem Content="Ctrl + Shift + F6" /><ComboBoxItem Content="Ctrl + Shift + F7" /><ComboBoxItem Content="Ctrl + Shift + F8" /><ComboBoxItem Content="Ctrl + Shift + F9" /><ComboBoxItem Content="Ctrl + Shift + F10" /><ComboBoxItem Content="Ctrl + Shift + F11" /><ComboBoxItem Content="Ctrl + Shift + F12" /></ComboBox>
         <Button Content="{local:Loc Key=SE9DD9A0D9A75}" Click="Hotkey_Click" Style="{StaticResource RecorderMenuButton}" /><TextBlock x:Name="HotkeyStatus" Style="{StaticResource RecorderCaption}" />
        </StackPanel>
       </Expander>
@@ -115,12 +118,38 @@
   </Grid.Resources>
   <StackPanel x:Name="SetupPanel" Orientation="Horizontal" Padding="7,0" VerticalAlignment="Center" AutomationProperties.Name="{local:Loc Key=S61B554D4A67F}">
    <Button x:Name="SourceWheel" Width="106" Height="40" CornerRadius="20" Background="{ThemeResource RecorderWell}" Style="{StaticResource RecorderIconButton}" Click="SourceMode_Click" PointerWheelChanged="SourceMode_Wheel" KeyDown="SourceMode_KeyDown" AutomationProperties.Name="{local:Loc Key=S78759219D563}" ToolTipService.ToolTip="{local:Loc Key=S267ABDB2E58B}">
+    <Button.ContextFlyout>
+     <Flyout x:Name="SourceFlyout" Placement="Bottom" Opening="SourceFlyout_Opening" FlyoutPresenterStyle="{StaticResource RecorderFlyout}">
+      <StackPanel Width="268" Spacing="2">
+       <Button Style="{StaticResource RecorderMenuButton}" Click="SourceChoice_Click" Tag="0">
+        <Grid Width="244" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /></Grid.ColumnDefinitions>
+         <local:RecorderGlyph Kind="Display" Width="16" Height="16" /><TextBlock Grid.Column="1" Text="{local:Loc Key=S1A13EA5910A0}" VerticalAlignment="Center" /><local:RecorderGlyph x:Name="SourceCheck0" Grid.Column="2" Kind="Check" Width="13" Height="13" Visibility="Collapsed" />
+        </Grid>
+       </Button>
+       <Button Style="{StaticResource RecorderMenuButton}" Click="SourceChoice_Click" Tag="1">
+        <Grid Width="244" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /></Grid.ColumnDefinitions>
+         <local:RecorderGlyph Kind="Window" Width="16" Height="16" /><TextBlock Grid.Column="1" Text="{local:Loc Key=S9EFE01F647D6}" VerticalAlignment="Center" /><local:RecorderGlyph x:Name="SourceCheck1" Grid.Column="2" Kind="Check" Width="13" Height="13" Visibility="Collapsed" />
+        </Grid>
+       </Button>
+       <Button Style="{StaticResource RecorderMenuButton}" Click="SourceChoice_Click" Tag="2">
+        <Grid Width="244" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /></Grid.ColumnDefinitions>
+         <local:RecorderGlyph Kind="Region" Width="16" Height="16" /><TextBlock Grid.Column="1" Text="{local:Loc Key=S3382870BC4AD}" VerticalAlignment="Center" /><local:RecorderGlyph x:Name="SourceCheck2" Grid.Column="2" Kind="Check" Width="13" Height="13" Visibility="Collapsed" />
+        </Grid>
+       </Button>
+       <Button Style="{StaticResource RecorderMenuButton}" Click="SourceChoice_Click" Tag="3">
+        <Grid Width="244" ColumnSpacing="10"><Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="14" /></Grid.ColumnDefinitions>
+         <local:RecorderGlyph Kind="Phone" Width="16" Height="16" /><TextBlock Grid.Column="1" Text="{local:Loc Key=S2E07333C8C74}" VerticalAlignment="Center" /><local:RecorderGlyph x:Name="SourceCheck3" Grid.Column="2" Kind="Check" Width="13" Height="13" Visibility="Collapsed" />
+        </Grid>
+       </Button>
+      </StackPanel>
+     </Flyout>
+    </Button.ContextFlyout>
     <StackPanel Orientation="Horizontal" Spacing="8"><local:RecorderGlyph x:Name="SourceGlyph" Kind="Display" /><TextBlock x:Name="SourceModeLabel" Text="{local:Loc Key=S1A13EA5910A0}" FontFamily="{StaticResource RecorderSemiboldFont}" FontSize="13" VerticalAlignment="Center" /><Canvas Width="6" Height="10" VerticalAlignment="Center"><Path Data="M1,3 L3,1 L5,3 M1,7 L3,9 L5,7" Stroke="{ThemeResource RecorderFaint}" StrokeThickness="1" StrokeLineJoin="Round" /></Canvas></StackPanel>
    </Button>
    <Button x:Name="OpenProjectButton" Style="{StaticResource RecorderIconButton}" Click="Open_Click" AutomationProperties.Name="{local:Loc Key=SD16005A92594}" AutomationProperties.AutomationId="recorder.openProject" ToolTipService.ToolTip="{local:Loc Key=S58B8A06F6249}"><local:RecorderGlyph Kind="Folder" Width="17" Height="17" /></Button>
-   <Button x:Name="MicrophoneButton" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Microphone_Click" AutomationProperties.Name="{local:Loc Key=SFA7B2288D985}" ToolTipService.ToolTip="{local:Loc Key=S714CAC30E2FF}"><local:RecorderGlyph x:Name="MicrophoneGlyph" Kind="Microphone" IsOn="False" Width="16" Height="16" /></Button>
-   <Button x:Name="CameraButton" Style="{StaticResource RecorderIconButton}" Click="Camera_Click" AutomationProperties.Name="{local:Loc Key=S4D8500D4B31E}" ToolTipService.ToolTip="{local:Loc Key=SFAC308FBABB8}"><local:RecorderGlyph x:Name="CameraGlyph" Kind="Camera" IsOn="False" Width="16" Height="16" /></Button>
-   <Button x:Name="SystemButton" Style="{StaticResource RecorderIconButton}" Click="System_Click" AutomationProperties.Name="{local:Loc Key=S379F79CB9C19}" ToolTipService.ToolTip="{local:Loc Key=SAAA9A8F072BD}"><local:RecorderGlyph x:Name="SystemGlyph" Kind="Speaker" IsOn="False" Width="16" Height="16" /></Button>
+   <Button x:Name="MicrophoneButton" Margin="6,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Microphone_Click" RightTapped="Microphone_RightTapped" AutomationProperties.Name="{local:Loc Key=SFA7B2288D985}" ToolTipService.ToolTip="{local:Loc Key=S714CAC30E2FF}"><local:RecorderGlyph x:Name="MicrophoneGlyph" Kind="Microphone" IsOn="False" Width="16" Height="16" /></Button>
+   <Button x:Name="CameraButton" Style="{StaticResource RecorderIconButton}" Click="Camera_Click" RightTapped="Camera_RightTapped" AutomationProperties.Name="{local:Loc Key=S4D8500D4B31E}" ToolTipService.ToolTip="{local:Loc Key=SFAC308FBABB8}"><local:RecorderGlyph x:Name="CameraGlyph" Kind="Camera" IsOn="False" Width="16" Height="16" /></Button>
+   <Button x:Name="SystemButton" Style="{StaticResource RecorderIconButton}" Click="System_Click" RightTapped="System_RightTapped" AutomationProperties.Name="{local:Loc Key=S379F79CB9C19}" ToolTipService.ToolTip="{local:Loc Key=SAAA9A8F072BD}"><local:RecorderGlyph x:Name="SystemGlyph" Kind="Speaker" IsOn="False" Width="16" Height="16" /></Button>
    <ToggleButton x:Name="AutomaticZoomEnabled" Style="{StaticResource RecorderIconToggle}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" AutomationProperties.AutomationId="recorder.autoZoom" AutomationProperties.Name="{local:Loc Key=S69BB0203DDEC}" ToolTipService.ToolTip="{local:Loc Key=S69BB0203DDEC}"><local:RecorderGlyph x:Name="AutomaticZoomGlyph" Kind="AutoZoom" Width="17" Height="17" /></ToggleButton>
    <Button x:Name="MoreButton" Style="{StaticResource RecorderIconButton}" Click="More_Click" AutomationProperties.Name="{local:Loc Key=SFDDDEFA0F2BE}" ToolTipService.ToolTip="{local:Loc Key=SFDDDEFA0F2BE}"><Grid><local:RecorderGlyph Kind="More" Width="16" Height="16" /><Ellipse x:Name="NoticeBadge" Width="5" Height="5" Fill="{StaticResource RecorderAmber}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-4,-4,0" Visibility="Collapsed" /></Grid></Button>
    <Button x:Name="StartButton" Margin="4,0,0,0" Style="{StaticResource RecorderIconButton}" Click="Start_Click" AutomationProperties.Name="{local:Loc Key=SC15244686A5C}" ToolTipService.ToolTip="{local:Loc Key=S415D8F361894}"><Grid Width="36" Height="36"><Ellipse Fill="{StaticResource RecorderRed}" /><Ellipse Fill="White" Width="12" Height="12" /></Grid></Button>

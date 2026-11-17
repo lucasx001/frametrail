@@ -37,7 +37,15 @@ public sealed partial class MainWindow : Window
     private bool loaded, viewReady, busy, allowClose, closing;
     private nint hwnd, previousProcedure;
     private readonly WndProc procedure;
-    private bool stopRegistered, markerRegistered;
+    private bool stopRegistered, markerRegistered, pauseRegistered;
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? micPreviewTimer;
+    private AudioCaptureSession? micPreviewSession;
+    private string? micPreviewPath;
+    private Task micPreviewWork = Task.CompletedTask;
+    private readonly SemaphoreSlim micPreviewGate = new(1, 1);
+    private int micPreviewGeneration;
+    private bool micPreviewPolling;
+    private CancellationTokenSource? countdownCancellation;
     private readonly ProjectLocations projectLocations = new();
     private string projects;
     private string engineStatus = "";
@@ -58,8 +66,15 @@ public sealed partial class MainWindow : Window
         EditorAppearance.Changed += SetAppearance;
         Closed += (_, _) => { EditorAppearance.Changed -= SetAppearance; settingsWindow?.Close(); projectLibraryWindow?.Close(); };
         hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-        flyouts.AddRange(new[] { MicrophoneFlyout, CameraFlyout, SystemFlyout, MoreFlyout, RecordingMoreFlyout, MarkerFlyout, FeedbackFlyout, RecoveryFlyout });
+        flyouts.AddRange(new[] { MicrophoneFlyout, CameraFlyout, SystemFlyout, MoreFlyout, RecordingMoreFlyout, MarkerFlyout, FeedbackFlyout, RecoveryFlyout, SourceFlyout });
         foreach (var flyout in flyouts) flyout.ShouldConstrainToRootBounds = false;
+        var countdownLabel = L.Language == "en" ? "3-second countdown before recording" : "录制前 3 秒倒计时";
+        CountdownEnabled.Content = countdownLabel;
+        AutomationProperties.SetName(CountdownEnabled, countdownLabel);
+        PauseKeyLabel.Text = L.Language == "en" ? "Pause / resume shortcut" : "暂停 / 继续录制快捷键";
+        var escapeAccelerator = new KeyboardAccelerator { Key = VirtualKey.Escape };
+        escapeAccelerator.Invoked += (_, args) => { if (CancelCountdown()) { args.Handled = true; return; } HideFlyouts(); args.Handled = true; };
+        RecorderRoot.KeyboardAccelerators.Add(escapeAccelerator);
         viewReady = true;
         try { session = new(); engineStatus = $"FrameTrail Engine {EngineSession.Version} · ABI {EngineSession.ExpectedAbiVersion}"; }
         catch (Exception error) { engineStatus = error.Message; ShowFeedback(L.T("SDE39482A8ADF"), error.Message, false); }
@@ -79,10 +94,14 @@ public sealed partial class MainWindow : Window
             busy = true; closing = true;
             try
             {
+                CancelCountdown();
+                micPreviewGeneration++;
+                micPreviewTimer?.Stop();
                 if (memo is { } activeMemo && !await activeMemo.RequestCloseAsync()) throw new IOException(L.T("S4C0E1E7A6623"));
                 selection?.Dispose(); selection = null;
                 if (androidWindow is { } activeAndroid) await activeAndroid.ShutdownAsync();
                 HideFlyouts();
+                await StopMicPreviewAsync();
                 if (cameraPreview is { } cp) { await cp.StopAsync(); cp.Close(); }
                 await coordinator.DisposeAsync();
                 if (opened is not null) await opened.DisposeAsync();
@@ -186,6 +205,106 @@ public sealed partial class MainWindow : Window
     private void Microphone_Click(object sender, RoutedEventArgs e) => ToggleFlyout(MicrophoneFlyout, MicrophoneButton);
     private void Camera_Click(object sender, RoutedEventArgs e) => ToggleFlyout(CameraFlyout, CameraButton);
     private void System_Click(object sender, RoutedEventArgs e) { if (sourceMode == 3) OpenAndroid(); else ToggleFlyout(SystemFlyout, SystemButton); }
+    private void Microphone_RightTapped(object sender, RightTappedRoutedEventArgs e) { ToggleFlyout(MicrophoneFlyout, MicrophoneButton); e.Handled = true; }
+    private void Camera_RightTapped(object sender, RightTappedRoutedEventArgs e) { ToggleFlyout(CameraFlyout, CameraButton); e.Handled = true; }
+    private void System_RightTapped(object sender, RightTappedRoutedEventArgs e) { System_Click(sender, e); e.Handled = true; }
+    private void MicrophoneFlyout_Opened(object sender, object e) => SyncMicPreview();
+    private void MicrophoneFlyout_Closed(object sender, object e) => SyncMicPreview();
+    private bool ShouldRunMicPreview =>
+        !closing &&
+        MicrophoneFlyout.IsOpen &&
+        MicEnabled.IsChecked == true &&
+        microphone is not null &&
+        coordinator.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete;
+    private void SyncMicPreview()
+    {
+        if (!ShouldRunMicPreview)
+        {
+            micPreviewGeneration++;
+            micPreviewTimer?.Stop();
+            if (coordinator.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)
+                MicrophoneLevel.Value = 0;
+            micPreviewWork = StopMicPreviewAsync();
+            return;
+        }
+        if (micPreviewTimer is null)
+        {
+            micPreviewTimer = DispatcherQueue.CreateTimer();
+            micPreviewTimer.Interval = TimeSpan.FromMilliseconds(80);
+            micPreviewTimer.Tick += MicPreviewTimer_Tick;
+        }
+        if (!micPreviewTimer.IsRunning) micPreviewTimer.Start();
+        int generation = ++micPreviewGeneration;
+        micPreviewWork = StartMicPreviewAsync(microphone!, generation);
+    }
+    private async Task StartMicPreviewAsync(AudioDevice device, int generation)
+    {
+        await micPreviewGate.WaitAsync();
+        try
+        {
+            await StopMicPreviewCoreAsync();
+            if (generation != micPreviewGeneration || closing) return;
+            string tempPath = Path.Combine(Path.GetTempPath(), $"frametrail-mic-preview-{Guid.NewGuid():N}.wav");
+            var preview = await Task.Run(() => AudioCaptureSession.Start(new(AudioCaptureKind.Microphone, tempPath, device.Id)));
+            if (generation != micPreviewGeneration || closing)
+            {
+                await Task.Run(() => { try { preview.Stop(); } catch { } try { preview.Dispose(); } catch { } });
+                TryDeleteFile(tempPath);
+                return;
+            }
+            micPreviewSession = preview;
+            micPreviewPath = tempPath;
+        }
+        catch { }
+        finally { micPreviewGate.Release(); }
+    }
+    private async Task StopMicPreviewAsync()
+    {
+        await micPreviewGate.WaitAsync();
+        try { await StopMicPreviewCoreAsync(); }
+        catch { }
+        finally { micPreviewGate.Release(); }
+    }
+    private async Task StopMicPreviewCoreAsync()
+    {
+        var sessionToStop = micPreviewSession;
+        var pathToDelete = micPreviewPath;
+        micPreviewSession = null;
+        micPreviewPath = null;
+        if (sessionToStop is not null)
+        {
+            await Task.Run(() =>
+            {
+                try { sessionToStop.Stop(); } catch { }
+                try { sessionToStop.Dispose(); } catch { }
+            });
+        }
+        TryDeleteFile(pathToDelete);
+    }
+    private static void TryDeleteFile(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
+    }
+    private async void MicPreviewTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object args)
+    {
+        if (!ShouldRunMicPreview || micPreviewPolling) return;
+        var preview = micPreviewSession;
+        if (preview is null) return;
+        micPreviewPolling = true;
+        try
+        {
+            double peak = await Task.Run(() =>
+            {
+                try { return preview.GetStatus().Peak; }
+                catch { return 0d; }
+            });
+            if (ShouldRunMicPreview && ReferenceEquals(micPreviewSession, preview))
+                MicrophoneLevel.Value = Math.Clamp(peak, 0, 1);
+        }
+        catch { }
+        finally { micPreviewPolling = false; }
+    }
     private void More_Click(object sender, RoutedEventArgs e)
     {
         if (NoticeBadge.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(Feedback.Text))
@@ -211,6 +330,20 @@ public sealed partial class MainWindow : Window
     }
 
     private void SourceMode_Click(object sender, RoutedEventArgs e) => RollSource(1);
+    private void SourceFlyout_Opening(object sender, object e)
+    {
+        var checks = new[] { SourceCheck0, SourceCheck1, SourceCheck2, SourceCheck3 };
+        for (int i = 0; i < checks.Length; i++)
+            checks[i].Visibility = sourceMode == i ? Visibility.Visible : Visibility.Collapsed;
+    }
+    private void SourceChoice_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && int.TryParse(tag, out int target))
+        {
+            if (target != sourceMode) RollSource((target - sourceMode + 4) % 4);
+            else HideFlyouts();
+        }
+    }
     private void SourceMode_Wheel(object sender, PointerRoutedEventArgs e)
     { RollSource(e.GetCurrentPoint(SourceWheel).Properties.MouseWheelDelta > 0 ? -1 : 1); e.Handled = true; }
     private void SourceMode_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -247,7 +380,7 @@ public sealed partial class MainWindow : Window
         microphone = microphones.FirstOrDefault(d => d.Id == microphone?.Id) ?? microphones.FirstOrDefault(d => d.IsDefault) ?? microphones.FirstOrDefault();
         output = outputs.FirstOrDefault(d => d.Id == output?.Id) ?? outputs.FirstOrDefault(d => d.IsDefault) ?? outputs.FirstOrDefault();
         camera = cameras.FirstOrDefault(d => d.Id == camera?.Id);
-        BuildChoices(MicrophoneDevices, microphones, d => d.Name, d => d.Id == microphone?.Id, d => { microphone = d; MicEnabled.IsChecked = true; }, "Microphones");
+        BuildChoices(MicrophoneDevices, microphones, d => d.Name, d => d.Id == microphone?.Id, d => { microphone = d; MicEnabled.IsChecked = true; SyncMicPreview(); }, "Microphones");
         BuildChoices(SystemDevices, outputs, d => d.Name, d => d.Id == output?.Id, d => { output = d; SystemEnabled.IsChecked = true; }, "Outputs");
         BuildChoices(CameraDevices, cameras, d => d.Name, d => d.Id == camera?.Id, d => { CameraEnabled.IsChecked = true; _ = SelectCameraAsync(d); }, "Cameras");
         MicrophoneEmpty.Visibility = microphones.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -262,7 +395,7 @@ public sealed partial class MainWindow : Window
         RecoveryPicker.ItemsSource = recoverable; RecoveryPicker.SelectedIndex = recoverable.Count > 0 ? 0 : -1; RecoverButton.IsEnabled = recoverable.Count > 0;
         DestinationName.Text = Path.GetFileName(projects.TrimEnd(Path.DirectorySeparatorChar));
         ToolTipService.SetToolTip(DestinationButton, projects);
-        ApplyIcons();
+        ApplyIcons(); SyncMicPreview();
         if (issues.Count > 0) ShowFeedback(L.T("S67CCA2746A80"), string.Join(Environment.NewLine, issues), false, true);
     }
     private static void BuildChoices<T>(StackPanel panel, IReadOnlyList<T> devices, Func<T, string> label, Func<T, bool> selected, Action<T> choose, string group)
@@ -293,6 +426,7 @@ public sealed partial class MainWindow : Window
         if (!viewReady) return;
         if (ReferenceEquals(sender, CameraEnabled) && CameraEnabled.IsChecked != true && cameraPreview is { } cp) { await cp.StopAsync(); cp.Close(); }
         ApplyIcons();
+        if (ReferenceEquals(sender, MicEnabled)) SyncMicPreview();
         if (ReferenceEquals(sender, CameraEnabled) && CameraEnabled.IsChecked == true && camera is null && cameras.Count > 0)
             await SelectCameraAsync(cameras[0]);
     }
@@ -313,7 +447,10 @@ public sealed partial class MainWindow : Window
         ApplyAutomaticZoom();
         MicrophoneGlyph.IsOn = MicEnabled.IsChecked == true; CameraGlyph.IsOn = sourceMode != 3 && CameraEnabled.IsChecked == true; SystemGlyph.IsOn = sourceMode != 3 && SystemEnabled.IsChecked == true;
         CameraButton.IsEnabled = sourceMode != 3; PointerEnabled.IsEnabled = sourceMode != 3;
-        ToolTipService.SetToolTip(SystemButton, sourceMode == 3 ? L.T("SF334B74234D0") : L.T("SAAA9A8F072BD"));
+        ToolTipService.SetToolTip(MicrophoneButton, microphone is not null ? $"{L.T("S714CAC30E2FF")}: {microphone.Name}" : L.T("S714CAC30E2FF"));
+        var activeCamera = camera ?? cameras.FirstOrDefault();
+        ToolTipService.SetToolTip(CameraButton, activeCamera is not null ? $"{L.T("SFAC308FBABB8")}: {activeCamera.Name}" : L.T("SFAC308FBABB8"));
+        ToolTipService.SetToolTip(SystemButton, sourceMode == 3 ? L.T("SF334B74234D0") : (output is not null ? $"{L.T("SAAA9A8F072BD")}: {output.Name}" : L.T("SAAA9A8F072BD")));
         AutomationProperties.SetName(MicrophoneButton, L.T("S8DC874705A7D") + (MicrophoneGlyph.IsOn ? L.T("S8DA97DDDA990") : L.T("StateOff")));
         AutomationProperties.SetName(CameraButton, L.T("SA3B71E9CD2D3") + (CameraGlyph.IsOn ? L.T("S8DA97DDDA990") : L.T("StateOff")));
         AutomationProperties.SetName(SystemButton, L.T("SEF7FCC74314C") + (SystemGlyph.IsOn ? L.T("S8DA97DDDA990") : L.T("StateOff")));
@@ -350,14 +487,67 @@ public sealed partial class MainWindow : Window
             selection = new CaptureSelectionController(this, sourceMode, sources, async (source, region) =>
             {
                 selection = null; AppWindow.Show(); Activate();
-                await ExecuteAsync(() => BeginRecordingAsync(source, region));
+                await ExecuteAsync(async () =>
+                {
+                    if (CountdownEnabled.IsChecked == true && !await RunCountdownAsync()) return;
+                    await BeginRecordingAsync(source, region);
+                });
             }, () => { selection = null; if (!closing) { AppWindow.Show(); Activate(); } });
             selection.Show(); AppWindow.Hide();
         }
         catch (Exception error) { selection?.Dispose(); selection = null; AppWindow.Show(); ShowFeedback(L.T("SEE647954C91D"), error.Message); }
     }
+    private bool CancelCountdown()
+    {
+        if (countdownCancellation is { IsCancellationRequested: false } cts) { cts.Cancel(); return true; }
+        return false;
+    }
+    private async Task<bool> RunCountdownAsync()
+    {
+        using var cts = new CancellationTokenSource();
+        countdownCancellation = cts;
+        surface = "countdown";
+        HideFlyouts();
+        SetupPanel.Visibility = Visibility.Collapsed;
+        RecordingPanel.Visibility = Visibility.Collapsed;
+        ProgressPanel.Visibility = Visibility.Visible;
+        TransitionProgress.IsActive = true;
+        RecorderRoot.CornerRadius = new CornerRadius(24);
+        RecorderWindowChrome.Resize(this, 240, 48, 24);
+        try
+        {
+            for (int seconds = 3; seconds >= 1; seconds--)
+            {
+                RecordingStatus.Text = $"{seconds}…";
+                await Task.Delay(1000, cts.Token);
+            }
+            return !closing;
+        }
+        catch (OperationCanceledException)
+        {
+            if (!closing)
+            {
+                ProgressPanel.Visibility = Visibility.Collapsed;
+                TransitionProgress.IsActive = false;
+                RecordingPanel.Visibility = Visibility.Collapsed;
+                SetupPanel.Visibility = Visibility.Visible;
+                surface = "setup";
+                RecorderRoot.CornerRadius = new CornerRadius(28);
+                RecorderWindowChrome.Resize(this, SetupWidth, 56, 28);
+            }
+            return false;
+        }
+        finally
+        {
+            if (ReferenceEquals(countdownCancellation, cts)) countdownCancellation = null;
+        }
+    }
     private async Task BeginRecordingAsync(CaptureSource source, CaptureRegion? region, AndroidSelection? android = null, AndroidConnection? prepared = null, CancellationToken cancellationToken = default)
     {
+        micPreviewGeneration++;
+        micPreviewTimer?.Stop();
+        await micPreviewWork;
+        await StopMicPreviewAsync();
         await cameraPreviewWork;
         if (android is null && CodecPicker.SelectedItem is null) throw new InvalidOperationException(L.T("S0F65B358F75E"));
         if (opened is not null) { await opened.DisposeAsync(); opened = null; }
@@ -451,6 +641,7 @@ public sealed partial class MainWindow : Window
     {
         if (closing || !ReferenceEquals(sender, coordinator) || value.RunId != coordinator.RunId) return;
         var idle = value.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete;
+        if (!idle && micPreviewTimer?.IsRunning == true) micPreviewTimer.Stop();
         var recording = value.State is RecordingWorkspaceState.Recording or RecordingWorkspaceState.Paused;
         var paused = value.State == RecordingWorkspaceState.Paused;
         SetupPanel.Visibility = idle ? Visibility.Visible : Visibility.Collapsed;
@@ -625,7 +816,14 @@ public sealed partial class MainWindow : Window
         HideFlyouts();
         ShowFeedback(L.T("SABF772F02953"), chosenSource is null ? L.T("S49990BE55E2E") : chosenSource.Name + (chosenRegion is CaptureRegion r ? L.T("SE16B08A48653", r.Width, r.Height, r.X, r.Y) : $"\n{chosenSource.Width} × {chosenSource.Height}"));
     }
-    private void Root_KeyDown(object sender, KeyRoutedEventArgs e) { if (e.Key == VirtualKey.Escape) { HideFlyouts(); e.Handled = true; } }
+    private void Root_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Escape)
+        {
+            if (!CancelCountdown()) HideFlyouts();
+            e.Handled = true;
+        }
+    }
     private void Quit_Click(object sender, RoutedEventArgs e) { HideFlyouts(); Close(); }
     private void Exclusion_Changed(object sender, RoutedEventArgs e) { if (loaded) ApplyExclusion(); }
     private void ApplyExclusion()
@@ -634,19 +832,34 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { ShowFeedback(L.T("S384EE0E968C5"), error.Message, false); }
     }
     private void Hotkey_Click(object sender, RoutedEventArgs e) => ApplyHotkeys();
+    private void Hotkey_Changed(object sender, SelectionChangedEventArgs e) { if (loaded) ApplyHotkeys(); }
     private void UnregisterHotkeys()
     {
         if (stopRegistered) { RecordingUtilities.UnregisterHotkey((nuint)hwnd, 0x4654); stopRegistered = false; }
         if (markerRegistered) { RecordingUtilities.UnregisterHotkey((nuint)hwnd, 0x4655); markerRegistered = false; }
+        if (pauseRegistered) { RecordingUtilities.UnregisterHotkey((nuint)hwnd, 0x4656); pauseRegistered = false; }
     }
     private void ApplyHotkeys()
     {
+        int stopIdx = StopKey.SelectedIndex, markerIdx = MarkerKey.SelectedIndex, pauseIdx = PauseKey.SelectedIndex;
+        if (stopIdx < 0 || markerIdx < 0 || pauseIdx < 0) return;
         try
         {
-            UnregisterHotkeys(); RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4654, 6, (uint)(0x75 + StopKey.SelectedIndex)); stopRegistered = true;
-            RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4655, 6, (uint)(0x75 + MarkerKey.SelectedIndex)); markerRegistered = true;
-            HotkeyStatus.Text = L.T("S65A0B7C0169D");
-            RecordingShortcutHint.Text = L.T("SC6DCD0176BB5", 6 + StopKey.SelectedIndex);
+            UnregisterHotkeys();
+            if (stopIdx == markerIdx || stopIdx == pauseIdx || markerIdx == pauseIdx)
+            {
+                RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4654, 6, (uint)(0x75 + stopIdx)); stopRegistered = true;
+                if (markerIdx != stopIdx) { RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4655, 6, (uint)(0x75 + markerIdx)); markerRegistered = true; }
+                if (pauseIdx != stopIdx && pauseIdx != markerIdx) { RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4656, 6, (uint)(0x75 + pauseIdx)); pauseRegistered = true; }
+                HotkeyStatus.Text = L.T("S63139AE36672") + (L.Language == "en" ? "Stop, pause, and marker shortcuts must use different keys." : "停止、暂停与标记快捷键不能相同，请选择不同按键。");
+                RecordingShortcutHint.Text = L.T("SC6DCD0176BB5", 6 + stopIdx);
+                return;
+            }
+            RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4654, 6, (uint)(0x75 + stopIdx)); stopRegistered = true;
+            RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4655, 6, (uint)(0x75 + markerIdx)); markerRegistered = true;
+            RecordingUtilities.RegisterHotkey((nuint)hwnd, 0x4656, 6, (uint)(0x75 + pauseIdx)); pauseRegistered = true;
+            HotkeyStatus.Text = L.T("S65A0B7C0169D") + $" (F{6 + stopIdx} / F{6 + pauseIdx} / F{6 + markerIdx})";
+            RecordingShortcutHint.Text = L.T("SC6DCD0176BB5", 6 + stopIdx) + (L.Language == "en" ? $" · Ctrl + Shift + F{6 + pauseIdx} pauses/resumes" : $" · Ctrl + Shift + F{6 + pauseIdx} 暂停/继续");
         }
         catch (Exception error) { HotkeyStatus.Text = L.T("S63139AE36672") + error.Message; }
     }
@@ -656,6 +869,12 @@ public sealed partial class MainWindow : Window
         {
             if ((int)wparam == 0x4654 && StopButton.IsEnabled) DispatcherQueue.TryEnqueue(() => Stop_Click(this, new RoutedEventArgs()));
             if ((int)wparam == 0x4655 && MarkerButton.IsEnabled) DispatcherQueue.TryEnqueue(() => Marker_Click(this, new RoutedEventArgs()));
+            if ((int)wparam == 0x4656 && PauseButton.IsEnabled) DispatcherQueue.TryEnqueue(() => Pause_Click(this, new RoutedEventArgs()));
+            return 0;
+        }
+        if (message == 0x0100 && wparam == 27 && countdownCancellation is { IsCancellationRequested: false })
+        {
+            DispatcherQueue.TryEnqueue(() => CancelCountdown());
             return 0;
         }
         if (message == 0x02E0) DispatcherQueue.TryEnqueue(() => { surface = ""; RecorderWindowChrome.Round(this, SetupPanel.Visibility == Visibility.Visible ? 28 : 24); });

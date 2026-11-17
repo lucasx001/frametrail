@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.System;
 
 namespace FrameTrail.App;
@@ -29,14 +30,25 @@ internal sealed partial class GettingStartedWindow : Window
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition());
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.Children.Add(new TextBlock { Text = Title, FontSize = 26, TextWrapping = TextWrapping.Wrap });
-        var panel = new StackPanel { Spacing = 14 };
+        var bodyFont = (FontFamily)Application.Current.Resources["RecorderFont"];
+        var semiboldFont = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"];
+        var tileStyle = (Style)Application.Current.Resources["EditorTile"];
+        root.Children.Add(new TextBlock { Text = Title, FontSize = 26, FontFamily = semiboldFont, Foreground = RecorderTheme.Brush(root, "EditorInk"), TextWrapping = TextWrapping.Wrap });
+        var panel = new StackPanel { Spacing = 12 };
+        var guide = new StackPanel { Spacing = 12 };
         foreach (var text in new[] { L.T("S4BD219F9473E"), L.T("SDDBD8AE3FBCC"), L.T("S81E3E3F470FC"), L.T("S149E5E61DCAB") })
-            panel.Children.Add(new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap });
+            guide.Children.Add(new TextBlock { Text = text, FontFamily = bodyFont, FontSize = 13, Foreground = RecorderTheme.Brush(root, "EditorInk"), TextWrapping = TextWrapping.Wrap });
+        panel.Children.Add(new Border { Style = tileStyle, Child = guide });
+        var permissions = new StackPanel { Spacing = 2 };
         foreach (var (label, uri) in new[] { (L.T("S672FB69D510D"), "ms-settings:privacy-microphone"), (L.T("SC251C50237F3"), "ms-settings:privacy-webcam"), (L.T("S62A255413ADA"), "ms-settings:sound") })
-            panel.Children.Add(new HyperlinkButton { Content = label, NavigateUri = new Uri(uri) });
+            permissions.Children.Add(new HyperlinkButton { Content = label, NavigateUri = new Uri(uri), FontFamily = bodyFont, FontSize = 13, Padding = new Thickness(6, 4, 6, 4) });
+        panel.Children.Add(new Border { Style = tileStyle, Padding = new Thickness(14, 10, 14, 10), Child = permissions });
         var scroll = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(scroll, 1); root.Children.Add(scroll);
+        start.Style = (Style)Application.Current.Resources["EditorPrimaryButton"];
+        start.Height = 36;
+        start.CornerRadius = new CornerRadius(18);
+        start.Padding = new Thickness(20, 0, 20, 0);
         AutomationProperties.SetAutomationId(start, "onboarding.start");
         start.Click += (_, _) => Close();
         Grid.SetRow(start, 2); root.Children.Add(start); Content = root;

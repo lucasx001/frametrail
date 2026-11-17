@@ -15,6 +15,9 @@
             <SolidColorBrush x:Key="EditorClip" Color="#EAF4FF"/>
             <SolidColorBrush x:Key="EditorThumb" Color="White"/>
             <SolidColorBrush x:Key="EditorControlTrack" Color="#E4E4E7"/>
+            <SolidColorBrush x:Key="EditorDanger" Color="#E35D62"/>
+            <SolidColorBrush x:Key="EditorDangerInk" Color="White"/>
+            <SolidColorBrush x:Key="EditorSuccess" Color="#008F68"/>
         </ResourceDictionary>
         <ResourceDictionary x:Key="Default">
             <SolidColorBrush x:Key="EditorStage" Color="#070708"/>
@@ -30,6 +33,9 @@
             <SolidColorBrush x:Key="EditorClip" Color="#162A3E"/>
             <SolidColorBrush x:Key="EditorThumb" Color="#333438"/>
             <SolidColorBrush x:Key="EditorControlTrack" Color="#343438"/>
+            <SolidColorBrush x:Key="EditorDanger" Color="#E35D62"/>
+            <SolidColorBrush x:Key="EditorDangerInk" Color="White"/>
+            <SolidColorBrush x:Key="EditorSuccess" Color="#008F68"/>
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
             <SolidColorBrush x:Key="EditorStage" Color="{ThemeResource SystemColorWindowColor}"/>
@@ -45,6 +51,9 @@
             <SolidColorBrush x:Key="EditorClip" Color="{ThemeResource SystemColorButtonFaceColor}"/>
             <SolidColorBrush x:Key="EditorThumb" Color="{ThemeResource SystemColorHighlightColor}"/>
             <SolidColorBrush x:Key="EditorControlTrack" Color="{ThemeResource SystemColorButtonFaceColor}"/>
+            <SolidColorBrush x:Key="EditorDanger" Color="{ThemeResource SystemColorHighlightColor}"/>
+            <SolidColorBrush x:Key="EditorDangerInk" Color="{ThemeResource SystemColorHighlightTextColor}"/>
+            <SolidColorBrush x:Key="EditorSuccess" Color="{ThemeResource SystemColorHighlightColor}"/>
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
     <SolidColorBrush x:Key="EditorBlue" Color="#5AAEFF"/>
@@ -87,6 +96,10 @@
     </Style>
     <Style x:Key="EditorPrimaryButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
         <Setter Property="Background" Value="{StaticResource EditorBlue}"/><Setter Property="Foreground" Value="{StaticResource EditorBlueInk}"/>
+        <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}"/><Setter Property="Padding" Value="14,0"/>
+    </Style>
+    <Style x:Key="EditorDangerButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
+        <Setter Property="Background" Value="{ThemeResource EditorDanger}"/><Setter Property="Foreground" Value="{ThemeResource EditorDangerInk}"/>
         <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}"/><Setter Property="Padding" Value="14,0"/>
     </Style>
     <Style x:Key="EditorTile" TargetType="Border"><Setter Property="Background" Value="{ThemeResource EditorWell}"/><Setter Property="CornerRadius" Value="18"/><Setter Property="Padding" Value="14"/></Style>

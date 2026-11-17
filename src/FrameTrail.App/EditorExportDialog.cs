@@ -21,6 +21,7 @@ internal sealed class EditorExportDialog : ContentDialog
     private readonly uint canvasWidth, canvasHeight;
     private int kind;
     private bool busy, complete;
+    private string? lastExportPath;
     private CancellationTokenSource cancellation = new();
     private readonly Button exportButton = new() { Content = L.T("S10F98535AE54"), Style = LookupStyle("EditorPrimaryButton") };
     private readonly Button cancelButton = new() { Content = L.T("S2CD0F3BE8738"), Style = LookupStyle("EditorButton") };
@@ -67,7 +68,11 @@ internal sealed class EditorExportDialog : ContentDialog
         resolution.SelectionChanged += (_, _) => UpdateSummary(); fps.SelectionChanged += (_, _) => UpdateSummary(); codec.SelectionChanged += (_, _) => UpdateSummary(); SelectKind(0);
         Opened += (_, _) => { scroll.MaxHeight = Math.Max(180, Math.Min(430, XamlRoot.Size.Height - 280)); SelectKind(kind); };
         exportButton.Click += Start;
-        cancelButton.Click += (_, _) => { if (busy) { cancellation.Cancel(); status.Text = L.T("S45536A67E4AD"); } else Hide(); };
+        cancelButton.Click += (_, _) => {
+            if (busy) { cancellation.Cancel(); status.Text = L.T("S45536A67E4AD"); }
+            else if (complete && !string.IsNullOrEmpty(lastExportPath)) { RevealExportedPath(lastExportPath); }
+            else Hide();
+        };
         Closing += (_, args) => { if (busy) args.Cancel = true; };
         Closed += (_, _) => cancellation.Dispose();
     }
@@ -102,16 +107,42 @@ internal sealed class EditorExportDialog : ContentDialog
         if (busy || kind == 0 && codec.SelectedItem is null) return; busy = true;
         exportButton.IsEnabled = false; cancelButton.Content = L.T("S7EEFAAFF791F"); choices.IsHitTestVisible = specifications.IsHitTestVisible = false;
         cancellation.Dispose(); cancellation = new(); progress.Visibility = Visibility.Visible; progress.IsIndeterminate = true; status.Text = L.T("SFC51B55D05FC");
+        var exportWatch = System.Diagnostics.Stopwatch.StartNew();
         try {
             var path = await export(kind, resolution.SelectedIndex, fps.SelectedIndex, VideoCodecSelector.Selected(codec), new Progress<MediaStatus>(s => {
                 progress.IsIndeterminate = s.Total == 0; if (s.Total > 0) progress.Value = s.Completed * 100.0 / s.Total;
-                status.Text = (s.Stage switch { 1 => L.T("SAD47E6D075ED"), 2 => L.T("SE66883FFD17E"), 3 => L.T("SB72E9FB4DA0B"), 4 => L.T("SF28461BB49C8"), _ => L.T("SC581D2AC36FC") }) + (s.Total > 0 ? $" · {s.Completed * 100.0 / s.Total:0}%" : "…");
+                string stageText = s.Stage switch { 1 => L.T("SAD47E6D075ED"), 2 => L.T("SE66883FFD17E"), 3 => L.T("SB72E9FB4DA0B"), 4 => L.T("SF28461BB49C8"), _ => L.T("SC581D2AC36FC") };
+                status.Text = stageText + FormatProgressSuffix(s, exportWatch.Elapsed);
             }), cancellation.Token);
-            if (path is not null) { complete = true; status.Text = L.T("S1640C24FF7BA") + path; exportButton.Content = L.T("SC0B3FBFF51CC"); cancelButton.Content = L.T("S3FD47EDCE45B"); progress.IsIndeterminate = false; progress.Value = 100; }
+            if (path is not null) { complete = true; lastExportPath = path; status.Text = L.T("S1640C24FF7BA") + path; exportButton.Content = L.T("SC0B3FBFF51CC"); cancelButton.Content = L.T("S9E3FC11213B9"); progress.IsIndeterminate = false; progress.Value = 100; }
             else { status.Text = L.T("SD712F5B82DED"); progress.Visibility = Visibility.Collapsed; }
         } catch (OperationCanceledException) { status.Text = L.T("SE8A19ECD170F"); progress.Visibility = Visibility.Collapsed; }
         catch (Exception error) { status.Text = L.T("SE4EE3C313CD0") + error.Message; progress.Visibility = Visibility.Collapsed; }
         finally { busy = false; choices.IsHitTestVisible = specifications.IsHitTestVisible = !complete; exportButton.IsEnabled = complete || kind != 0 || codec.SelectedItem is not null; if (!complete) cancelButton.Content = L.T("S2CD0F3BE8738"); }
+    }
+    private static string FormatDuration(TimeSpan duration) => duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"mm\:ss");
+    private static string FormatProgressSuffix(MediaStatus s, TimeSpan elapsed)
+    {
+        if (s.Total == 0)
+            return elapsed.TotalSeconds >= 1 ? (AppText.Language == "en" ? $"… ({FormatDuration(elapsed)})" : $"…（已用 {FormatDuration(elapsed)}）") : "…";
+        double pct = s.Completed * 100.0 / s.Total;
+        if (s.Completed > 0 && s.Completed < s.Total && elapsed.TotalSeconds >= 1) {
+            var remaining = TimeSpan.FromSeconds(elapsed.TotalSeconds * (s.Total - s.Completed) / s.Completed);
+            return AppText.Language == "en"
+                ? $" · {pct:0}% · {FormatDuration(elapsed)} elapsed, ~{FormatDuration(remaining)} left"
+                : $" · {pct:0}% · 已用 {FormatDuration(elapsed)}，预计剩余 {FormatDuration(remaining)}";
+        }
+        return AppText.Language == "en"
+            ? $" · {pct:0}% · {FormatDuration(elapsed)} elapsed"
+            : $" · {pct:0}% · 已用 {FormatDuration(elapsed)}";
+    }
+    private void RevealExportedPath(string path)
+    {
+        try {
+            string full = Path.GetFullPath(path);
+            string arguments = Directory.Exists(full) ? $"\"{full}\"" : $"/select,\"{full}\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", arguments) { UseShellExecute = true });
+        } catch (Exception error) { status.Text = L.T("SE4EE3C313CD0") + error.Message; }
     }
     internal async Task ValidateCodecChoicesAsync(string directory)
     {

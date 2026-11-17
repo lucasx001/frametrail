@@ -83,6 +83,7 @@ public sealed partial class EditorWindow
         InspectorScope.Text = tab == 6 && SelectedClip is { } c ? L.T("S85F334543581", editor.Timeline.Clips.IndexOf(c) + 1) : tab == 4 ? L.T("S9B436B8DF494") : L.T("SC78DFFE1E8AB");
         InspectorScroll.ChangeView(null, 0, null, true); DrawInspectorTabs();
         timeline.SelectVisual(tab==2?selectedEffect:null);
+        QueueCanvasGeometry();
     }
     private void SetFramePage(bool layout)
     {

@@ -71,6 +71,17 @@ internal sealed class EditorCanvasOverlay : Canvas
         if(active is null||plane is null)return;
         var at=plane.Inverse(x,y);
         var rect=CanvasPlane.Drag(active.Rect,at.X-origin.X,at.Y-origin.Y,corner,active.Rotation,active.Aspect);
+        if(active.Kind=="camera"&&corner>=0) {
+            double ratio=active.Rect.Height/Math.Max(0.01,active.Rect.Width);
+            double wFromH=rect.Height/ratio;
+            double candidateW=Math.Abs(rect.Width-active.Rect.Width)>=Math.Abs(wFromH-active.Rect.Width)?rect.Width:wFromH;
+            double maxW=Math.Min(0.60,0.95/ratio);
+            double w=Math.Clamp(candidateW,0.05,maxW);
+            double h=w*ratio;
+            double rx=corner is 0 or 3?active.Rect.X+active.Rect.Width-w:active.Rect.X;
+            double ry=corner is 0 or 1?active.Rect.Y+active.Rect.Height-h:active.Rect.Y;
+            rect=new NormalizedRect{X=Math.Clamp(rx,0,1-w),Y=Math.Clamp(ry,0,1-h),Width=w,Height=h};
+        }
         Changed?.Invoke(active.Id,rect);
         // The quad is projected from the same native attachment homography.
         Draw(plane.Quad(rect,active.Rotation,active.Aspect));

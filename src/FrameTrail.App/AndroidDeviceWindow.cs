@@ -34,14 +34,47 @@ internal sealed class AndroidDeviceWindow : Window
         root.Background = RecorderTheme.Brush(root, "EditorPanel");
         for (int i = 0; i < 6; i++) root.RowDefinitions.Add(new RowDefinition { Height = i == 3 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
         void Add(FrameworkElement child, int row) { Grid.SetRow(child, row); root.Children.Add(child); }
-        Add(new TextBlock { Text = L.T("SA4B055F32AE0"), FontSize = 24 }, 0);
+        var bodyFont = (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["RecorderFont"];
+        var semiboldFont = (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["RecorderSemiboldFont"];
+        var tileStyle = (Style)Application.Current.Resources["EditorTile"];
+        var title = new TextBlock { Text = L.T("SA4B055F32AE0"), FontSize = 24, FontFamily = semiboldFont };
+        Add(title, 0);
+        picker.Style = (Style)Application.Current.Resources["EditorCombo"];
         Add(picker, 1);
+        var helpText = new TextBlock { Text = L.T("S049D8ADC88E1"), TextWrapping = TextWrapping.Wrap, FontFamily = bodyFont, FontSize = 12 };
+        var guide = new HyperlinkButton { Content = L.T("S8ADFB4BA8CE3"), NavigateUri = new Uri("https://developer.android.com/studio/run/oem-usb"), FontFamily = bodyFont, FontSize = 12, Padding = new Thickness(0) };
         var help = new StackPanel { Spacing = 6 };
-        help.Children.Add(new TextBlock { Text = L.T("S049D8ADC88E1"), TextWrapping = TextWrapping.Wrap, FontSize = 12 });
-        var guide = new HyperlinkButton { Content = L.T("S8ADFB4BA8CE3"), NavigateUri = new Uri("https://developer.android.com/studio/run/oem-usb"), Padding = new Thickness(0) }; help.Children.Add(guide); Add(help, 2);
+        help.Children.Add(helpText); help.Children.Add(guide);
+        Add(new Border { Style = tileStyle, Padding = new Thickness(14, 12, 14, 12), Child = help }, 2);
         var previewContent = new Grid(); previewContent.Children.Add(preview); previewContent.Children.Add(placeholder); previewHost.Child = previewContent; Add(previewHost, 3);
-        var options = new StackPanel { Spacing = 4 }; options.Children.Add(phoneAudio); options.Children.Add(fallback); options.Children.Add(status); Add(options, 4);
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; foreach (var button in new[] { refresh, connect, record, cancel }) { actions.Children.Add(button); button.CornerRadius = new CornerRadius(16); } Add(actions, 5);
+        phoneAudio.FontFamily = bodyFont; phoneAudio.FontSize = 13;
+        fallback.FontFamily = bodyFont; fallback.FontSize = 13;
+        status.FontFamily = bodyFont;
+        var options = new StackPanel { Spacing = 4 }; options.Children.Add(phoneAudio); options.Children.Add(fallback); options.Children.Add(status);
+        Add(new Border { Style = tileStyle, Padding = new Thickness(14, 10, 14, 10), Child = options }, 4);
+        var secondaryButtonStyle = (Style)Application.Current.Resources["EditorButton"];
+        foreach (var button in new[] { refresh, connect, cancel })
+        {
+            button.Style = secondaryButtonStyle;
+            button.Padding = new Thickness(14, 0, 14, 0);
+            button.Height = 32;
+            button.CornerRadius = new CornerRadius(16);
+        }
+        record.Style = (Style)Application.Current.Resources["EditorPrimaryButton"];
+        record.Height = 32;
+        record.CornerRadius = new CornerRadius(16);
+        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (var button in new[] { refresh, connect, record, cancel }) actions.Children.Add(button);
+        Add(actions, 5);
+        void ApplyTheme()
+        {
+            title.Foreground = RecorderTheme.Brush(root, "EditorInk");
+            helpText.Foreground = status.Foreground = RecorderTheme.Brush(root, "EditorSecondary");
+            picker.Background = RecorderTheme.Brush(root, "EditorWell");
+            foreach (var button in new[] { refresh, connect, cancel }) button.Background = RecorderTheme.Brush(root, "EditorWell");
+        }
+        ApplyTheme();
+        root.ActualThemeChanged += (_, _) => ApplyTheme();
         AutomationProperties.SetName(picker, L.T("SF38CB9F9F0A8")); AutomationProperties.SetName(preview, L.T("SC6D12BCD325C")); AutomationProperties.SetName(status, L.T("S3185B4EE849D"));
         Content = root; var scale = RecorderWindowChrome.Scale(this);
         var workArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Primary).WorkArea;

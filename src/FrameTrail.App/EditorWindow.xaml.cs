@@ -68,6 +68,8 @@ public sealed partial class EditorWindow : Window
         editor.Changed += (_, _) => DispatcherQueue.TryEnqueue(UpdateState);
         timeline.Seek += async ticks => { if (!working && !editor.IsExporting) await SafeAsync(() => SeekAsync(ticks)); };
         timeline.SelectClip += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); RefreshTimeline(); }); };
+        timeline.ClipDoubleClicked += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); ShowInspector(6); RefreshTimeline(); }); };
+        timeline.ZoomChanged += value => { if (Math.Abs(TimelineZoom.Value - value) > 0.0001) TimelineZoom.Value = Math.Clamp(value, TimelineZoom.Minimum, TimelineZoom.Maximum); };
         timeline.BeginEdit += () => { if (working || editor.IsExporting) return; Pause(); editController.Begin(EditorEditOwner.Timeline); };
         timeline.PreviewEdit += command => {
             if (working || editor.IsExporting) return;
@@ -154,7 +156,7 @@ public sealed partial class EditorWindow : Window
         details.Children.Add(new TextBlock { Text = L.T("S565118DEFB85", Path.GetFileNameWithoutExtension(editor.DirectoryPath)), TextWrapping = TextWrapping.Wrap });
         details.Children.Add(new TextBlock { Text = editor.DirectoryPath, TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.65 });
         details.Children.Add(new TextBlock { Text = L.T("S15BB8FA512EA"), TextWrapping = TextWrapping.Wrap, FontSize = 12 });
-        deleteConfirmation = new ContentDialog { Title = L.T("S761F0E313D82"), Content = details, PrimaryButtonText = L.T("SA3EA3C17B401"), CloseButtonText = L.T("S2CD0F3BE8738"), DefaultButton = ContentDialogButton.Close, XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
+        deleteConfirmation = new ContentDialog { Title = L.T("S761F0E313D82"), Content = details, PrimaryButtonText = L.T("SA3EA3C17B401"), CloseButtonText = L.T("S2CD0F3BE8738"), DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = DangerButtonStyle(), CloseButtonStyle = (Style)Application.Current.Resources["EditorButton"], XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
         ContentDialogResult result;
         showingDeleteConfirmation = true; UpdateState();
         try { result = await deleteConfirmation.ShowAsync(); }
@@ -169,6 +171,16 @@ public sealed partial class EditorWindow : Window
         finally { switchingProjects = false; if (!allowClose) UpdateState(); }
     }
 
+    private static Style DangerButtonStyle()
+    {
+        if (Application.Current.Resources.TryGetValue("EditorDangerButton", out var existing) && existing is Style style) return style;
+        var danger = new Style(typeof(Button)) { BasedOn = (Style)Application.Current.Resources["EditorButton"] };
+        danger.Setters.Add(new Setter(Control.BackgroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 227, 93, 98))));
+        danger.Setters.Add(new Setter(Control.ForegroundProperty, new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White)));
+        danger.Setters.Add(new Setter(Control.FontFamilyProperty, (Microsoft.UI.Xaml.Media.FontFamily)Application.Current.Resources["RecorderSemiboldFont"]));
+        danger.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14, 0, 14, 0)));
+        return danger;
+    }
     private ResolvedClip? SelectedClip => editor.Timeline.Clips.FirstOrDefault(c => c.Id == selected);
     private async Task SafeAsync(Func<Task> action)
     {
@@ -225,7 +237,7 @@ public sealed partial class EditorWindow : Window
         ExportLabel.Text = editor.IsExporting ? L.T("S7EEFAAFF791F") : L.T("S76420433F22D");
         ProjectMenuButton.IsEnabled = !working && !closing && !switchingProjects && !showingExport && !showingDeleteConfirmation && !editor.IsExporting;
         SwitchProjectMenuItem.IsEnabled = openProject is not null && ProjectMenuButton.IsEnabled;
-        DeleteProjectButton.IsEnabled = deleteProject is not null && ProjectMenuButton.IsEnabled && !projectTransition;
+        DeleteProjectButton.IsEnabled = DeleteProjectMenuItem.IsEnabled = deleteProject is not null && ProjectMenuButton.IsEnabled && !projectTransition;
         if (editor.SaveError is not null) ShowNotice(L.T("S555A663BC512"), editor.SaveError + L.T("SF697646FD2A3"), InfoBarSeverity.Error);
     }
     private void LoadInspector()
@@ -320,6 +332,26 @@ public sealed partial class EditorWindow : Window
     private async void Restore_Click(object sender, RoutedEventArgs e) => await EditAsync(new { op = "restore", idPrefix = "original-" + Guid.NewGuid().ToString("N") + "-" });
     private async void MoveEarlier_Click(object sender, RoutedEventArgs e) { if (SelectedClip is ResolvedClip c) await EditAsync(new { op = "move", segmentId = c.Id, index = Math.Max(0, editor.Timeline.Clips.IndexOf(c) - 1) }); }
     private async void MoveLater_Click(object sender, RoutedEventArgs e) { if (SelectedClip is ResolvedClip c) await EditAsync(new { op = "move", segmentId = c.Id, index = Math.Min(editor.Timeline.Clips.Count - 1, editor.Timeline.Clips.IndexOf(c) + 1) }); }
+    private bool trimInputCommitQueued;
+    private bool IsTrimInputFocused() => Root.XamlRoot is not null &&
+        InputAncestor<NumberBox>(FocusManager.GetFocusedElement(Root.XamlRoot) as DependencyObject) is { } number &&
+        (ReferenceEquals(number, TrimStart) || ReferenceEquals(number, TrimEnd));
+    private void TrimInput_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (trimInputCommitQueued || loadingInspector || !ready || closing) return;
+        trimInputCommitQueued = true;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, async () => {
+            trimInputCommitQueued = false;
+            if (!ready || loadingInspector || working || closing || editor.IsExporting || IsTrimInputFocused()) return;
+            if (SelectedClip is not ResolvedClip clip) return;
+            if (!double.IsFinite(TrimStart.Value) || !double.IsFinite(TrimEnd.Value)) return;
+            long startTicks = Math.Max(0, (long)Math.Round(TrimStart.Value * 10_000_000));
+            long endTicks = Math.Max(0, (long)Math.Round(TrimEnd.Value * 10_000_000));
+            if (endTicks <= startTicks) return;
+            if (startTicks == clip.SourceStart && endTicks == clip.SourceStart + clip.SourceDuration) return;
+            await SafeAsync(() => EditAsync(new { op = "trim", segmentId = clip.Id, sourceStart = startTicks, sourceEnd = endTicks }));
+        });
+    }
     private async void ApplyTrim_Click(object sender, RoutedEventArgs e) => await SafeAsync(async () => { if (selected is not null) await EditAsync(new { op = "trim", segmentId = selected, sourceStart = checked((long)(TrimStart.Value * 10_000_000)), sourceEnd = checked((long)(TrimEnd.Value * 10_000_000)) }); });
     private async void ApplyRate_Click(object sender, RoutedEventArgs e)
     {
