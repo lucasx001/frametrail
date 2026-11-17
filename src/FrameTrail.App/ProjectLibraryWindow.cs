@@ -194,6 +194,7 @@ internal sealed partial class ProjectLibraryWindow : Window
         var details = new StackPanel { Spacing = 12 };
         details.Children.Add(new TextBlock { Text = L.T("S858392592478"), TextWrapping = TextWrapping.Wrap });
         details.Children.Add(new TextBlock { Text = entry.Directory, TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = .65 });
+        var cancelStyle = CancelButtonStyle();
         confirmation = new ContentDialog {
             Title = L.T("S591F8EBAE3D1", entry.Name),
             Content = details,
@@ -201,10 +202,11 @@ internal sealed partial class ProjectLibraryWindow : Window
             CloseButtonText = L.T("S2CD0F3BE8738"),
             DefaultButton = ContentDialogButton.Close,
             PrimaryButtonStyle = DeleteButtonStyle(),
-            CloseButtonStyle = (Style)Application.Current.Resources["EditorButton"],
+            CloseButtonStyle = cancelStyle,
             XamlRoot = root.XamlRoot,
             RequestedTheme = root.RequestedTheme
         };
+        ConfigureDialogButtons(confirmation, cancelStyle);
         confirming = true; ContentDialogResult result;
         try { result = await confirmation.ShowAsync(); }
         finally { confirming = false; confirmation = null; }
@@ -231,6 +233,49 @@ internal sealed partial class ProjectLibraryWindow : Window
         style.Setters.Add(new Setter(Control.FontFamilyProperty, (FontFamily)Application.Current.Resources["RecorderSemiboldFont"]));
         style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14, 0, 14, 0)));
         return style;
+    }
+    private static Style CancelButtonStyle()
+    {
+        if (Application.Current.Resources.TryGetValue("EditorDialogCancelButton", out var existing) && existing is Style cancel)
+            return cancel;
+        return (Style)Application.Current.Resources["EditorButton"];
+    }
+    internal static void ConfigureDialogButtons(ContentDialog dialog, Style cancelStyle)
+    {
+        dialog.Resources["DefaultButtonStyle"] = cancelStyle;
+        dialog.Opened += (sender, _) => { if (sender is ContentDialog d) ApplyDialogButtonChrome(d); };
+        dialog.LayoutUpdated += (_, _) => ApplyDialogButtonChrome(dialog);
+    }
+    internal static void ApplyDialogButtonChrome(ContentDialog dialog)
+    {
+        var editorButtonStyle = (Style)Application.Current.Resources["EditorButton"];
+        var template = editorButtonStyle.Setters.OfType<Setter>().FirstOrDefault(s => s.Property == Control.TemplateProperty)?.Value as ControlTemplate;
+        var font = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"];
+        void Walk(DependencyObject parent)
+        {
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                if (child is Button button && button.Name is "PrimaryButton" or "SecondaryButton" or "CloseButton")
+                {
+                    if (template is not null && !ReferenceEquals(button.Template, template)) button.Template = template;
+                    if (button.CornerRadius != new CornerRadius(15)) button.CornerRadius = new CornerRadius(15);
+                    if (Math.Abs(button.Height - 30) > 0.01) button.Height = 30;
+                    if (Math.Abs(button.MinHeight - 30) > 0.01) button.MinHeight = 30;
+                    button.Padding = new Thickness(14, 0, 14, 0);
+                    button.BorderThickness = new Thickness(0);
+                    button.FontFamily = font;
+                    button.FontSize = 12;
+                    if (button.Name == "CloseButton")
+                    {
+                        button.Background = RecorderTheme.Brush(dialog, "EditorControlTrack");
+                        button.Foreground = RecorderTheme.Brush(dialog, "EditorInk");
+                    }
+                }
+                Walk(child);
+            }
+        }
+        Walk(dialog);
     }
     private async Task BrowseAsync()
     {

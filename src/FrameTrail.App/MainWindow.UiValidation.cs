@@ -115,6 +115,18 @@ public sealed partial class MainWindow
                 await SaveUiFrameAsync(framing.Surface, Path.Combine(directory, "region-selector.png"));
                 checks.Add("Region framing returns the selected 640x360 physical-pixel rectangle and disposes its native overlays.");
             }
+            var countdownCheck = new CountdownOverlayWindow(false, () => { }, source);
+            try
+            {
+                countdownCheck.Activate();
+                countdownCheck.SetSeconds(3);
+                await Task.Delay(120);
+                if (countdownCheck.CurrentText != "3" || Math.Abs(countdownCheck.Surface.ActualWidth - 160) > 1 || Math.Abs(countdownCheck.Surface.ActualHeight - 160) > 1)
+                    throw new InvalidOperationException("Floating countdown overlay did not render its 160x160 circular surface.");
+                await SaveUiFrameAsync(countdownCheck.Surface, Path.Combine(directory, "countdown-3.png"));
+                checks.Add("Floating 160x160 circular countdown overlay renders centered large numeral.");
+            }
+            finally { countdownCheck.Close(); }
             await ExecuteAsync(() => BeginRecordingAsync(source, new CaptureRegion(0, 0, Math.Min(640, source.Width) & ~1, Math.Min(360, source.Height) & ~1)));
             if (coordinator.State != RecordingWorkspaceState.Recording) throw new InvalidOperationException("Real capture did not enter Recording.");
             await Task.Delay(1500);

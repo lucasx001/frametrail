@@ -24,6 +24,7 @@ public sealed partial class MainWindow : Window
     private EditorWindow? editorWindow;
     private EditorSettingsWindow? settingsWindow;
     private AndroidDeviceWindow? androidWindow;
+    private CountdownOverlayWindow? countdownOverlay;
     private CaptureSelectionController? selection;
     private IReadOnlyList<CaptureSource> sources = Array.Empty<CaptureSource>();
     private IReadOnlyList<AudioDevice> microphones = Array.Empty<AudioDevice>(), outputs = Array.Empty<AudioDevice>();
@@ -486,10 +487,11 @@ public sealed partial class MainWindow : Window
         {
             selection = new CaptureSelectionController(this, sourceMode, sources, async (source, region) =>
             {
-                selection = null; AppWindow.Show(); Activate();
+                selection = null;
                 await ExecuteAsync(async () =>
                 {
-                    if (CountdownEnabled.IsChecked == true && !await RunCountdownAsync()) return;
+                    if (CountdownEnabled.IsChecked == true && !await RunCountdownAsync(source)) return;
+                    if (!closing) { AppWindow.Show(); Activate(); }
                     await BeginRecordingAsync(source, region);
                 });
             }, () => { selection = null; if (!closing) { AppWindow.Show(); Activate(); } });
@@ -502,23 +504,21 @@ public sealed partial class MainWindow : Window
         if (countdownCancellation is { IsCancellationRequested: false } cts) { cts.Cancel(); return true; }
         return false;
     }
-    private async Task<bool> RunCountdownAsync()
+    private async Task<bool> RunCountdownAsync(CaptureSource? targetSource = null)
     {
         using var cts = new CancellationTokenSource();
         countdownCancellation = cts;
         surface = "countdown";
         HideFlyouts();
-        SetupPanel.Visibility = Visibility.Collapsed;
-        RecordingPanel.Visibility = Visibility.Collapsed;
-        ProgressPanel.Visibility = Visibility.Visible;
-        TransitionProgress.IsActive = true;
-        RecorderRoot.CornerRadius = new CornerRadius(24);
-        RecorderWindowChrome.Resize(this, 240, 48, 24);
+        AppWindow.Hide();
+        var overlay = new CountdownOverlayWindow(ExcludeControl.IsChecked == true, () => CancelCountdown(), targetSource);
+        countdownOverlay = overlay;
+        overlay.Activate();
         try
         {
             for (int seconds = 3; seconds >= 1; seconds--)
             {
-                RecordingStatus.Text = $"{seconds}…";
+                overlay.SetSeconds(seconds);
                 await Task.Delay(1000, cts.Token);
             }
             return !closing;
@@ -534,11 +534,15 @@ public sealed partial class MainWindow : Window
                 surface = "setup";
                 RecorderRoot.CornerRadius = new CornerRadius(28);
                 RecorderWindowChrome.Resize(this, SetupWidth, 56, 28);
+                AppWindow.Show();
+                Activate();
             }
             return false;
         }
         finally
         {
+            if (ReferenceEquals(countdownOverlay, overlay)) countdownOverlay = null;
+            try { overlay.Close(); } catch { }
             if (ReferenceEquals(countdownCancellation, cts)) countdownCancellation = null;
         }
     }
@@ -692,7 +696,7 @@ public sealed partial class MainWindow : Window
             if (workspace is null) throw new InvalidOperationException(L.T("S8772BA412557"));
             PresentEditor(workspace);
         });
-        completion.Closed += (_, _) => { if (!closing) { AppWindow.Show(); } };
+        completion.Closed += (_, _) => { if (!closing && editorWindow is null && projectLibraryWindow is null) { AppWindow.Show(); } };
         completion.Activate(); AppWindow.Hide();
     }
     private void Open_Click(object sender, RoutedEventArgs e) => ShowProjectLibrary();
@@ -726,7 +730,7 @@ public sealed partial class MainWindow : Window
         {
             editorWindow = current;
             if (next is not null) await next.DiscardWindowAsync();
-            if (current is not null) current.Activate(); else { AppWindow.Show(); Activate(); }
+            if (current is not null) current.Activate(); else if (projectLibraryWindow is null) { AppWindow.Show(); Activate(); }
             throw;
         }
         finally { if (candidate is not null) await candidate.DisposeAsync(); }
@@ -756,15 +760,15 @@ public sealed partial class MainWindow : Window
         try { await Task.Run(() => ProjectDeletion.Recycle(path)); }
         catch (Exception error) {
             if (active && Directory.Exists(path)) {
-                try { await OpenExistingProjectAsync(path); } catch { AppWindow.Show(); Activate(); }
+                try { await OpenExistingProjectAsync(path); } catch { if (projectLibraryWindow is null) { AppWindow.Show(); Activate(); } }
             }
             if (editorWindow is not null) editorWindow.ReportProjectError(L.T("S41BB2FD4B435"), error.Message);
-            else { AppWindow.Show(); Activate(); ShowFeedback(L.T("S41BB2FD4B435"), error.Message); }
+            else if (projectLibraryWindow is null) { AppWindow.Show(); Activate(); ShowFeedback(L.T("S41BB2FD4B435"), error.Message); }
             throw;
         }
         var recoverable = await ProjectWorkspace.ScanRecoveryAsync(projects);
         RecoveryPicker.ItemsSource = recoverable; RecoveryPicker.SelectedIndex = recoverable.Count > 0 ? 0 : -1; RecoverButton.IsEnabled = recoverable.Count > 0;
-        if (editorWindow is null) { AppWindow.Show(); Activate(); ShowFeedback(L.T("SDD35672E3B9D"), L.T("SF647773138F8"), false); }
+        if (editorWindow is null && projectLibraryWindow is null) { AppWindow.Show(); Activate(); ShowFeedback(L.T("SDD35672E3B9D"), L.T("SF647773138F8"), false); }
     }
     private async void Recover_Click(object sender, RoutedEventArgs e)
     {
@@ -800,7 +804,7 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(editorWindow, window)) return;
             editorWindow = null;
             if (validation is not null) { if (opened is not null) await opened.DisposeAsync(); allowClose = true; closing = true; Close(); Application.Current.Exit(); }
-            else if (!closing) { await InitializeRecorderAsync(); AppWindow.Show(); Activate(); }
+            else if (!closing) { await InitializeRecorderAsync(); if (projectLibraryWindow is null && editorWindow is null && !closing) { AppWindow.Show(); Activate(); } }
         };
         return window;
     }

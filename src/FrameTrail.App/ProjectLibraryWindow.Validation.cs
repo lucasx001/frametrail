@@ -71,14 +71,20 @@ internal sealed partial class ProjectLibraryWindow
             while (confirmation is null && DateTime.UtcNow < deadline) await Task.Delay(20);
             if (confirmation is not { } dialog || dialog.DefaultButton != ContentDialogButton.Close) throw new IOException("Project deletion did not default to cancellation.");
             await Task.Delay(150);
+            ApplyDialogButtonChrome(dialog);
+            dialog.UpdateLayout();
             if (screenshot is not null) await MainWindow.SaveUiFrameAsync(dialog, screenshot);
-            Button? Find(DependencyObject parent)
+            Button? FindByLabel(DependencyObject parent, string expected)
             {
-                if (parent is Button button && button.Content is string label && label == (confirm ? "移到回收站" : "取消")) return button;
-                for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++) if (Find(VisualTreeHelper.GetChild(parent, i)) is { } found) return found;
+                if (parent is Button button && button.Content is string label && label == expected) return button;
+                for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++) if (FindByLabel(VisualTreeHelper.GetChild(parent, i), expected) is { } found) return found;
                 return null;
             }
-            Invoke(Find(dialog) ?? throw new IOException("Confirmation action was not found."));
+            var confirmButton = FindByLabel(dialog, "移到回收站") ?? throw new IOException("Primary confirmation button not found.");
+            var cancelButton = FindByLabel(dialog, "取消") ?? throw new IOException("Cancel confirmation button not found.");
+            if (confirmButton.CornerRadius != cancelButton.CornerRadius || Math.Abs(confirmButton.ActualHeight - cancelButton.ActualHeight) > 0.5)
+                throw new IOException($"Delete confirmation button geometry mismatch: primary={confirmButton.CornerRadius}/{confirmButton.ActualHeight}, close={cancelButton.CornerRadius}/{cancelButton.ActualHeight}.");
+            Invoke(confirm ? confirmButton : cancelButton);
             deadline = DateTime.UtcNow.AddSeconds(15);
             do { await Task.Delay(30); } while ((confirming || working) && DateTime.UtcNow < deadline);
             if (confirming || working) throw new IOException("Deletion did not finish.");

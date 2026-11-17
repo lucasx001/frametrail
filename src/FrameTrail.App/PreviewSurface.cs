@@ -14,7 +14,7 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
 {
     private MediaSession? media;
     private readonly SemaphoreSlim renderGate = new(1);
-    private ulong generation;
+    private ulong generation, projectGeneration;
     private bool disposed;
     internal MediaSession? Session => media;
     // Keep editor detail independent of the window size, including before fullscreen.
@@ -77,12 +77,19 @@ internal sealed class PreviewSurface : SwapChainPanel, IAsyncDisposable
     internal async Task UpdateProjectAsync(ProjectSnapshot snapshot, long ticks)
     {
         var current = media; if (current is null || disposed) throw new InvalidOperationException("Preview is unavailable.");
+        var projectRequest = ++projectGeneration;
         InvalidateRequests(); var request = generation;
         await renderGate.WaitAsync();
         try {
-            if (ReferenceEquals(media, current) && request == generation)
-                await Task.Run(() => { current.UpdateProject(snapshot, request); current.Render(ticks, request); });
-        } finally { renderGate.Release(); }
+            if (ReferenceEquals(media, current) && projectRequest == projectGeneration) {
+                var activeGeneration = generation;
+                await Task.Run(() => current.UpdateProject(snapshot, activeGeneration));
+                if (ReferenceEquals(media, current) && request == generation)
+                    await Task.Run(() => current.Render(ticks, request));
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally { renderGate.Release(); }
     }
     internal async Task ResizeAsync()
     {

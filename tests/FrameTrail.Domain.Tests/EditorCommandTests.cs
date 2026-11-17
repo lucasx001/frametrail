@@ -24,6 +24,25 @@ public sealed class EditorCommandTests
         Assert.Equal(80_000_000, result.Segments[0].SourceStart.Ticks); Assert.Equal(20_000_000, result.Segments[0].SourceDuration.Ticks);
         Assert.Equal(105_000_000, EngineSession.ResolveTimeline(result).Duration);
     }
+    [Fact] public void TrimOutputShrinksAndClampsToSourceBounds()
+    {
+        var single = Project() with {
+            Segments = new[] { new RecordingSegment { Id = "clip-1", SourceStart = MediaTime.FromTicks(0), SourceDuration = MediaTime.FromTicks(100_000_000), Rate = new Rational() } },
+            Effects = Array.Empty<SourceEffect>(),
+            Markers = Array.Empty<RecordingMarker>()
+        };
+        var beyondEnd = EngineSession.Edit(single, new { op = "trimOutput", segmentId = "clip-1", outputTicks = 150_000_000L, edge = "end" });
+        Assert.Equal(100_000_000, beyondEnd.Segments[0].SourceDuration.Ticks);
+
+        var halved = EngineSession.Edit(single, new { op = "trimOutput", segmentId = "clip-1", outputTicks = 50_000_000L, edge = "end" });
+        Assert.Equal(50_000_000, halved.Segments[0].SourceDuration.Ticks);
+
+        var extended = EngineSession.Edit(halved, new { op = "trimOutput", segmentId = "clip-1", outputTicks = 75_000_000L, edge = "end" });
+        Assert.Equal(75_000_000, extended.Segments[0].SourceDuration.Ticks);
+
+        var pastStart = EngineSession.Edit(single, new { op = "trimOutput", segmentId = "clip-1", outputTicks = -50_000_000L, edge = "end" });
+        Assert.True(pastStart.Segments[0].SourceDuration.Ticks > 0);
+    }
     [Fact] public void BatchIsAtomicAndRejectsInvalidResultWithoutChangingInput()
     {
         var p = Project(); var json = ProjectJson.Serialize(p);

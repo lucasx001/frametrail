@@ -8,6 +8,14 @@ using Windows.System;
 
 namespace FrameTrail.App;
 
+public sealed class NoWheelSlider : Slider
+{
+    protected override void OnPointerWheelChanged(PointerRoutedEventArgs e)
+    {
+        // Do not adjust slider values on mouse wheel hover.
+    }
+}
+
 // shadcn/ui's track, circular thumb and focus ring, retaining Slider's
 // RangeValue accessibility contract and one save at the end of a pointer drag.
 public sealed class EditorBarSlider : Slider
@@ -163,14 +171,7 @@ public sealed class EditorBarSlider : Slider
     protected override void OnPointerCanceled(PointerRoutedEventArgs e) { if (held) { FinishDrag(false); ReleasePointerCapture(e.Pointer); e.Handled = true; } }
     protected override void OnPointerWheelChanged(PointerRoutedEventArgs e)
     {
-        if (!IsEnabled) return;
-        int sign = Math.Sign(e.GetCurrentPoint(this).Properties.MouseWheelDelta);
-        if (sign == 0) return;
-        double step = Shift ? StepFrequency * 0.2 : StepFrequency;
-        userInteracting = true;
-        try { Value = Snap(Value + sign * step, step); }
-        finally { userInteracting = false; }
-        e.Handled = true;
+        // Do not adjust slider values on mouse wheel hover; let parent ScrollViewers scroll normally.
     }
     protected override void OnDoubleTapped(DoubleTappedRoutedEventArgs e)
     {

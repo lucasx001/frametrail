@@ -78,14 +78,14 @@ public sealed partial class EditorWindow
         CanvasScroll.CornerRadius = new CornerRadius(fullscreen ? 0 : 10);
         Grid.SetRow(PreviewTransport, fullscreen ? 0 : 1);
         PreviewTransport.VerticalAlignment = fullscreen ? VerticalAlignment.Bottom : VerticalAlignment.Center;
-        PreviewTransport.Margin = fullscreen ? new Thickness(0, 0, 0, 20) : new Thickness(0);
+        PreviewTransport.Margin = fullscreen ? new Thickness(24, 0, 24, 20) : new Thickness(20, 12, 20, 14);
         PreviewEditTools.Visibility = fullscreen ? Visibility.Collapsed : Visibility.Visible;
         TitleBand.Visibility = EditorBody.Visibility = TimelinePanel.Visibility = fullscreen ? Visibility.Collapsed : Visibility.Visible;
         FullscreenHost.Visibility = fullscreen ? Visibility.Visible : Visibility.Collapsed;
         FullscreenGlyph.Kind = fullscreen ? "ExitFullscreen" : "Fullscreen";
         AutomationProperties.SetName(FullscreenButton, fullscreen ? L.T("S0F1505B6AD3F") : L.T("S7C2561288230"));
         FullscreenTip.Content = fullscreen ? L.T("SADBD1679AB0D") : L.T("S4C1DFCF160BC");
-        Root.UpdateLayout(); SizePreview(); Root.UpdateLayout();
+        Root.UpdateLayout(); SizePreview(); UpdateTransportLayout(); Root.UpdateLayout();
         CanvasScroll.ChangeView(fullscreen ? 0 : previewScrollX, fullscreen ? 0 : previewScrollY, null, true);
         FullscreenButton.Focus(FocusState.Programmatic);
         ValidationTrace($"fullscreen {fullscreen}: end playing={playing} position={position} frames={renderedFrames}");

@@ -15,6 +15,11 @@ public sealed partial class EditorWindow
     private void InitializeBrowsing()
     {
         timeline.Hover += ticks => _ = SafeAsync(() => HoverAsync(ticks));
+        PreviewProgressScrubber.SeekRequested += ticks => _ = SafeAsync(() => SeekAsync(ticks));
+        PreviewProgressScrubber.ScrubHover += ticks => {
+            if (ticks is long t) timeline.ShowHoverIndicator(t);
+            else timeline.HideHoverIndicator();
+        };
         AutomationProperties.SetName(timeline, L.T("SF1241A97B082"));
         AutomationProperties.SetLiveSetting(timeline, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
         AutomationProperties.SetHelpText(timeline, L.T("SDC745D4D8F00"));
@@ -30,7 +35,7 @@ public sealed partial class EditorWindow
             hoverOrigin = null; preview.InvalidateRequests();
             return BrowseRequests.Request(new(origin.Position, false, origin.Playing));
         }
-        if (!CanBrowse) return Task.CompletedTask;
+        if (!CanBrowse || playing) return Task.CompletedTask;
         if (hoverOrigin is null) { hoverOrigin = (position, playing); Pause(false); canvasOverlay.SetItems([]); }
         preview.InvalidateRequests();
         return BrowseRequests.Request(new(Math.Clamp(ticks.Value, 0, Math.Max(0, editor.Timeline.Duration-1)), true, false));
@@ -45,7 +50,10 @@ public sealed partial class EditorWindow
         bool resume = hoverOrigin?.Playing ?? (playing || seekResume);
         hoverOrigin = null; Pause(false); seekResume = resume; timeline.HideHover();
         position=Math.Clamp(ticks,0,Math.Max(0,editor.Timeline.Duration-1));
-        ClockLabel.Text=$"{Format(position)} / {Format(editor.Timeline.Duration)}";timeline.Position(position);
+        ClockLabel.Text=$"{Format(position)} / {Format(editor.Timeline.Duration)}";
+        PreviewProgressScrubber.SetProgress(position, editor.Timeline.Duration);
+        timeline.Position(position);
+        timeline.RevealIfOutside(position);
         preview.InvalidateRequests();
         return BrowseRequests.Request(new(position,false,resume));
     }

@@ -112,7 +112,7 @@ public sealed partial class EditorWindow
     private async Task ToggleCropEditingAsync()
     {
         if(working||closing||editor.IsExporting)return;
-        Pause();canvasOverlay.Finish(true);await canvasCommitWork;await FlushVisualChangesAsync();await FlushPictureInputsAsync();
+        Pause();await transport.StopWork;canvasOverlay.Finish(true);await canvasCommitWork;await FlushVisualChangesAsync();await FlushPictureInputsAsync();
         cropEditing=!cropEditing;ShowInspector(0);SetFramePage(true);
         await preview.UpdateProjectAsync(CanvasDisplay(editor.Snapshot),position);QueueCanvasGeometry();
         if(cropEditing)ShowNotice(L.T("SE7D42554517B"), L.T("S501FEAF4E526"));

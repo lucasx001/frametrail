@@ -31,9 +31,11 @@ public sealed partial class EditorWindow
         var defaultRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 }; defaultRow.Children.Add(defaults); defaultRow.Children.Add(resetDefault);
         var content = new StackPanel { Spacing = 12, MinWidth = 350 }; content.Children.Add(list); content.Children.Add(name); content.Children.Add(buttons); content.Children.Add(defaultRow); content.Children.Add(status);
         AutomationProperties.SetAutomationId(list, "editor.presets.list"); AutomationProperties.SetAutomationId(name, "editor.presets.name"); AutomationProperties.SetAutomationId(save, "editor.presets.save");
+        var cancelStyle = CancelButtonStyle();
         var dialog = new ContentDialog { Title = L.T("S9E605440AD7B"), Content = content, PrimaryButtonText = L.T("SAB3AE12419AF"), CloseButtonText = L.T("S3FD47EDCE45B"), DefaultButton = ContentDialogButton.None, XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
         dialog.PrimaryButtonStyle = (Style)Application.Current.Resources["EditorPrimaryButton"];
-        dialog.CloseButtonStyle = (Style)Application.Current.Resources["EditorButton"];
+        dialog.CloseButtonStyle = cancelStyle;
+        ProjectLibraryWindow.ConfigureDialogButtons(dialog, cancelStyle);
         bool busy = false;
         void Update() { bool selected = list.SelectedItem is VisualPreset; rename.IsEnabled = delete.IsEnabled = defaults.IsEnabled = selected && !busy; save.IsEnabled = resetDefault.IsEnabled = !busy; dialog.IsPrimaryButtonEnabled = selected && !busy; }
         async Task Refresh(string? id = null) {

@@ -21,4 +21,12 @@ public sealed class FilmstripSamplingTests
         Assert.Empty(FilmstripSampling.Visible(0, 100, 80, 1000, 1200));
         Assert.InRange(FilmstripSampling.Visible(0, 100_000_000_000, 1000, 0, 100000).Count, 1, 64);
     }
+    [Fact] public void PrefetchFramesCoversContainerWindowInAscendingOrderWhenZoomedIn()
+    {
+        Assert.Empty(FilmstripSampling.PrefetchFrames(0, 600_000_000, 120, 0, 1200));
+        var frames = FilmstripSampling.PrefetchFrames(0, 600_000_000, 600, 6000, 7200);
+        Assert.InRange(frames.Count, 30, 120);
+        for (int i = 1; i < frames.Count; i++) Assert.True(frames[i] >= frames[i - 1]);
+        Assert.All(frames, t => Assert.InRange(t, 0, 599_999_999));
+    }
 }

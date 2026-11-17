@@ -28,10 +28,25 @@ void apply_command(Project& p, const Json& cmd) {
     } else if (op == "trimOutput") {
         auto it = find(); TimelineMap timeline(p.source_duration, p.segments);
         const auto resolved = std::find_if(timeline.segments().begin(), timeline.segments().end(), [&](auto& s) { return s.id == it->id; });
-        const auto output = std::clamp(cmd.at("outputTicks").get<int64_t>(), resolved->output_start, resolved->output_end());
-        const auto source = resolved->source_start + std::min(resolved->source_duration, multiply_ratio(output - resolved->output_start, resolved->rate.numerator, resolved->rate.denominator));
-        if (cmd.at("edge").get<std::string>() == "start") { it->source_start = canonical_time(source); it->source_duration = canonical_time(resolved->source_end() - source); }
-        else it->source_duration = canonical_time(source - resolved->source_start);
+        const auto full_duration = normalized_ticks(p.source_duration);
+        int64_t min_source_start = 0, max_source_end = full_duration;
+        for (const auto& segment : timeline.segments()) {
+            if (segment.id == resolved->id) continue;
+            if (segment.source_end() <= resolved->source_start) min_source_start = std::max(min_source_start, segment.source_end());
+            if (segment.source_start >= resolved->source_end()) max_source_end = std::min(max_source_end, segment.source_start);
+        }
+        const auto min_source_duration = std::min(resolved->source_duration, std::max<int64_t>(100'000, multiply_ratio(10'000, resolved->rate.numerator, resolved->rate.denominator)));
+        const auto max_output_delta = multiply_ratio(full_duration, resolved->rate.denominator, resolved->rate.numerator) + time_scale;
+        const auto clamped_output_delta = std::clamp(cmd.at("outputTicks").get<int64_t>() - resolved->output_start, -max_output_delta, max_output_delta);
+        const auto raw_source = resolved->source_start + multiply_ratio(clamped_output_delta, resolved->rate.numerator, resolved->rate.denominator);
+        if (cmd.at("edge").get<std::string>() == "start") {
+            const auto source = std::clamp(raw_source, min_source_start, resolved->source_end() - min_source_duration);
+            it->source_start = canonical_time(source);
+            it->source_duration = canonical_time(resolved->source_end() - source);
+        } else {
+            const auto source = std::clamp(raw_source, resolved->source_start + min_source_duration, max_source_end);
+            it->source_duration = canonical_time(source - resolved->source_start);
+        }
     } else if (op == "trim") {
         auto it = find(); const auto start = cmd.at("sourceStart").get<int64_t>(), end = cmd.at("sourceEnd").get<int64_t>();
         if (start < normalized_ticks(it->source_start) || end > normalized_ticks(it->source_start) + normalized_ticks(it->source_duration) || end <= start)

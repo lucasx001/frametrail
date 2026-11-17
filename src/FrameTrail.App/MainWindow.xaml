@@ -49,7 +49,7 @@
       </Grid>
       <ToggleButton x:Name="PointerEnabled" Content="{local:Loc Key=S260F88241E2D}" IsChecked="True" Checked="AutomaticZoom_Changed" Unchecked="AutomaticZoom_Changed" Style="{StaticResource RecorderSettingToggle}" />
       <ToggleButton x:Name="ExcludeControl" Content="{local:Loc Key=S86F0BE597E0B}" IsChecked="True" Checked="Exclusion_Changed" Unchecked="Exclusion_Changed" Style="{StaticResource RecorderSettingToggle}" />
-      <ToggleButton x:Name="CountdownEnabled" IsChecked="False" Style="{StaticResource RecorderSettingToggle}" />
+      <ToggleButton x:Name="CountdownEnabled" IsChecked="True" Style="{StaticResource RecorderSettingToggle}" />
       <Border Height="1" Background="{ThemeResource RecorderLine}" Margin="10,6" />
       <Button Style="{StaticResource RecorderMenuButton}" Click="Android_Click" Content="{local:Loc Key=S0E824A1AC951}" />
       <Button Style="{StaticResource RecorderMenuButton}" Click="Open_Click" Content="{local:Loc Key=S55255C7EB609}" />

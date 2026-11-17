@@ -44,8 +44,14 @@ public sealed partial class MainWindow
             await library.ValidateDeletionAsync(broken, true);
             if (Directory.Exists(broken) || library.ProjectCount != 1) throw new IOException("Broken project could not be removed from the list.");
             await library.ValidateDeletionAsync(first, true);
+            await Task.Delay(150);
             if (Directory.Exists(first) || editorWindow is not null || opened is not null || library.ProjectCount != 0) throw new IOException("Active project deletion did not release resources or refresh the empty list.");
-            checks.Add("Confirmed deletion recycles the selected inactive, broken and active disposable projects and refreshes the list. External writer leases are rejected with a visible error, and the active editor is retained.");
+            if (AppWindow.IsVisible) throw new IOException("Recorder capsule popped back up while project library remained open after deleting the active project.");
+            library.Close();
+            await WaitForAsync(() => projectLibraryWindow is null);
+            await Task.Delay(80);
+            if (!AppWindow.IsVisible) throw new IOException("Recorder capsule did not reappear after closing project library with no active editor.");
+            checks.Add("Confirmed deletion recycles the selected inactive, broken and active disposable projects and refreshes the list; recorder capsule stays hidden until the project library closes.");
             success = true;
         } catch (Exception error) { failure = error.ToString(); }
         finally {

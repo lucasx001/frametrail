@@ -15,8 +15,9 @@ internal sealed class EditorAssetCoordinator
 
     internal Task ReplaceThumbnailsAsync(Func<Channel<long>, CancellationToken, Task> build) =>
         thumbnail.ReplaceAsync(() => {
-            requests = Channel.CreateBounded<long>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait });
+            requests = Channel.CreateBounded<long>(new BoundedChannelOptions(256) { FullMode = BoundedChannelFullMode.Wait });
             pending.Clear();
+            Volatile.Write(ref demand, new());
             // A cancelled worker can exit before its per-frame finally runs.
             // The old job is drained here, so its abandoned frame is requestable again.
             Interlocked.Exchange(ref inFlight, -1);
@@ -26,8 +27,11 @@ internal sealed class EditorAssetCoordinator
 
     internal void RequestThumbnails(IReadOnlyList<long> ticks)
     {
-        Volatile.Write(ref demand, ticks.ToHashSet());
+        var previous = Volatile.Read(ref demand);
+        var next = ticks.ToHashSet();
+        Volatile.Write(ref demand, next);
         if (requests is null) return;
+        if (next.Count > 0 && next.IsSubsetOf(previous)) return;
         while (requests.Reader.TryRead(out _)) { }
         pending.Clear();
         foreach (long ticksValue in ticks)

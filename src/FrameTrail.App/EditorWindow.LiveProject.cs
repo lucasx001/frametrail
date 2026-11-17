@@ -22,6 +22,7 @@ public sealed partial class EditorWindow
             nextPosition = Math.Clamp(nextPosition, 0, Math.Max(0, editor.Timeline.Duration - 1));
             // The last presented frame stays attached while the new scene is
             // rendered. No decoder, device, swapchain or inspector is recreated.
+            await transport.StopWork;
             await preview.UpdateProjectAsync(CanvasDisplay(snapshot), nextPosition);
             mapper.Dispose(); mapper = updatedMapper; updatedMapper = null!;
             position = nextPosition;

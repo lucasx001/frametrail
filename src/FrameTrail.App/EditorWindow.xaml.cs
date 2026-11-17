@@ -67,13 +67,18 @@ public sealed partial class EditorWindow : Window
         if (AppWindow.Presenter is OverlappedPresenter presenter) { double scale = RecorderWindowChrome.Scale(this); presenter.PreferredMinimumWidth = (int)Math.Round(840 * scale); presenter.PreferredMinimumHeight = (int)Math.Round(600 * scale); }
         editor.Changed += (_, _) => DispatcherQueue.TryEnqueue(UpdateState);
         timeline.Seek += async ticks => { if (!working && !editor.IsExporting) await SafeAsync(() => SeekAsync(ticks)); };
-        timeline.SelectClip += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); RefreshTimeline(); }); };
+        timeline.SelectClip += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); if (editController.Owner != EditorEditOwner.Timeline) RefreshTimeline(); }); };
         timeline.ClipDoubleClicked += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selected = id; LoadInspector(); ShowInspector(6); RefreshTimeline(); }); };
         timeline.ZoomChanged += value => { if (Math.Abs(TimelineZoom.Value - value) > 0.0001) TimelineZoom.Value = Math.Clamp(value, TimelineZoom.Minimum, TimelineZoom.Maximum); };
         timeline.BeginEdit += () => { if (working || editor.IsExporting) return; Pause(); editController.Begin(EditorEditOwner.Timeline); };
         timeline.PreviewEdit += command => {
             if (working || editor.IsExporting) return;
-            try { var candidate = editController.Preview(EditorEditOwner.Timeline, command); timeline.Set(EngineSession.ResolveTimeline(candidate), selected, position); }
+            try {
+                var candidate = editController.Preview(EditorEditOwner.Timeline, command);
+                var resolved = EngineSession.ResolveTimeline(candidate);
+                long clampedPos = Math.Clamp(position, 0, Math.Max(0, resolved.Duration - 1));
+                timeline.Set(resolved, selected, clampedPos);
+            }
             catch (Exception error) { ShowNotice(L.T("S72DC2DB39CED"), error.Message); }
         };
         timeline.EndEdit += async commit => {
@@ -156,7 +161,9 @@ public sealed partial class EditorWindow : Window
         details.Children.Add(new TextBlock { Text = L.T("S565118DEFB85", Path.GetFileNameWithoutExtension(editor.DirectoryPath)), TextWrapping = TextWrapping.Wrap });
         details.Children.Add(new TextBlock { Text = editor.DirectoryPath, TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.65 });
         details.Children.Add(new TextBlock { Text = L.T("S15BB8FA512EA"), TextWrapping = TextWrapping.Wrap, FontSize = 12 });
-        deleteConfirmation = new ContentDialog { Title = L.T("S761F0E313D82"), Content = details, PrimaryButtonText = L.T("SA3EA3C17B401"), CloseButtonText = L.T("S2CD0F3BE8738"), DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = DangerButtonStyle(), CloseButtonStyle = (Style)Application.Current.Resources["EditorButton"], XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
+        var cancelStyle = CancelButtonStyle();
+        deleteConfirmation = new ContentDialog { Title = L.T("S761F0E313D82"), Content = details, PrimaryButtonText = L.T("SA3EA3C17B401"), CloseButtonText = L.T("S2CD0F3BE8738"), DefaultButton = ContentDialogButton.Close, PrimaryButtonStyle = DangerButtonStyle(), CloseButtonStyle = cancelStyle, XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
+        ProjectLibraryWindow.ConfigureDialogButtons(deleteConfirmation, cancelStyle);
         ContentDialogResult result;
         showingDeleteConfirmation = true; UpdateState();
         try { result = await deleteConfirmation.ShowAsync(); }
@@ -181,6 +188,11 @@ public sealed partial class EditorWindow : Window
         danger.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(14, 0, 14, 0)));
         return danger;
     }
+    private static Style CancelButtonStyle()
+    {
+        if (Application.Current.Resources.TryGetValue("EditorDialogCancelButton", out var existing) && existing is Style style) return style;
+        return (Style)Application.Current.Resources["EditorButton"];
+    }
     private ResolvedClip? SelectedClip => editor.Timeline.Clips.FirstOrDefault(c => c.Id == selected);
     private async Task SafeAsync(Func<Task> action)
     {
@@ -191,6 +203,7 @@ public sealed partial class EditorWindow : Window
         if (working || editor.IsExporting) return;
         await FlushVisualChangesAsync();
         if (working || editor.IsExporting) return; working = true; Pause(); timeline.EditingEnabled = false;
+        await transport.StopWork;
         var before = editor.Snapshot; var sourcePosition = mapper.MapOutputTime(position)?.Ticks;
         try { await action(); if (editor.Snapshot.Revision != before.Revision) await UpdateEditedProjectAsync(before, sourcePosition); }
         catch (Exception error) { ShowNotice(L.T("S6ACBD42B6557"), error.Message, InfoBarSeverity.Warning); RefreshTimeline(); }
@@ -222,7 +235,23 @@ public sealed partial class EditorWindow : Window
         }
         return result;
     }
-    private void RefreshTimeline() { timeline.Set(editor.Timeline, selected, position); TimelineSummary.Text = L.T("S788BF0579E4C", editor.Timeline.Clips.Count, Format(editor.Timeline.Duration)); }
+    private void PreviewStage_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateTransportLayout();
+    private void UpdateTransportLayout()
+    {
+        if (PreviewStage is null || PreviewProgressScrubber is null || PreviewTransport is null || TransportLeft is null || FullscreenButton is null) return;
+        bool stacked = !previewFullscreen && PreviewStage.ActualWidth > 0 && PreviewStage.ActualWidth < 680;
+        Grid.SetRow(PreviewProgressScrubber, stacked ? 0 : 1);
+        Grid.SetColumn(PreviewProgressScrubber, stacked ? 0 : 1);
+        Grid.SetColumnSpan(PreviewProgressScrubber, stacked ? 2 : 1);
+        Grid.SetRow(FullscreenButton, stacked ? 0 : 1);
+        Grid.SetColumn(FullscreenButton, 2);
+        Grid.SetColumnSpan(TransportLeft, stacked ? 3 : 1);
+        TransportLeft.HorizontalAlignment = stacked ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+        PreviewProgressScrubber.Margin = stacked ? new Thickness(10, 2, 4, 0) : new Thickness(4, 0, 6, 0);
+        PreviewTransport.Margin = previewFullscreen ? new Thickness(24, 0, 24, 20) : (stacked ? new Thickness(12, 8, 12, 10) : new Thickness(20, 12, 20, 14));
+        PreviewTransport.CornerRadius = new CornerRadius(stacked ? 18 : 22);
+    }
+    private void RefreshTimeline() { timeline.FrameTicks = TimeSpan.TicksPerSecond / Math.Max(1, editor.Snapshot.Export.Fps.Numerator); timeline.Set(editor.Timeline, selected, position); PreviewProgressScrubber.SetProgress(position, editor.Timeline.Duration); TimelineSummary.Text = L.T("S788BF0579E4C", editor.Timeline.Clips.Count, Format(editor.Timeline.Duration)); }
     private void UpdateState()
     {
         if (!ready) return;
@@ -268,7 +297,7 @@ public sealed partial class EditorWindow : Window
     }
     private void ShowNotice(string title, string message, InfoBarSeverity severity = InfoBarSeverity.Informational) { if (previewFullscreen) SetPreviewFullscreen(false); Notice.Title = title; Notice.Message = message; Notice.Severity = severity; Notice.IsOpen = true; }
     private static string Format(long ticks) => TimeSpan.FromTicks(ticks).ToString(ticks >= TimeSpan.TicksPerHour ? @"h\:mm\:ss\.ff" : @"mm\:ss\.ff");
-    private void UpdateClock() { QueueCanvasGeometry(); ClockLabel.Text = $"{Format(position)} / {Format(editor.Timeline.Duration)}"; timeline.Position(position); QueueMockupPoster(); }
+    private void UpdateClock() { QueueCanvasGeometry(); ClockLabel.Text = $"{Format(position)} / {Format(editor.Timeline.Duration)}"; PreviewProgressScrubber.SetProgress(position, editor.Timeline.Duration); timeline.Position(position); if (playing) timeline.FollowPlayhead(position); QueueMockupPoster(); }
     private async Task SeekAsync(long ticks)
     {
         await BrowseSeekAsync(ticks);
@@ -286,6 +315,7 @@ public sealed partial class EditorWindow : Window
         if (!await transport.StartAsync(position, hasAudio, () => Task.Run(() => current.StreamAudio(position)),
             () => !closing && current == preview.Session)) return;
         canvasOverlay.SetItems([]);
+        timeline.FollowPlayhead(position);
         PlayGlyph.Kind = "Pause";
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= PlaybackRendering;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += PlaybackRendering;

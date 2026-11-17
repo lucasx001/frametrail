@@ -102,6 +102,11 @@
         <Setter Property="Background" Value="{ThemeResource EditorDanger}"/><Setter Property="Foreground" Value="{ThemeResource EditorDangerInk}"/>
         <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}"/><Setter Property="Padding" Value="14,0"/>
     </Style>
+    <Style x:Key="EditorDialogCancelButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
+        <Setter Property="Background" Value="{ThemeResource EditorControlTrack}"/><Setter Property="Foreground" Value="{ThemeResource EditorInk}"/>
+        <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}"/><Setter Property="Padding" Value="14,0"/>
+    </Style>
+    <Style x:Key="DefaultButtonStyle" TargetType="Button" BasedOn="{StaticResource EditorDialogCancelButton}"/>
     <Style x:Key="EditorTile" TargetType="Border"><Setter Property="Background" Value="{ThemeResource EditorWell}"/><Setter Property="CornerRadius" Value="18"/><Setter Property="Padding" Value="14"/></Style>
     <Style x:Key="EditorSwitch" TargetType="CheckBox">
         <Setter Property="Foreground" Value="{StaticResource EditorBlue}"/><Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>

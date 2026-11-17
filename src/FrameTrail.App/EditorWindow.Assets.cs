@@ -88,16 +88,19 @@ public sealed partial class EditorWindow
             // Thumbnail sessions use a small composition; the attached preview keeps its full resolution.
             double ratio = Math.Min(1, Math.Min(384.0 / snapshot.Canvas.Width, 216.0 / snapshot.Canvas.Height));
             using var media = new MediaSession(snapshot, editor.DirectoryPath); using var registration = token.Register(media.Cancel);
+            long outputDuration = media.Status.Duration;
             bool resized = false;
             int rendered = 0;
             while (await requests.Reader.WaitToReadAsync(token)) {
                 var batch = new List<long>(); while (requests.Reader.TryRead(out var value)) batch.Add(value);
+                batch.Sort();
                 foreach (long ticks in batch) {
                     if (!assetCoordinator.WantsThumbnail(ticks)) continue;
                     assetCoordinator.BeginThumbnail(ticks);
                     token.ThrowIfCancellationRequested(); string path = cache.FilePath(key, ticks + ".png");
                     cache.Pin(path);
                     try {
+                        if (ticks < 0 || ticks >= outputDuration) { assetCoordinator.PublishedThumbnail(ticks); continue; }
                         if (!cache.Use(path)) {
                             if (!resized) { media.Resize((uint)Math.Max(2, Math.Round(snapshot.Canvas.Width * ratio)), (uint)Math.Max(2, Math.Round(snapshot.Canvas.Height * ratio))); resized = true; }
                             string temporary = path + ".partial"; cache.Pin(temporary);

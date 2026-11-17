@@ -94,7 +94,7 @@ public sealed partial class EditorWindow
     private async Task UpdateVisualPreviewAsync(ProjectSnapshot snapshot)
     {
         try {
-            if (mockupEditing) await preview.UpdateProjectAsync(snapshot, position);
+            if (mockupEditing) { await transport.StopWork; await preview.UpdateProjectAsync(snapshot, position); }
             else await preview.UpdateEffectsAsync(snapshot, position);
         }
         // New input invalidates the frame in flight. Keep draining queued
