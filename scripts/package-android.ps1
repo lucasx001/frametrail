@@ -13,8 +13,6 @@ Invoke-Checked $dotnet @('publish',(Join-Path $ProjectRoot 'src\FrameTrail.App\F
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $OutputDirectory 'ENGINE-THIRD-PARTY-NOTICES.md')
 New-Item -ItemType Directory -Force -Path (Join-Path $OutputDirectory 'docs\licenses') | Out-Null
 Copy-Item -Path (Join-Path $ProjectRoot 'docs\licenses\*') -Destination (Join-Path $OutputDirectory 'docs\licenses')
-New-Item -ItemType Directory -Force -Path (Join-Path $OutputDirectory 'docs\validation') | Out-Null
-Copy-Item -LiteralPath (Join-Path $ProjectRoot 'docs\validation\0012-android-usb-validation.md') -Destination (Join-Path $OutputDirectory 'docs\validation')
 foreach ($name in @('FrameTrail.Android.dll','FrameTrail.App.pri','android-runtime\adb.exe','android-runtime\scrcpy-server','android-runtime\ADB-NOTICE.txt','android-runtime\scrcpy-LICENSE.txt','hostfxr.dll')) {
     if (!(Test-Path -LiteralPath (Join-Path $OutputDirectory $name))) { throw "Package is missing $name" }
 }

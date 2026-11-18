@@ -55,6 +55,7 @@ internal sealed partial class EditorTimeline : ContentControl
     private long? hoverTicks, pendingHover;
     private bool hoverNotified;
     private bool drawQueued;
+    private int? dropInsertIndex;
     internal int DrawCount { get; private set; }
     internal event Action<long?>? Hover;
     private readonly Rectangle playLine = new() { Width = 1, Height = 134, Fill = Brush(255, 69, 59), IsHitTestVisible = false };
@@ -216,6 +217,24 @@ internal sealed partial class EditorTimeline : ContentControl
     internal double HorizontalScrollOffset => scroll.HorizontalOffset;
     internal double ViewportWidth => scroll.ViewportWidth > 0 ? scroll.ViewportWidth : ActualWidth;
     internal double PlayheadX => X(playhead);
+    internal int GetDropInsertIndex(Point pointRelativeToTimeline)
+    {
+        if (timeline is null || timeline.Clips.Count == 0) return 0;
+        double canvasX = pointRelativeToTimeline.X + scroll.HorizontalOffset;
+        long ticks = RawTicks(canvasX);
+        for (int i = 0; i < timeline.Clips.Count; i++)
+        {
+            var c = timeline.Clips[i];
+            if (ticks < c.OutputStart + c.OutputDuration / 2) return i;
+        }
+        return timeline.Clips.Count;
+    }
+    internal void SetDropInsertIndex(int? index)
+    {
+        if (dropInsertIndex == index) return;
+        dropInsertIndex = index;
+        DrawNow();
+    }
     internal void Reveal(long ticks) => scroll.ChangeView(Math.Max(0, X(ticks) - ViewportWidth / 2), null, null, true);
     internal void RevealIfOutside(long ticks)
     {
@@ -397,6 +416,13 @@ internal sealed partial class EditorTimeline : ContentControl
             pair.Value.Root.Opacity = dragging && dragKind == "move" && dragClip is not null && pair.Key == dragClip.Id ? 0.72 : 1;
         if (dragging && dragKind == "move" && dragClip is not null && timeline.Clips.FirstOrDefault(c => c.Id == dragClip.Id) is { } movedClip)
             At(overlayLayer, new Rectangle { Width = 3, Height = 64, RadiusX = 1.5, RadiusY = 1.5, Fill = selectedBorder, IsHitTestVisible = false }, X(movedClip.OutputStart) - 1.5, 32);
+        if (dropInsertIndex is int insertIdx) {
+            double dropX = timeline.Clips.Count == 0 ? X(0)
+                : insertIdx <= 0 ? X(timeline.Clips[0].OutputStart)
+                : insertIdx >= timeline.Clips.Count ? X(timeline.Duration)
+                : X(timeline.Clips[insertIdx].OutputStart);
+            At(overlayLayer, new Rectangle { Width = 3, Height = 68, RadiusX = 1.5, RadiusY = 1.5, Fill = selectedBorder, IsHitTestVisible = false }, dropX - 1.5, 30);
+        }
         if (hoverTicks is not null) { overlayLayer.Children.Add(hoverLine); overlayLayer.Children.Add(hoverBadge); PositionHoverIndicator(); }
         foreach (var id in clipViews.Keys.Where(id => !usedClips.Contains(id)).ToArray()) {
             clipsLayer.Children.Remove(clipViews[id].Root);

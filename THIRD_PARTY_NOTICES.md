@@ -49,8 +49,7 @@ Android SDK Platform-Tools **36.0.0** supplies `adb.exe`, `AdbWinApi.dll` and
 `AdbWinUsbApi.dll`. Its own complete `NOTICE.txt`, covering its constituent
 components and applicable terms, is copied from Google's pinned archive to
 `android-runtime/ADB-NOTICE.txt`. The scrcpy license does not replace these
-notices. Sources and checksums are recorded in
-[the M5 validation record](docs/validation/0012-android-usb-validation.md).
+notices.
 
 FrameTrail does not bundle the scrcpy desktop client, SDL, FFmpeg or libusb.
 H.264 decoding and MP4 packaging use Windows Media Foundation. FFmpeg in the

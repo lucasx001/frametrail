@@ -263,6 +263,7 @@ public sealed class ProjectWorkspace : IAsyncDisposable
         var checkedMedia = new Dictionary<string, ValidatedMedia>(StringComparer.OrdinalIgnoreCase);
         foreach (var media in value.Media)
         {
+            if (checkedMedia.ContainsKey(media.Path)) continue;
             // Resolve rechecks every component on cache hits. Opening detects deletion.
             await using var stream = new FileStream(Resolve(media.Path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             if (stream.Length == 0) throw new IOException($"Empty media: {media.Path}");
@@ -280,11 +281,22 @@ public sealed class ProjectWorkspace : IAsyncDisposable
             }
             if (media.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio)
             {
-                var header = new byte[12]; if (await stream.ReadAsync(header) != 12 || Encoding.ASCII.GetString(header, 0, 4) != "RIFF" || Encoding.ASCII.GetString(header, 8, 4) != "WAVE")
-                    throw new IOException($"Unreadable WAV: {media.Path}");
-                var declared = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(4, 4));
-                if (declared == 0 || declared + 8L > stream.Length) throw new IOException($"Unfinished WAV: {media.Path}");
-                await Task.Run(() => probe(Resolve(media.Path), false));
+                var extension = Path.GetExtension(media.Path);
+                if (extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".mov", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!await HasMp4MoovAsync(stream)) throw new IOException($"Unfinalized or unreadable MP4: {media.Path}");
+                    await Task.Run(() => probe(Resolve(media.Path), false));
+                }
+                else
+                {
+                    var header = new byte[12]; if (await stream.ReadAsync(header) != 12 || Encoding.ASCII.GetString(header, 0, 4) != "RIFF" || Encoding.ASCII.GetString(header, 8, 4) != "WAVE")
+                        throw new IOException($"Unreadable WAV: {media.Path}");
+                    var declared = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(4, 4));
+                    if (declared == 0 || declared + 8L > stream.Length) throw new IOException($"Unfinished WAV: {media.Path}");
+                    await Task.Run(() => probe(Resolve(media.Path), false));
+                }
             }
             if (media.Kind == MediaKind.PointerEvents)
             {

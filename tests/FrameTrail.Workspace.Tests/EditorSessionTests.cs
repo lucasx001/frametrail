@@ -144,4 +144,131 @@ public sealed class EditorSessionTests : IAsyncLifetime
         await Assert.ThrowsAsync<ArgumentException>(()=>editor.PasteEffectAttributesAsync(effect with{Kind="mask"},effect.Id));
         Assert.Equal(before,ProjectJson.Serialize(editor.Snapshot));await editor.UndoAsync();Assert.Empty(editor.Snapshot.Effects);
     }
+
+    [Fact]
+    public async Task ImportVideoClipsBatchInsertsInOrderSupportsAudioTrackUndoRedoAndReopen()
+    {
+        string projectPath = Path.Combine(root, "edit.frametrailproject");
+        string silentSource = Path.Combine(root, "silent.mp4");
+        string audioSource = Path.Combine(root, "with-audio.mov");
+        await File.WriteAllBytesAsync(silentSource, PersistenceTests.FinalizedMp4Header);
+        await File.WriteAllBytesAsync(audioSource, PersistenceTests.FinalizedMp4Header);
+
+        IReadOnlyList<string> importedIds;
+        string expectedJson;
+        await using (var workspace = await CreateAsync())
+        {
+            var editor = new EditorSession(workspace);
+            importedIds = await editor.ImportVideoClipsAsync(
+                new[] { silentSource, audioSource },
+                insertIndex: 0,
+                clipProbe: path => path.EndsWith(".mov", StringComparison.OrdinalIgnoreCase)
+                    ? (1920u, 1080u, 40_000_000L, true, 44100u, 2u)
+                    : (1280u, 720u, 20_000_000L, false, 0u, 0u));
+
+            Assert.Equal(2, importedIds.Count);
+            Assert.Equal(new[] { importedIds[0], importedIds[1], "clip" }, editor.Snapshot.Segments.Select(s => s.Id).ToArray());
+            Assert.Equal(90_000_000L, editor.Snapshot.SourceDuration.Ticks);
+            Assert.Equal(90_000_000L, editor.Timeline.Duration);
+
+            var importedScreenAssets = editor.Snapshot.Media.Where(m => m.Kind == MediaKind.Screen && m.Path.StartsWith("media/import-", StringComparison.Ordinal)).ToArray();
+            var importedAudioAssets = editor.Snapshot.Media.Where(m => m.Kind == MediaKind.SystemAudio).ToArray();
+            Assert.Equal(2, importedScreenAssets.Length);
+            Assert.Single(importedAudioAssets);
+            Assert.Equal(importedScreenAssets[1].Path, importedAudioAssets[0].Path);
+            Assert.Equal(44100u, importedAudioAssets[0].SampleRate);
+            Assert.Equal(2u, importedAudioAssets[0].Channels);
+
+            await editor.UndoAsync();
+            Assert.Equal(new[] { "clip" }, editor.Snapshot.Segments.Select(s => s.Id).ToArray());
+            Assert.Equal(30_000_000L, editor.Snapshot.SourceDuration.Ticks);
+            Assert.Equal(30_000_000L, editor.Timeline.Duration);
+
+            await editor.RedoAsync();
+            Assert.Equal(new[] { importedIds[0], importedIds[1], "clip" }, editor.Snapshot.Segments.Select(s => s.Id).ToArray());
+            Assert.Equal(90_000_000L, editor.Snapshot.SourceDuration.Ticks);
+            Assert.Equal(90_000_000L, editor.Timeline.Duration);
+            await editor.FlushAsync();
+            expectedJson = ProjectJson.Serialize(editor.Snapshot);
+        }
+
+        var probedPaths = new List<(string Path, bool Video)>();
+        await using var reopened = await ProjectWorkspace.OpenAsync(
+            projectPath,
+            EngineSession.ValidateProject,
+            (path, video) => probedPaths.Add((path, video)));
+        Assert.Equal(expectedJson, ProjectJson.Serialize(reopened.Snapshot!));
+        Assert.Equal(3, probedPaths.Count);
+        Assert.All(probedPaths, entry => Assert.True(entry.Video));
+    }
+
+    [Fact]
+    public async Task ImportVideoClipsSingleAppendAndInvalidClipLeavesNoOrphanFilesOrHistory()
+    {
+        await using var workspace = await CreateAsync();
+        var editor = new EditorSession(workspace);
+
+        string validSource = Path.Combine(root, "append.m4v");
+        string brokenSource = Path.Combine(root, "broken.mp4");
+        string textSource = Path.Combine(root, "not-a-video.txt");
+        await File.WriteAllBytesAsync(validSource, PersistenceTests.FinalizedMp4Header);
+        await File.WriteAllTextAsync(brokenSource, "corrupted video bytes");
+        await File.WriteAllTextAsync(textSource, "text");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => editor.ImportVideoClipsAsync(Array.Empty<string>()));
+        await Assert.ThrowsAsync<IOException>(() => editor.ImportVideoClipsAsync(new[] { textSource }));
+        Assert.False(editor.CanUndo);
+        Assert.Empty(Directory.GetFiles(workspace.Resolve("media"), "import-*"));
+
+        await Assert.ThrowsAsync<IOException>(() => editor.ImportVideoClipsAsync(
+            new[] { validSource, brokenSource },
+            clipProbe: path => path.EndsWith(".m4v", StringComparison.OrdinalIgnoreCase)
+                ? (1280u, 720u, 15_000_000L, false, 0u, 0u)
+                : throw new IOException("Corrupt clip")));
+        Assert.False(editor.CanUndo);
+        Assert.Empty(Directory.GetFiles(workspace.Resolve("media"), "import-*"));
+
+        var appendedIds = await editor.ImportVideoClipsAsync(
+            new[] { validSource },
+            clipProbe: _ => (1280u, 720u, 15_000_000L, true, 0u, 0u));
+        Assert.Single(appendedIds);
+        Assert.True(editor.CanUndo);
+        Assert.Equal(new[] { "clip", appendedIds[0] }, editor.Snapshot.Segments.Select(s => s.Id).ToArray());
+        Assert.Equal(45_000_000L, editor.Snapshot.SourceDuration.Ticks);
+        var audio = editor.Snapshot.Media.Single(m => m.Kind == MediaKind.SystemAudio);
+        Assert.Equal(48000u, audio.SampleRate);
+        Assert.Equal(2u, audio.Channels);
+        Assert.Single(Directory.GetFiles(workspace.Resolve("media"), "import-*"));
+    }
+
+    [Fact]
+    public async Task CheckMediaAsyncSupportsMp4ContainerForAudioTrackWithoutWavHeader()
+    {
+        string projectPath = Path.Combine(root, "audio-container.frametrailproject");
+        await using (var workspace = ProjectWorkspace.Create(projectPath, "audio-container", EngineSession.ValidateProject, (_, _) => { }))
+        {
+            await File.WriteAllBytesAsync(workspace.Resolve("media/clip.mp4"), PersistenceTests.FinalizedMp4Header);
+            var snapshot = new ProjectSnapshot
+            {
+                ProjectId = "audio-container",
+                Revision = 1,
+                SourceDuration = MediaTime.FromTicks(20_000_000),
+                Media = new[]
+                {
+                    new MediaAsset { Id = "sys-audio", Kind = MediaKind.SystemAudio, Path = "media/clip.mp4", StartOffset = MediaTime.FromTicks(0), Duration = MediaTime.FromTicks(20_000_000), SampleRate = 48000, Channels = 2 },
+                    new MediaAsset { Id = "screen", Kind = MediaKind.Screen, Path = "media/clip.mp4", StartOffset = MediaTime.FromTicks(0), Duration = MediaTime.FromTicks(20_000_000), Width = 640, Height = 360 }
+                },
+                Segments = new[] { new RecordingSegment { Id = "clip", SourceStart = MediaTime.FromTicks(0), SourceDuration = MediaTime.FromTicks(20_000_000) } }
+            };
+            Assert.True(await workspace.SaveAsync(snapshot, workspace.SessionEpoch));
+        }
+
+        var probes = new List<(string Path, bool Video)>();
+        await using var reopened = await ProjectWorkspace.OpenAsync(
+            projectPath,
+            EngineSession.ValidateProject,
+            (path, video) => probes.Add((path, video)));
+        Assert.Single(probes);
+        Assert.False(probes[0].Video);
+    }
 }

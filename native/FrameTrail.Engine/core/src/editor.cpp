@@ -8,6 +8,26 @@
 namespace frametrail::core {
 using Json = nlohmann::json;
 namespace {
+Time parse_time_field(const Json& value, const char* path) {
+    if (!value.is_object()) throw ValidationError(path, "expected time object");
+    const auto& ticks_val = value.at("ticks");
+    const auto& timescale_val = value.at("timescale");
+    if (!ticks_val.is_number_integer() || !timescale_val.is_number_integer())
+        throw ValidationError(path, "expected integer time fields");
+    const auto ts = timescale_val.get<int64_t>();
+    if (ts < 1 || ts > 1'000'000'000) throw ValidationError(path, "timescale outside allowed range");
+    Time result{ticks_val.get<int64_t>(), static_cast<int32_t>(ts)};
+    (void)normalized_ticks(result);
+    return result;
+}
+int64_t parse_int_field(const Json& obj, const char* key, int64_t min_val, int64_t max_val, const char* path) {
+    const auto& v = obj.at(key);
+    if (!v.is_number_integer() || (v.is_number_unsigned() && v.get<uint64_t>() > static_cast<uint64_t>((std::numeric_limits<int64_t>::max)())))
+        throw ValidationError(path, "expected signed 64-bit integer");
+    const auto result = v.get<int64_t>();
+    if (result < min_val || result > max_val) throw ValidationError(path, "integer outside allowed range");
+    return result;
+}
 void apply_command(Project& p, const Json& cmd) {
     const auto op = cmd.at("op").get<std::string>();
     auto find = [&]() {
@@ -30,6 +50,18 @@ void apply_command(Project& p, const Json& cmd) {
         const auto resolved = std::find_if(timeline.segments().begin(), timeline.segments().end(), [&](auto& s) { return s.id == it->id; });
         const auto full_duration = normalized_ticks(p.source_duration);
         int64_t min_source_start = 0, max_source_end = full_duration;
+        for (const auto& m : p.media) {
+            if (m.kind != MediaKind::screen || !m.path.starts_with("media/import-")) continue;
+            const auto m_start = normalized_ticks(m.start_offset);
+            const auto m_end = m_start + normalized_ticks(m.duration);
+            if (resolved->source_start >= m_start && resolved->source_end() <= m_end) {
+                min_source_start = std::max(min_source_start, m_start);
+                max_source_end = std::min(max_source_end, m_end);
+            } else {
+                if (m_end <= resolved->source_start) min_source_start = std::max(min_source_start, m_end);
+                if (m_start >= resolved->source_end()) max_source_end = std::min(max_source_end, m_start);
+            }
+        }
         for (const auto& segment : timeline.segments()) {
             if (segment.id == resolved->id) continue;
             if (segment.source_end() <= resolved->source_start) min_source_start = std::max(min_source_start, segment.source_end());
@@ -107,6 +139,61 @@ void apply_command(Project& p, const Json& cmd) {
         auto json = Json::parse(serialize_project(p));
         for (const auto* key : {"canvas", "export", "editor", "effects"}) if (cmd.contains(key)) json[key] = cmd[key];
         p = parse_project(json.dump());
+    } else if (op == "appendMedia") {
+        const auto old_duration = normalized_ticks(p.source_duration);
+        const auto& screen_json = cmd.at("screenMedia");
+        if (!screen_json.is_object()) throw ValidationError("appendMedia.screenMedia", "expected object");
+        const auto clip_duration = normalized_ticks(parse_time_field(screen_json.at("duration"), "appendMedia.screenMedia.duration"));
+        if (clip_duration <= 0) throw ValidationError("appendMedia.screenMedia.duration", "duration must be positive");
+        if (clip_duration > maximum_source_ticks - old_duration) throw ValidationError("appendMedia", "source duration exceeds maximum");
+
+        Media screen;
+        screen.id = screen_json.at("id").get<std::string>();
+        screen.kind = MediaKind::screen;
+        screen.path = screen_json.at("path").get<std::string>();
+        screen.duration = canonical_time(clip_duration);
+        screen.start_offset = canonical_time(old_duration);
+        screen.width = static_cast<uint32_t>(parse_int_field(screen_json, "width", 1, 32768, "appendMedia.screenMedia.width"));
+        screen.height = static_cast<uint32_t>(parse_int_field(screen_json, "height", 1, 32768, "appendMedia.screenMedia.height"));
+        p.media.push_back(std::move(screen));
+
+        if (cmd.contains("audioMedia") && !cmd["audioMedia"].is_null()) {
+            const auto& audio_json = cmd["audioMedia"];
+            if (!audio_json.is_object()) throw ValidationError("appendMedia.audioMedia", "expected object");
+            const auto audio_duration = normalized_ticks(parse_time_field(audio_json.at("duration"), "appendMedia.audioMedia.duration"));
+            if (audio_duration <= 0) throw ValidationError("appendMedia.audioMedia.duration", "duration must be positive");
+            if (audio_duration > maximum_source_ticks - old_duration) throw ValidationError("appendMedia", "audio duration exceeds maximum");
+
+            Media audio;
+            audio.id = audio_json.at("id").get<std::string>();
+            audio.kind = MediaKind::system_audio;
+            audio.path = audio_json.at("path").get<std::string>();
+            audio.duration = canonical_time(audio_duration);
+            audio.start_offset = canonical_time(old_duration);
+            audio.sample_rate = static_cast<uint32_t>(parse_int_field(audio_json, "sampleRate", 8000, 384000, "appendMedia.audioMedia.sampleRate"));
+            audio.channels = static_cast<uint32_t>(parse_int_field(audio_json, "channels", 1, 32, "appendMedia.audioMedia.channels"));
+            p.media.push_back(std::move(audio));
+        }
+
+        p.source_duration = canonical_time(old_duration + clip_duration);
+        Segment segment{cmd.at("segmentId").get<std::string>(), canonical_time(old_duration), canonical_time(clip_duration), {1, 1}};
+        if (cmd.contains("insertIndex") && !cmd["insertIndex"].is_null()) {
+            const auto insert_index = parse_int_field(cmd, "insertIndex", 0, static_cast<int64_t>(p.segments.size()), "appendMedia.insertIndex");
+            p.segments.insert(p.segments.begin() + insert_index, std::move(segment));
+        } else {
+            p.segments.push_back(std::move(segment));
+        }
+
+        if (p.schema_version == 2 && !p.primary_source_json.empty()) {
+            auto primary = Json::parse(p.primary_source_json);
+            if (primary.value("kind", std::string{}) == "androidUsb") {
+                primary["kind"] = "desktop";
+                p.primary_source_json = primary.dump();
+                for (auto& m : p.media) {
+                    if (m.kind == MediaKind::android_audio) m.kind = MediaKind::system_audio;
+                }
+            }
+        }
     } else if (op == "batch") {
         if (!cmd.at("commands").is_array() || cmd["commands"].size() > 100) throw ValidationError("batch", "invalid command count");
         for (const auto& c : cmd["commands"]) { if (c.value("op", "") == "batch") throw ValidationError("batch", "nested batches are disallowed"); apply_command(p, c); }

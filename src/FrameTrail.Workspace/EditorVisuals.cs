@@ -24,6 +24,109 @@ public sealed partial class EditorSession
     public Task<string> ImportWallpaperAsync(string source, CancellationToken cancellationToken = default) =>
         ImportVisualCoreAsync(source, false, true, cancellationToken);
 
+    private static void CheckSourceAncestors(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (!string.IsNullOrEmpty(current))
+        {
+            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException(L.T("SFD13984392A6"));
+            current = Path.GetDirectoryName(current)!;
+        }
+    }
+
+    public async Task<IReadOnlyList<string>> ImportVideoClipsAsync(
+        IReadOnlyList<string> sourcePaths,
+        int? insertIndex = null,
+        CancellationToken cancellationToken = default,
+        Func<string, (uint Width, uint Height, long Duration, bool HasAudio, uint SampleRate, uint Channels)>? clipProbe = null)
+    {
+        if (sourcePaths is null || sourcePaths.Count == 0 || sourcePaths.Count > 100)
+            throw new ArgumentException("Source clip count must be between 1 and 100.", nameof(sourcePaths));
+        await gate.WaitAsync(cancellationToken);
+        var createdFiles = new List<string>();
+        try
+        {
+            EnsureEditable();
+            if (transaction is not null) throw new InvalidOperationException("Finish the current drag transaction first.");
+            var probeFn = clipProbe ?? MediaSession.ProbeClip;
+            var commands = new List<object>(sourcePaths.Count);
+            var segmentIds = new List<string>(sourcePaths.Count);
+            for (int i = 0; i < sourcePaths.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var source = sourcePaths[i];
+                if (string.IsNullOrWhiteSpace(source)) throw new IOException(L.T("SB0C847A65D31"));
+                var extension = Path.GetExtension(source).ToLowerInvariant();
+                if (extension is not (".mp4" or ".mov" or ".m4v")) throw new IOException(L.T("SB0C847A65D31"));
+                CheckSourceAncestors(source);
+                var inputInfo = new FileInfo(source);
+                if (!inputInfo.Exists) throw new FileNotFoundException("Source video file not found.", source);
+                if (inputInfo.Length <= 0 || inputInfo.Length > 2L * 1024 * 1024 * 1024) throw new IOException(L.T("S1B19EF3E70E4"));
+                var relative = "media/import-" + Guid.NewGuid().ToString("N") + extension;
+                var destination = workspace.Resolve(relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                createdFiles.Add(destination);
+                await using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous))
+                await using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
+                    await input.CopyToAsync(output, cancellationToken);
+                var info = await Task.Run(() => probeFn(destination), cancellationToken);
+                if (info.Width == 0 || info.Height == 0 || info.Duration <= 0)
+                    throw new IOException($"Invalid video clip metadata: {source}");
+                var segmentId = "clip-" + Guid.NewGuid().ToString("N");
+                segmentIds.Add(segmentId);
+                var screenMedia = new
+                {
+                    id = "media-" + Guid.NewGuid().ToString("N"),
+                    path = relative,
+                    duration = MediaTime.FromTicks(info.Duration),
+                    width = info.Width,
+                    height = info.Height
+                };
+                var audioMedia = info.HasAudio
+                    ? new
+                    {
+                        id = "media-" + Guid.NewGuid().ToString("N"),
+                        path = relative,
+                        duration = MediaTime.FromTicks(info.Duration),
+                        sampleRate = info.SampleRate > 0 ? info.SampleRate : 48000u,
+                        channels = info.Channels > 0 ? info.Channels : 2u
+                    }
+                    : null;
+                int? targetIndex = insertIndex.HasValue
+                    ? Math.Clamp(insertIndex.Value + i, 0, Snapshot.Segments.Count + i)
+                    : null;
+                commands.Add(new
+                {
+                    op = "appendMedia",
+                    segmentId,
+                    screenMedia,
+                    audioMedia,
+                    insertIndex = targetIndex
+                });
+            }
+            var command = commands.Count == 1 ? commands[0] : new { op = "batch", commands };
+            var candidate = EngineSession.Edit(Snapshot, command);
+            Push(undo, Snapshot);
+            redo.Clear();
+            await AcceptAsync(candidate);
+            createdFiles.Clear();
+            return segmentIds;
+        }
+        finally
+        {
+            try
+            {
+                foreach (var file in createdFiles)
+                    if (File.Exists(file)) File.Delete(file);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+    }
+
     private async Task<string> ImportVisualCoreAsync(string source, bool video, bool reuse, CancellationToken cancellationToken)
     {
         await gate.WaitAsync(cancellationToken);

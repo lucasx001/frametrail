@@ -30,6 +30,7 @@ internal static class MediaNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_export_metrics(MediaHandle handle,[Out] byte[]? output,uint capacity,out uint required);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_edit_geometry(MediaHandle handle, long ticks, uint crop, [Out] byte[]? output, uint capacity, out uint required);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_probe_visual(string path, uint video, out uint width, out uint height, out long duration);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_probe_clip(string path, out uint width, out uint height, out long duration, out uint hasAudio, out uint sampleRate, out uint channels);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_create(byte[] json, uint length, string root, out ulong handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern void ft_media_destroy(ulong handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_swapchain(MediaHandle handle, out nint swapchain);
@@ -64,6 +65,8 @@ public sealed class MediaSession : IDisposable
     private static readonly JsonSerializerOptions EffectJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public static (uint Width, uint Height, long Duration) ProbeVisual(string path, bool video)
     { MediaNative.Check(MediaNative.ft_media_probe_visual(Path.GetFullPath(path), video ? 1u : 0u, out var width, out var height, out var duration)); return (width, height, duration); }
+    public static (uint Width, uint Height, long Duration, bool HasAudio, uint SampleRate, uint Channels) ProbeClip(string path)
+    { MediaNative.Check(MediaNative.ft_media_probe_clip(Path.GetFullPath(path), out var width, out var height, out var duration, out var hasAudio, out var sampleRate, out var channels)); return (width, height, duration, hasAudio != 0, sampleRate, channels); }
     public MediaSession(ProjectSnapshot snapshot, string directory)
     {
         var json = Encoding.UTF8.GetBytes(ProjectJson.Serialize(snapshot));

@@ -20,6 +20,17 @@ template<class F> int32_t protect(F&& function) noexcept {
     catch (const std::exception& e) { error = winrt::to_hstring(e.what()).c_str(); return E_FAIL; }
     catch (...) { error = L"Unexpected media engine error"; return E_FAIL; }
 }
+void probe_video_stream(const wchar_t* path, uint32_t& width, uint32_t& height, int64_t& duration) {
+    VideoReader reader(path, nullptr);
+    width = reader.width;
+    height = reader.height;
+    duration = reader.duration;
+    DWORD flags{};
+    ComPtr<IMFSample> sample;
+    FT_MEDIA_CHECK(reader.reader->ReadSample(video_stream_id, 0, nullptr, &flags, nullptr, &sample));
+    if (!sample || duration <= 0) throw ValidationError("asset", "video has no decodable frame");
+    if (!width || !height || width > 8192 || height > 8192) throw ValidationError("asset", "unsupported visual asset dimensions");
+}
 }
 extern "C" {
 int32_t __cdecl ft_media_edit_geometry(ft_media_handle handle,int64_t ticks,uint32_t crop_mode,char* output,uint32_t capacity,uint32_t* required) {
@@ -37,8 +48,7 @@ int32_t __cdecl ft_media_probe_visual(const wchar_t* path,uint32_t video,uint32_
         if(!path || !width || !height || !duration)winrt::throw_hresult(E_INVALIDARG);
         MfScope runtime;*width=*height=0;*duration=0;
         if(video) {
-            VideoReader reader(path,nullptr);*width=reader.width;*height=reader.height;*duration=reader.duration;
-            DWORD flags{};ComPtr<IMFSample> sample;FT_MEDIA_CHECK(reader.reader->ReadSample(video_stream_id,0,nullptr,&flags,nullptr,&sample));if(!sample || *duration<=0)throw ValidationError("asset","video has no decodable frame");
+            probe_video_stream(path,*width,*height,*duration);
         } else {
             ComPtr<IWICImagingFactory> wic;FT_MEDIA_CHECK(CoCreateInstance(CLSID_WICImagingFactory,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&wic)));
             ComPtr<IWICBitmapDecoder> decoder;FT_MEDIA_CHECK(wic->CreateDecoderFromFilename(path,nullptr,GENERIC_READ,WICDecodeMetadataCacheOnLoad,&decoder));
@@ -48,6 +58,33 @@ int32_t __cdecl ft_media_probe_visual(const wchar_t* path,uint32_t video,uint32_
             WICRect pixel{0,0,1,1};BYTE data[4]{};FT_MEDIA_CHECK(converter->CopyPixels(&pixel,4,4,data));
         }
         if(!*width || !*height || *width>8192 || *height>8192)throw ValidationError("asset","unsupported visual asset dimensions");
+    });
+}
+int32_t __cdecl ft_media_probe_clip(const wchar_t* path, uint32_t* width, uint32_t* height, int64_t* duration, uint32_t* has_audio, uint32_t* out_sample_rate, uint32_t* out_channels) {
+    return protect([&] {
+        if (!path || !width || !height || !duration || !has_audio || !out_sample_rate || !out_channels) winrt::throw_hresult(E_INVALIDARG);
+        MfScope runtime;
+        *width = *height = 0; *duration = 0; *has_audio = 0; *out_sample_rate = 0; *out_channels = 0;
+        probe_video_stream(path, *width, *height, *duration);
+        try {
+            ComPtr<IMFSourceReader> probe_reader;
+            ComPtr<IMFMediaType> native_audio;
+            if (SUCCEEDED(MFCreateSourceReaderFromURL(path, nullptr, &probe_reader)) &&
+                SUCCEEDED(probe_reader->GetNativeMediaType(audio_stream_id, 0, &native_audio))) {
+                probe_reader.Reset();
+                AudioReader audio_reader(path);
+                UINT32 sr = static_cast<UINT32>(sample_rate);
+                UINT32 ch = static_cast<UINT32>(channels);
+                UINT32 native_sr{}, native_ch{};
+                if (SUCCEEDED(native_audio->GetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, &native_sr)) && native_sr >= 8000 && native_sr <= 384000) sr = native_sr;
+                if (SUCCEEDED(native_audio->GetUINT32(MF_MT_AUDIO_NUM_CHANNELS, &native_ch)) && native_ch > 0 && native_ch <= 32) ch = native_ch;
+                *has_audio = 1;
+                *out_sample_rate = sr;
+                *out_channels = ch;
+            }
+        } catch (...) {
+            *has_audio = 0; *out_sample_rate = 0; *out_channels = 0;
+        }
     });
 }
 int32_t __cdecl ft_media_create(const char* json, uint32_t length, const wchar_t* root, ft_media_handle* handle) {
@@ -100,17 +137,22 @@ int32_t __cdecl ft_media_update_project(ft_media_handle handle,const char* json,
         auto project=parse_project(std::string_view(json,length)); FrameSceneEvaluator evaluator(project);
         auto s=get(handle); std::scoped_lock lock(s->mutex); s->check_cancel();
         if(generation<s->generation)winrt::throw_hresult(cancelled_hr);
-        // Cached readers and pointer tracks are valid only while source identity,
-        // paths, offsets and formats remain unchanged. Switching projects reloads.
         auto before=Json::parse(serialize_project(s->project)),after=Json::parse(serialize_project(project));
-        for(auto key:{"schemaVersion","projectId","sourceDuration","media"})
-            if(before.at(key)!=after.at(key))throw ValidationError("preview","source changes require a new media session");
-        if(before.value("primarySource",Json{})!=after.value("primarySource",Json{}))throw ValidationError("preview","primary source changed");
+        if(before.at("projectId")!=after.at("projectId"))throw ValidationError("preview","source changes require a new media session");
+        for(const auto& m : project.media)
+            if(!std::filesystem::is_regular_file(safe_path(s->root, m.path)))throw ValidationError("media", "source media missing");
         if(s->audio_running)throw ValidationError("preview","stop preview audio before editing");
         if(generation<s->generation)winrt::throw_hresult(cancelled_hr);
+        const bool media_changed = before.at("media") != after.at("media");
         s->project=std::move(project); s->evaluator=std::move(evaluator);
         s->output_duration=s->evaluator.timeline().output_duration();
-        if(s->renderer)s->renderer->settings_source=nullptr;
+        if(s->renderer){
+            s->renderer->settings_source=nullptr;
+            if(media_changed){
+                s->renderer->clear_decoders();
+                s->renderer->pointers.clear();
+            }
+        }
         auto old=s->generation.load();while(generation>old && !s->generation.compare_exchange_weak(old,generation)){}
     });
 }

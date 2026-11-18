@@ -679,5 +679,10 @@
   "SFFC9010C9080": "Phone audio requires Android 11 or later. Silent recording is available.",
   "BuiltInWallpapers": "Built-in wallpapers",
   "WallpaperNumber": "Wallpaper {0}",
-  "WallpaperAssetChanged": "The project wallpaper is damaged. Import the background image again."
+  "WallpaperAssetChanged": "The project wallpaper is damaged. Import the background image again.",
+  "ImportVideoClips": "Import Video Clips",
+  "ImportVideoClipsTip": "Add or drag video files (MP4 / MOV / M4V) to merge clips",
+  "DropVideoAppendPrompt": "Drop video files to append to the timeline",
+  "DropVideoInsertPrompt": "Drop video files to insert clips here",
+  "ImportedVideoClipsNotice": "Imported and merged {0} video clip(s)"
 }

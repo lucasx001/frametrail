@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([Parameter(Mandatory=$true)][string] $PackageDirectory, [Parameter(Mandatory=$true)][string] $OutputDirectory, [switch] $VersionStampedAtBuild)
 . "$PSScriptRoot\common.ps1"
 . "$PSScriptRoot\release-common.ps1"
@@ -24,7 +24,6 @@ Windows 11 x64（build 22621 或更新版本）。
 - 未签名 MSIX 不作为公众安装附件；只有带可信签名的 MSIX 才会附加到 Release。
 
 源提交：``$($payload.sourceRevision)``。tag：``$($release.Tag)``。
-这是自动构建的版本产物；长时同步、跨 GPU/DPI、Android 真机与干净机器矩阵范围见仓库 docs/todo.md。
 "@
 Write-FrameTrailUtf8 (Join-Path $OutputDirectory 'INSTALL.zh-CN.md') $instructions
 $files = @(Get-ChildItem -LiteralPath $OutputDirectory -File | Sort-Object Name | ForEach-Object { [ordered]@{ name = $_.Name; bytes = $_.Length; sha256 = Get-FrameTrailSha256 $_.FullName } })

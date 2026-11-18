@@ -265,6 +265,7 @@ public sealed partial class EditorWindow : Window
         timeline.EditingEnabled = !working && !switchingProjects && !editor.IsExporting && !visualTransaction && !visualPending && !committingVisuals;
         ExportLabel.Text = editor.IsExporting ? L.T("S7EEFAAFF791F") : L.T("S76420433F22D");
         ProjectMenuButton.IsEnabled = !working && !closing && !switchingProjects && !showingExport && !showingDeleteConfirmation && !editor.IsExporting;
+        ImportClipButton.IsEnabled = ImportClipsMenuItem.IsEnabled = CanImportClips;
         SwitchProjectMenuItem.IsEnabled = openProject is not null && ProjectMenuButton.IsEnabled;
         DeleteProjectButton.IsEnabled = DeleteProjectMenuItem.IsEnabled = deleteProject is not null && ProjectMenuButton.IsEnabled && !projectTransition;
         if (editor.SaveError is not null) ShowNotice(L.T("S555A663BC512"), editor.SaveError + L.T("SF697646FD2A3"), InfoBarSeverity.Error);

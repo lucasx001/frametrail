@@ -679,5 +679,10 @@
   "SFFC9010C9080": "手机内部音频需要 Android 11 或更新版本，可选择无声录制。",
   "BuiltInWallpapers": "内置壁纸",
   "WallpaperNumber": "壁纸 {0}",
-  "WallpaperAssetChanged": "工程中的壁纸文件已损坏，请重新导入背景图片。"
+  "WallpaperAssetChanged": "工程中的壁纸文件已损坏，请重新导入背景图片。",
+  "ImportVideoClips": "导入视频片段",
+  "ImportVideoClipsTip": "添加或拖入视频文件（MP4 / MOV / M4V）以合并剪辑",
+  "DropVideoAppendPrompt": "松开以追加视频到时间线末尾",
+  "DropVideoInsertPrompt": "松开以在此处插入视频片段",
+  "ImportedVideoClipsNotice": "已合并导入 {0} 个视频片段"
 }

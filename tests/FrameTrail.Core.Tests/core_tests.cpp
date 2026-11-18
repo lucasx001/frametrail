@@ -1,4 +1,5 @@
 #include "frametrail/core/project.hpp"
+#include "frametrail/core/editor.hpp"
 #include "frametrail/core/scene.hpp"
 #include <nlohmann/json.hpp>
 #include <cmath>
@@ -164,6 +165,173 @@ void test_scene(const Project& project) {
     check(!evaluator.evaluate(evaluator.timeline().output_duration()), "scene final endpoint excluded");
     check(!evaluator.evaluate(-1), "scene negative excluded");
 }
+
+void test_append_media(const Project& project) {
+    // 1. Single append (no audioMedia, no insertIndex)
+    const Json append_one{
+        {"op", "appendMedia"},
+        {"screenMedia", {
+            {"id", "screen-import-1"},
+            {"path", "media/import-1.mp4"},
+            {"duration", {{"ticks", 5 * time_scale}, {"timescale", time_scale}}},
+            {"width", 1280},
+            {"height", 720}
+        }},
+        {"segmentId", "clip-import-1"}
+    };
+    const auto appended = edit_project(project, append_one.dump());
+    check(appended.revision == project.revision + 1, "appendMedia increments revision");
+    check(normalized_ticks(appended.source_duration) == 15 * time_scale, "appendMedia extends sourceDuration");
+    check(appended.media.back().id == "screen-import-1" && appended.media.back().kind == MediaKind::screen, "appendMedia adds screen media");
+    check(normalized_ticks(appended.media.back().start_offset) == 10 * time_scale, "appendMedia sets screen startOffset");
+    check(normalized_ticks(appended.media.back().duration) == 5 * time_scale, "appendMedia sets screen duration");
+    check(appended.media.back().width == 1280 && appended.media.back().height == 720, "appendMedia sets screen dimensions");
+    check(appended.segments.size() == 4 && appended.segments.back().id == "clip-import-1", "appendMedia appends segment");
+    check(normalized_ticks(appended.segments.back().source_start) == 10 * time_scale &&
+          normalized_ticks(appended.segments.back().source_duration) == 5 * time_scale &&
+          appended.segments.back().rate.numerator == 1 && appended.segments.back().rate.denominator == 1, "appendMedia segment fields");
+
+    // 2. Append with insertIndex and audioMedia
+    const Json append_with_audio{
+        {"op", "appendMedia"},
+        {"screenMedia", {
+            {"id", "screen-import-2"},
+            {"path", "media/import-2.mp4"},
+            {"duration", {{"ticks", 3 * time_scale}, {"timescale", time_scale}}},
+            {"width", 1920},
+            {"height", 1080}
+        }},
+        {"audioMedia", {
+            {"id", "audio-import-2"},
+            {"path", "media/import-2.mp4"},
+            {"duration", {{"ticks", 3 * time_scale}, {"timescale", time_scale}}},
+            {"sampleRate", 44100},
+            {"channels", 2}
+        }},
+        {"segmentId", "clip-import-2"},
+        {"insertIndex", 1}
+    };
+    const auto with_audio = edit_project(appended, append_with_audio.dump());
+    check(normalized_ticks(with_audio.source_duration) == 18 * time_scale, "appendMedia with audio extends sourceDuration");
+    check(with_audio.segments.size() == 5 && with_audio.segments[1].id == "clip-import-2", "appendMedia inserts segment at insertIndex");
+    check(normalized_ticks(with_audio.segments[1].source_start) == 15 * time_scale, "inserted segment points to new source offset");
+    const auto audio_it = std::find_if(with_audio.media.begin(), with_audio.media.end(), [](const Media& m) { return m.id == "audio-import-2"; });
+    check(audio_it != with_audio.media.end() && audio_it->kind == MediaKind::system_audio, "audioMedia added as systemAudio");
+    check(normalized_ticks(audio_it->start_offset) == 15 * time_scale && audio_it->sample_rate == 44100 && audio_it->channels == 2, "audioMedia metadata");
+
+    rejects([&] {
+        auto bad = append_one;
+        bad["insertIndex"] = -1;
+        (void)edit_project(project, bad.dump());
+    }, "appendMedia rejects negative insertIndex");
+    rejects([&] {
+        auto bad = append_one;
+        bad["insertIndex"] = 99;
+        (void)edit_project(project, bad.dump());
+    }, "appendMedia rejects out-of-range insertIndex");
+    rejects([&] {
+        auto bad = append_one;
+        bad["screenMedia"]["duration"]["ticks"] = 0;
+        (void)edit_project(project, bad.dump());
+    }, "appendMedia rejects zero duration");
+
+    // 3. Batch append
+    const Json batch_cmd{
+        {"op", "batch"},
+        {"commands", Json::array({
+            {
+                {"op", "appendMedia"},
+                {"screenMedia", {
+                    {"id", "screen-batch-1"},
+                    {"path", "media/import-batch-1.mp4"},
+                    {"duration", {{"ticks", 2 * time_scale}, {"timescale", time_scale}}},
+                    {"width", 1920},
+                    {"height", 1080}
+                }},
+                {"segmentId", "clip-batch-1"}
+            },
+            {
+                {"op", "appendMedia"},
+                {"screenMedia", {
+                    {"id", "screen-batch-2"},
+                    {"path", "media/import-batch-2.mp4"},
+                    {"duration", {{"ticks", 4 * time_scale}, {"timescale", time_scale}}},
+                    {"width", 1280},
+                    {"height", 720}
+                }},
+                {"audioMedia", {
+                    {"id", "audio-batch-2"},
+                    {"path", "media/import-batch-2.mp4"},
+                    {"duration", {{"ticks", 4 * time_scale}, {"timescale", time_scale}}},
+                    {"sampleRate", 48000},
+                    {"channels", 1}
+                }},
+                {"segmentId", "clip-batch-2"},
+                {"insertIndex", 0}
+            }
+        })}
+    };
+    const auto batched = edit_project(project, batch_cmd.dump());
+    check(normalized_ticks(batched.source_duration) == 16 * time_scale, "batch appendMedia total sourceDuration");
+    check(batched.segments.size() == 5 && batched.segments.front().id == "clip-batch-2" && batched.segments.back().id == "clip-batch-1", "batch appendMedia segment order");
+
+    // 4. Cross-source trimOutput boundary protection for media/import- clips
+    auto isolated_recorded = edit_project(appended, Json{{"op", "batch"}, {"commands", Json::array({
+        {{"op", "delete"}, {"segmentId", "earlier-slow"}},
+        {{"op", "delete"}, {"segmentId", "middle-normal"}},
+        {{"op", "delete"}, {"segmentId", "clip-import-1"}}
+    })}}.dump());
+    check(isolated_recorded.segments.size() == 1 && isolated_recorded.segments[0].id == "later-fast", "isolated recorded segment");
+    // Recorded checkpoint segments (screen-1/screen-2) can still trim across checkpoint boundary, but cannot enter media/import-1.mp4 (10..15s)
+    auto across_checkpoint = edit_project(isolated_recorded, Json{{"op", "trimOutput"}, {"segmentId", "later-fast"}, {"edge", "start"}, {"outputTicks", -time_scale}}.dump());
+    check(normalized_ticks(across_checkpoint.segments[0].source_start) == 2 * time_scale, "recorded segment trims across checkpoint boundary");
+    auto blocked_at_import = edit_project(isolated_recorded, Json{{"op", "trimOutput"}, {"segmentId", "later-fast"}, {"edge", "end"}, {"outputTicks", 5 * time_scale}}.dump());
+    check(normalized_ticks(blocked_at_import.segments[0].source_start) + normalized_ticks(blocked_at_import.segments[0].source_duration) == 10 * time_scale, "recorded segment cannot trim into imported media");
+
+    auto isolated_import = edit_project(with_audio, Json{{"op", "batch"}, {"commands", Json::array({
+        {{"op", "delete"}, {"segmentId", "later-fast"}},
+        {{"op", "delete"}, {"segmentId", "earlier-slow"}},
+        {{"op", "delete"}, {"segmentId", "middle-normal"}},
+        {{"op", "delete"}, {"segmentId", "clip-import-2"}}
+    })}}.dump());
+    check(isolated_import.segments.size() == 1 && isolated_import.segments[0].id == "clip-import-1", "isolated imported segment");
+    // Imported clip (10..15s) cannot expand left into recorded media (0..10s) or right into import-2 (15..18s)
+    auto import_trimmed_left = edit_project(isolated_import, Json{{"op", "trimOutput"}, {"segmentId", "clip-import-1"}, {"edge", "start"}, {"outputTicks", -4 * time_scale}}.dump());
+    check(normalized_ticks(import_trimmed_left.segments[0].source_start) == 10 * time_scale, "imported clip start clamped to its own start");
+    auto import_trimmed_right = edit_project(isolated_import, Json{{"op", "trimOutput"}, {"segmentId", "clip-import-1"}, {"edge", "end"}, {"outputTicks", 10 * time_scale}}.dump());
+    check(normalized_ticks(import_trimmed_right.segments[0].source_start) + normalized_ticks(import_trimmed_right.segments[0].source_duration) == 15 * time_scale, "imported clip end clamped to its own end");
+    auto import_trimmed_in = edit_project(isolated_import, Json{{"op", "trimOutput"}, {"segmentId", "clip-import-1"}, {"edge", "start"}, {"outputTicks", time_scale}}.dump());
+    check(normalized_ticks(import_trimmed_in.segments[0].source_start) == 11 * time_scale, "imported clip inward trim works");
+    auto import_expanded_left = edit_project(import_trimmed_in, Json{{"op", "trimOutput"}, {"segmentId", "clip-import-1"}, {"edge", "start"}, {"outputTicks", -3 * time_scale}}.dump());
+    check(normalized_ticks(import_expanded_left.segments[0].source_start) == 10 * time_scale, "imported clip expand left stops at its own boundary");
+
+    // 5. Android project appendMedia compatibility
+    const auto android_project = parse_project(read(std::filesystem::path(FRAMETRAIL_FIXTURES) / "project-v2-android.json"));
+    const Json append_android{
+        {"op", "appendMedia"},
+        {"screenMedia", {
+            {"id", "screen-android-import"},
+            {"path", "media/import-desktop.mp4"},
+            {"duration", {{"ticks", 5 * time_scale}, {"timescale", time_scale}}},
+            {"width", 1280},
+            {"height", 720}
+        }},
+        {"audioMedia", {
+            {"id", "audio-android-import"},
+            {"path", "media/import-desktop.mp4"},
+            {"duration", {{"ticks", 5 * time_scale}, {"timescale", time_scale}}},
+            {"sampleRate", 48000},
+            {"channels", 2}
+        }},
+        {"segmentId", "clip-android-import"}
+    };
+    const auto merged_android = edit_project(android_project, append_android.dump());
+    check(merged_android.schema_version == 2, "Android merged project keeps schema 2");
+    check(Json::parse(merged_android.primary_source_json).at("kind") == "desktop", "Android primarySource kind switches to desktop");
+    check(normalized_ticks(merged_android.source_duration) == 15 * time_scale, "Android merged sourceDuration updated");
+    check(std::none_of(merged_android.media.begin(), merged_android.media.end(), [](const Media& m) { return m.kind == MediaKind::android_audio; }), "androidAudio converted to systemAudio on desktop switch");
+    check(parse_project(serialize_project(merged_android)).segments.size() == 4, "Android merged project roundtrips");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -177,7 +345,7 @@ int main(int argc, char** argv) {
         const auto text = read(std::filesystem::path(FRAMETRAIL_FIXTURES) / "project-v1.json");
         test_protocol(text);
         const auto project = parse_project(text);
-        test_timeline(project); test_pointer(project); test_scene(project);
+        test_timeline(project); test_pointer(project); test_scene(project); test_append_media(project);
         std::cout << "PASS: " << checks << " checks across protocol, timeline, pointer, scene\n";
         return 0;
     } catch (const std::exception& error) {
