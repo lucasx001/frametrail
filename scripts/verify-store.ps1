@@ -35,6 +35,10 @@ try {
     foreach ($file in $record.files) {
         if ($file.path -match '(^/|:|\\|(^|/)\.\.(/|$))' -or $inventory.ContainsKey($file.path)) { throw 'Unsafe or duplicate Store inventory path.' }
         $entry = $archive.GetEntry($file.path); if (!$entry) { $entry = $archive.GetEntry($file.path.Replace('/','\')) }
+        if (!$entry) {
+            $escaped = ($file.path.Split('/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+            $entry = $archive.GetEntry($escaped)
+        }
         if (!$entry -or $entry.Length -ne $file.bytes) { throw "Missing Store payload: $($file.path)" }
         $hash = [Security.Cryptography.SHA256]::Create(); $stream = $entry.Open()
         try { $actual = [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','').ToLowerInvariant() } finally { $stream.Dispose(); $hash.Dispose() }
@@ -43,7 +47,8 @@ try {
     }
     foreach ($entry in $archive.Entries) {
         $path = $entry.FullName.Replace('\','/')
-        if (!$path.EndsWith('/') -and !$inventory.ContainsKey($path) -and $path -notin @('[Content_Types].xml','AppxBlockMap.xml','AppxMetadata/CodeIntegrity.cat')) { throw "Unlisted Store package file: $path" }
+        $unescaped = ($path.Split('/') | ForEach-Object { [uri]::UnescapeDataString($_) }) -join '/'
+        if (!$path.EndsWith('/') -and !$inventory.ContainsKey($path) -and !$inventory.ContainsKey($unescaped) -and $path -notin @('[Content_Types].xml','AppxBlockMap.xml','AppxMetadata/CodeIntegrity.cat')) { throw "Unlisted Store package file: $path" }
     }
     foreach ($required in @('AppxManifest.xml','resources.pri','FrameTrail.App.pri','App.xbf','MainWindow.xbf','FrameTrail.App.exe','coreclr.dll','FrameTrail.Engine.dll','FrameTrail.Media.dll')) { if (!$inventory.ContainsKey($required)) { throw "Store payload missing $required" } }
 } finally { $archive.Dispose() }
