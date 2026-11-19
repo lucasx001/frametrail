@@ -3,28 +3,32 @@
          See THIRD-PARTY-NOTICES.md for the original MIT notice. Dimensions are DIPs. -->
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Light">
-            <SolidColorBrush x:Key="RecorderBase" Color="#FDFDFE" />
-            <SolidColorBrush x:Key="RecorderInk" Color="#1A1A1A" />
-            <SolidColorBrush x:Key="RecorderMuted" Color="#5C5C5C" />
-            <SolidColorBrush x:Key="RecorderFaint" Color="#808080" />
-            <SolidColorBrush x:Key="RecorderWell" Color="#14000000" />
-            <SolidColorBrush x:Key="RecorderSilver" Color="#0F000000" />
-            <SolidColorBrush x:Key="RecorderLine" Color="#17000000" />
-            <SolidColorBrush x:Key="RecorderPrimary" Color="#1F1F1F" />
-            <SolidColorBrush x:Key="RecorderOnPrimary" Color="White" />
-            <SolidColorBrush x:Key="RecorderEdge" Color="#1A000000" />
+            <SolidColorBrush x:Key="RecorderBase" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="RecorderInk" Color="#09090B" />
+            <SolidColorBrush x:Key="RecorderMuted" Color="#52525B" />
+            <SolidColorBrush x:Key="RecorderFaint" Color="#71717A" />
+            <SolidColorBrush x:Key="RecorderWell" Color="#0F09090B" />
+            <SolidColorBrush x:Key="RecorderSilver" Color="#0A09090B" />
+            <SolidColorBrush x:Key="RecorderLine" Color="#E4E4E7" />
+            <SolidColorBrush x:Key="RecorderPrimary" Color="#18181B" />
+            <SolidColorBrush x:Key="RecorderOnPrimary" Color="#FAFAFA" />
+            <SolidColorBrush x:Key="RecorderEdge" Color="#E4E4E7" />
+            <SolidColorBrush x:Key="SwitchThumbOff" Color="#FFFFFF" />
+            <SolidColorBrush x:Key="SwitchThumbOn" Color="#FFFFFF" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Default">
-            <SolidColorBrush x:Key="RecorderBase" Color="#101113" />
-            <SolidColorBrush x:Key="RecorderInk" Color="#F5FFFFFF" />
-            <SolidColorBrush x:Key="RecorderMuted" Color="#8FFFFFFF" />
-            <SolidColorBrush x:Key="RecorderFaint" Color="#52FFFFFF" />
-            <SolidColorBrush x:Key="RecorderWell" Color="#14FFFFFF" />
-            <SolidColorBrush x:Key="RecorderSilver" Color="#0FFFFFFF" />
-            <SolidColorBrush x:Key="RecorderLine" Color="#17FFFFFF" />
-            <SolidColorBrush x:Key="RecorderPrimary" Color="#F5FFFFFF" />
-            <SolidColorBrush x:Key="RecorderOnPrimary" Color="#141414" />
-            <SolidColorBrush x:Key="RecorderEdge" Color="#2BFFFFFF" />
+            <SolidColorBrush x:Key="RecorderBase" Color="#111113" />
+            <SolidColorBrush x:Key="RecorderInk" Color="#FAFAFA" />
+            <SolidColorBrush x:Key="RecorderMuted" Color="#A1A1AA" />
+            <SolidColorBrush x:Key="RecorderFaint" Color="#71717A" />
+            <SolidColorBrush x:Key="RecorderWell" Color="#14FAFAFA" />
+            <SolidColorBrush x:Key="RecorderSilver" Color="#0FFAFAFA" />
+            <SolidColorBrush x:Key="RecorderLine" Color="#27272A" />
+            <SolidColorBrush x:Key="RecorderPrimary" Color="#FAFAFA" />
+            <SolidColorBrush x:Key="RecorderOnPrimary" Color="#18181B" />
+            <SolidColorBrush x:Key="RecorderEdge" Color="#27272A" />
+            <SolidColorBrush x:Key="SwitchThumbOff" Color="#FAFAFA" />
+            <SolidColorBrush x:Key="SwitchThumbOn" Color="#18181B" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
             <SolidColorBrush x:Key="RecorderBase" Color="{ThemeResource SystemColorWindowColor}" />
@@ -37,6 +41,8 @@
             <SolidColorBrush x:Key="RecorderPrimary" Color="{ThemeResource SystemColorHighlightColor}" />
             <SolidColorBrush x:Key="RecorderOnPrimary" Color="{ThemeResource SystemColorHighlightTextColor}" />
             <SolidColorBrush x:Key="RecorderEdge" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SwitchThumbOff" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="SwitchThumbOn" Color="{ThemeResource SystemColorHighlightTextColor}" />
         </ResourceDictionary>
     </ResourceDictionary.ThemeDictionaries>
     <SolidColorBrush x:Key="RecorderRed" Color="#FF453B" />
@@ -51,12 +57,12 @@
                 <VisualStateGroup x:Name="SwitchStates">
                     <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.16"><VisualTransition.GeneratedEasingFunction><CubicEase EasingMode="EaseOut"/></VisualTransition.GeneratedEasingFunction></VisualTransition></VisualStateGroup.Transitions>
                     <VisualState x:Name="SwitchOff"/>
-                    <VisualState x:Name="SwitchOn"><VisualState.Setters><Setter Target="SwitchOnTrack.Opacity" Value="1"/><Setter Target="SwitchKnobTranslation.X" Value="12"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="SwitchOn"><VisualState.Setters><Setter Target="SwitchOnTrack.Opacity" Value="1"/><Setter Target="SwitchKnobOn.Opacity" Value="1"/><Setter Target="SwitchKnobTranslation.X" Value="12"/></VisualState.Setters></VisualState>
                 </VisualStateGroup>
                 <VisualStateGroup x:Name="SwitchFeedback">
                     <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.15"/></VisualStateGroup.Transitions>
                     <VisualState x:Name="SwitchQuiet"/>
-                    <VisualState x:Name="SwitchHighlighted"><VisualState.Setters><Setter Target="SwitchRing.Opacity" Value="0.3"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="SwitchHighlighted"><VisualState.Setters><Setter Target="SwitchRing.Opacity" Value="0.22"/></VisualState.Setters></VisualState>
                 </VisualStateGroup>
                 <VisualStateGroup x:Name="SwitchAvailability"><VisualState x:Name="SwitchEnabled"/><VisualState x:Name="SwitchDisabled"><VisualState.Setters><Setter Target="SwitchRoot.Opacity" Value="0.5"/></VisualState.Setters></VisualState></VisualStateGroup>
             </VisualStateManager.VisualStateGroups>
@@ -65,9 +71,11 @@
                 <Border x:Name="SwitchRing" BorderBrush="{TemplateBinding Foreground}" BorderThickness="3" Margin="-4" CornerRadius="14" Opacity="0"/>
                 <Border Background="{TemplateBinding Background}" CornerRadius="10"/>
                 <Border x:Name="SwitchOnTrack" Background="{TemplateBinding Foreground}" CornerRadius="10" Opacity="0"/>
-                <Border x:Name="SwitchKnob" Width="16" Height="16" CornerRadius="8" Background="White" HorizontalAlignment="Left" Margin="2,0">
-                    <Border.RenderTransform><TranslateTransform x:Name="SwitchKnobTranslation"/></Border.RenderTransform>
-                </Border>
+                <Grid x:Name="SwitchKnob" Width="16" Height="16" HorizontalAlignment="Left" Margin="2,0">
+                    <Grid.RenderTransform><TranslateTransform x:Name="SwitchKnobTranslation"/></Grid.RenderTransform>
+                    <Border CornerRadius="8" Background="{ThemeResource SwitchThumbOff}"/>
+                    <Border x:Name="SwitchKnobOn" CornerRadius="8" Background="{ThemeResource SwitchThumbOn}" Opacity="0"/>
+                </Grid>
             </Grid>
         </Grid>
     </ControlTemplate>
@@ -115,7 +123,7 @@
                     </VisualStateGroup>
                 </VisualStateManager.VisualStateGroups>
                 <ContentPresenter x:Name="Presenter" HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" />
-                <Ellipse x:Name="OnDot" Width="4" Height="4" Fill="{StaticResource RecorderMint}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,6" Visibility="Collapsed" />
+                <Ellipse x:Name="OnDot" Width="4" Height="4" Fill="{ThemeResource RecorderPrimary}" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,6" Visibility="Collapsed" />
             </Grid>
         </ControlTemplate></Setter.Value></Setter>
     </Style>
@@ -154,7 +162,7 @@
         <Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="Height" Value="40" />
         <Setter Property="Background" Value="{ThemeResource RecorderWell}" /><Setter Property="BorderThickness" Value="0" /><Setter Property="Padding" Value="10,0" />
         <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}" /><Setter Property="FontSize" Value="15" />
-        <Setter Property="Foreground" Value="{StaticResource RecorderMint}" /><Setter Property="UseSystemFocusVisuals" Value="False" />
+        <Setter Property="Foreground" Value="{ThemeResource RecorderPrimary}" /><Setter Property="UseSystemFocusVisuals" Value="False" />
         <Setter Property="local:SwitchMotion.Enabled" Value="True"/><Setter Property="Template" Value="{StaticResource ControlSwitchTemplate}"/>
     </Style>
     <Style x:Key="RecorderSettingToggle" TargetType="ToggleButton" BasedOn="{StaticResource RecorderInputToggle}">

@@ -35,9 +35,9 @@ public sealed class EditorMockupKnob : Slider
           <Grid RowSpacing="4"><Grid.RowDefinitions><RowDefinition Height="70"/><RowDefinition Height="24"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
             <Canvas x:Name="Dial" Width="72" Height="70" HorizontalAlignment="Center" Background="Transparent">
               <Path x:Name="Track" StrokeThickness="3.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
-              <Path x:Name="Fill" Stroke="{StaticResource EditorBlue}" StrokeThickness="3.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+              <Path x:Name="Fill" Stroke="{ThemeResource EditorAccent}" StrokeThickness="3.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
               <Ellipse Width="52" Height="52" Canvas.Left="10" Canvas.Top="9" Fill="{ThemeResource EditorRaised}" Stroke="{ThemeResource EditorLine}" StrokeThickness="0.75"/>
-              <Border x:Name="Pointer" Width="3" Height="11.44" CornerRadius="1.5" Background="{StaticResource EditorBlue}" Canvas.Left="34.5" Canvas.Top="14" RenderTransformOrigin="0.5,1.8356643"/>
+              <Border x:Name="Pointer" Width="3" Height="11.44" CornerRadius="1.5" Background="{ThemeResource EditorAccent}" Canvas.Left="34.5" Canvas.Top="14" RenderTransformOrigin="0.5,1.8356643"/>
             </Canvas>
             <TextBox x:Name="Readout" Grid.Row="1" Width="76" Height="24" MinHeight="24" FontSize="12" Padding="2,0" BorderThickness="0" CornerRadius="8" TextAlignment="Center" HorizontalAlignment="Center" Background="Transparent" Foreground="{ThemeResource EditorInk}"/>
             <TextBlock x:Name="Caption" Grid.Row="2" FontSize="12" Foreground="{ThemeResource EditorSecondary}" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Stretch"/>
@@ -79,7 +79,9 @@ public sealed class EditorMockupKnob : Slider
     {
         if (track is null || fill is null || pointer is null || readout is null || caption is null) return;
         double fraction = (Value - Minimum) / Math.Max(Maximum - Minimum, 0.0001);
-        track.Data = Arc(1); track.Stroke = RecorderTheme.Brush(this, "EditorLine"); fill.Data = Arc(fraction); fill.Opacity = fraction > 0.004 ? 1 : 0;
+        var accent = RecorderTheme.Brush(this, "EditorAccent");
+        track.Data = Arc(1); track.Stroke = RecorderTheme.Brush(this, "EditorLine"); fill.Data = Arc(fraction); fill.Stroke = accent; fill.Opacity = fraction > 0.004 ? 1 : 0;
+        pointer.Background = accent;
         pointer.RenderTransform = new RotateTransform { Angle = -135 + 270 * fraction };
         caption.Text = Label;
         if (!editing) { updating = true; readout.Text = Value.ToString(Suffix == "×" ? "0.00" : "0", CultureInfo.CurrentCulture) + Suffix; updating = false; }

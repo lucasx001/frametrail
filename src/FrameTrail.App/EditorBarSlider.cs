@@ -60,7 +60,7 @@ public sealed class EditorBarSlider : Slider
                 <Grid Width="16" Height="16" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False">
                   <Grid.RenderTransform><TranslateTransform x:Name="ThumbPosition"/></Grid.RenderTransform>
                   <Border x:Name="ThumbRing" Margin="-4" BorderThickness="4" CornerRadius="12" Opacity="0"/>
-                  <Border x:Name="Thumb" Background="White" BorderThickness="1" CornerRadius="8"><Border.Shadow><ThemeShadow/></Border.Shadow></Border>
+                  <Border x:Name="Thumb" Background="{ThemeResource EditorSliderThumb}" BorderThickness="1.5" CornerRadius="8"><Border.Shadow><ThemeShadow/></Border.Shadow></Border>
                 </Grid>
               </Grid>
               <TextBlock x:Name="ValueLabel" Grid.Column="1" FontFamily="{StaticResource RecorderFont}" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" IsHitTestVisible="False"/>
@@ -99,8 +99,9 @@ public sealed class EditorBarSlider : Slider
         range.Width = FlowDirection == FlowDirection.RightToLeft ? track.ActualWidth - x : x;
         range.HorizontalAlignment = FlowDirection == FlowDirection.RightToLeft ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         thumbPosition.X = x;
-        var accent = Accent ?? (Brush)Application.Current.Resources["EditorBlue"];
+        var accent = Accent ?? RecorderTheme.Brush(this, "EditorAccent");
         range.Background = thumb.BorderBrush = accent;
+        thumb.Background = RecorderTheme.Brush(this, "EditorSliderThumb");
         if (GetTemplateChild("ThumbRing") is Border ring) ring.BorderBrush = accent;
         string format = StepFrequency >= 1 && Math.Abs(Value - Math.Round(Value)) <= 0.001 ? "0" : "0.##";
         valueLabel.Text = Value.ToString(format, System.Globalization.CultureInfo.CurrentCulture) + Suffix;

@@ -108,7 +108,19 @@ public sealed partial class EditorWindow
         effectProperties.Children.Add(actionsPanel);
         Root.ActualThemeChanged += (_, _) => { var line = RecorderTheme.Brush(Root, "EditorLine"); foreach (var d in dividers) d.Background = line; };
         effectPicker.SelectionChanged += async (_, _) => { if (loadingVisuals) return; await SafeAsync(async () => { await FlushVisualChangesAsync(); selectedEffect = (effectPicker.SelectedItem as EffectEntry)?.Id; LoadSelectedVisual(); timeline.SelectVisual(selectedEffect); }); };
-        timeline.SelectEffect += async id => { await SafeAsync(async () => { await FlushVisualChangesAsync(); selectedEffect = id; ShowInspector(2); RefreshVisualInspector(); }); };
+        timeline.SelectEffect += async id => {
+            await SafeAsync(async () => {
+                await FlushVisualChangesAsync();
+                if (editor.Snapshot.Effects.FirstOrDefault(e => e.Id == id)?.Kind == "subtitle") {
+                    selectedSubtitleId = id;
+                    if (!selectedSubtitleIds.Contains(id)) { selectedSubtitleIds.Clear(); selectedSubtitleIds.Add(id); }
+                    if (inspectorTab != 6) ShowInspector(6);
+                    else RefreshSubtitleInspector();
+                } else {
+                    selectedEffect = id; ShowInspector(2); RefreshVisualInspector();
+                }
+            });
+        };
         openingSettings.Children.Add(VisualLabel(L.T("SD50922830D9E"))); introDuration.Value = 0.7;
         openingSettings.Children.Add(VisualTile(introStyle, introDuration, VisualButton(L.T("SE1B2D5A70D59"), () => ApplyOpeningAsync(false), "editor.intro.apply"), VisualButton(L.T("SBFA8C11031E5"), async () => { if (editor.Snapshot.Effects.Any(e => e.Id == "opening-screen")) await editor.DeleteEffectAsync("opening-screen"); }, "editor.intro.remove")));
         openingSettings.Children.Add(VisualTile(VisualButton(L.T("SE87613AD8A19"), () => ApplyOpeningAsync(true), "editor.camera.animation")));
@@ -140,7 +152,7 @@ public sealed partial class EditorWindow
         loadingVisuals = true;
         try
         {
-            var list = editor.Snapshot.Effects.Select(e => new EffectEntry(e.Id, $"{EffectName(e.Kind)} · {VisualResources.Ticks(e.SourceStart) / 10_000_000.0:0.##}s")).ToArray();
+            var list = editor.Snapshot.Effects.Where(e => e.Kind != "subtitle").Select(e => new EffectEntry(e.Id, $"{EffectName(e.Kind)} · {VisualResources.Ticks(e.SourceStart) / 10_000_000.0:0.##}s")).ToArray();
             effectPicker.ItemsSource = list; effectPicker.SelectedItem = list.FirstOrDefault(e => e.Id == selectedEffect) ?? list.FirstOrDefault(); selectedEffect = (effectPicker.SelectedItem as EffectEntry)?.Id;
             var settings = editor.Snapshot.Editor ?? new(); cursorSmooth.Value = settings.CursorSmoothing; cameraShape.SelectedIndex = Array.IndexOf(new[] { "rounded", "rectangle", "circle" }, settings.CameraShape);
             RefreshMockupInspector();
@@ -148,7 +160,7 @@ public sealed partial class EditorWindow
             if (opening is not null) { introStyle.SelectedIndex = Array.IndexOf(introStyles, StringValue(opening.Parameters, "style", "fade")); introDuration.Value = NumberValue(opening.Parameters, "enter", 0.7); }
         }
         finally { loadingVisuals = false; }
-        LoadSelectedVisual(); timeline.SelectVisual(inspectorTab==2?selectedEffect:null); UpdateBackdropTabs(); QueueCanvasGeometry();
+        LoadSelectedVisual(); timeline.SelectVisual(inspectorTab == 2 ? selectedEffect : inspectorTab == 6 ? selectedSubtitleId : null); UpdateBackdropTabs(); QueueCanvasGeometry();
     }
     private static double NumberValue(JsonElement p, string key, double fallback) => p.TryGetProperty(key, out var value) && value.TryGetDouble(out var number) ? number : fallback;
     private static string StringValue(JsonElement p, string key, string fallback) => p.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString()! : fallback;
@@ -216,8 +228,8 @@ public sealed partial class EditorWindow
     {
         string kind = page ?? editor.Snapshot.Editor?.Backdrop?.Kind ?? "solid";
         foreach (var button in BackgroundSourceTabs.Children.OfType<Button>()) {
-            bool active = button.Tag as string == kind; button.Background = active ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["EditorBlue"] : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            button.Foreground = active ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["EditorBlueInk"] : RecorderTheme.Brush(Root, "EditorSecondary");
+            bool active = button.Tag as string == kind; button.Background = active ? RecorderTheme.Brush(Root, "EditorAccent") : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            button.Foreground = active ? RecorderTheme.Brush(Root, "EditorAccentInk") : RecorderTheme.Brush(Root, "EditorSecondary");
         }
         WallpaperPicker.Visibility = kind == "image" ? Visibility.Visible : Visibility.Collapsed;
         BackgroundColors.Visibility = kind is "solid" or "gradient" ? Visibility.Visible : Visibility.Collapsed;

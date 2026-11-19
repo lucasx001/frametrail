@@ -26,6 +26,10 @@ foreach ($extension in @('msix','zip')) {
         foreach ($path in $expected.Keys) {
             $entry = $archive.GetEntry($path)
             if (!$entry) { $entry = $archive.GetEntry($path.Replace('/','\')) }
+            if (!$entry -and $extension -eq 'msix') {
+                $escaped = ($path.Split('/') | ForEach-Object { [uri]::EscapeDataString($_) }) -join '/'
+                $entry = $archive.GetEntry($escaped)
+            }
             if (!$entry) { throw "Missing archive entry: $path" }
             $stream = $entry.Open(); $hash = [Security.Cryptography.SHA256]::Create()
             try { $actual = [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','').ToLowerInvariant() }

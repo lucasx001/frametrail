@@ -194,6 +194,52 @@ void apply_command(Project& p, const Json& cmd) {
                 }
             }
         }
+    } else if (op == "subtitlesReplace") {
+        if (!cmd.contains("subtitles") || !cmd["subtitles"].is_array() || cmd["subtitles"].size() > 10'000)
+            throw ValidationError("subtitlesReplace.subtitles", "expected array of at most 10000 subtitles");
+        const bool has_start = cmd.contains("rangeStart") && !cmd["rangeStart"].is_null();
+        const bool has_end = cmd.contains("rangeEnd") && !cmd["rangeEnd"].is_null();
+        if (has_start != has_end)
+            throw ValidationError("subtitlesReplace", "rangeStart and rangeEnd must be provided together");
+        if (has_start) {
+            const auto range_start = parse_int_field(cmd, "rangeStart", 0, maximum_source_ticks, "subtitlesReplace.rangeStart");
+            const auto range_end = parse_int_field(cmd, "rangeEnd", 0, maximum_source_ticks, "subtitlesReplace.rangeEnd");
+            if (range_end <= range_start)
+                throw ValidationError("subtitlesReplace.rangeEnd", "rangeEnd must be greater than rangeStart");
+            std::erase_if(p.effects, [&](const Effect& e) {
+                if (e.kind != "subtitle") return false;
+                const auto s = normalized_ticks(e.source_start);
+                const auto d = normalized_ticks(e.source_duration);
+                return s < range_end && s + d > range_start;
+            });
+        } else {
+            std::erase_if(p.effects, [](const Effect& e) { return e.kind == "subtitle"; });
+        }
+        for (const auto& entry : cmd["subtitles"]) {
+            if (!entry.is_object())
+                throw ValidationError("subtitlesReplace.subtitles", "expected effect object");
+            for (auto it = entry.begin(); it != entry.end(); ++it) {
+                if (it.key() != "id" && it.key() != "kind" && it.key() != "sourceStart" && it.key() != "sourceDuration" && it.key() != "parameters")
+                    throw ValidationError(std::string("subtitlesReplace.subtitles.") + it.key(), "unknown effect field");
+            }
+            if (!entry.contains("id") || !entry["id"].is_string())
+                throw ValidationError("subtitlesReplace.subtitles.id", "expected string id");
+            if (!entry.contains("kind") || !entry["kind"].is_string() || entry["kind"].get<std::string>() != "subtitle")
+                throw ValidationError("subtitlesReplace.subtitles.kind", "expected subtitle effect kind");
+            const auto start = parse_time_field(entry.at("sourceStart"), "subtitlesReplace.subtitles.sourceStart");
+            const auto dur = parse_time_field(entry.at("sourceDuration"), "subtitlesReplace.subtitles.sourceDuration");
+            const auto& params = entry.at("parameters");
+            if (!params.is_object())
+                throw ValidationError("subtitlesReplace.subtitles.parameters", "expected object");
+            p.effects.push_back({entry["id"].get<std::string>(), "subtitle", start, dur, params.dump()});
+        }
+        if (cmd.contains("subtitleStyle") && !cmd["subtitleStyle"].is_null()) {
+            if (!cmd["subtitleStyle"].is_object())
+                throw ValidationError("subtitlesReplace.subtitleStyle", "expected object");
+            auto settings = Json::parse(p.editor_json);
+            settings["subtitleStyle"] = cmd["subtitleStyle"];
+            p.editor_json = settings.dump();
+        }
     } else if (op == "batch") {
         if (!cmd.at("commands").is_array() || cmd["commands"].size() > 100) throw ValidationError("batch", "invalid command count");
         for (const auto& c : cmd["commands"]) { if (c.value("op", "") == "batch") throw ValidationError("batch", "nested batches are disallowed"); apply_command(p, c); }

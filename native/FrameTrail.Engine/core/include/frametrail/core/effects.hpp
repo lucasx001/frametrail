@@ -1,12 +1,22 @@
 #pragma once
 #include "project.hpp"
 #include <array>
+#include <optional>
 
 namespace frametrail::core {
 // DogSC MotionStyle: sqrt(210 / 2.4) / (2*pi), 42 / (2*sqrt(210*2.4)).
 inline constexpr double default_spring_frequency = 1.4887581711534412;
 inline constexpr double default_spring_damping = 0.9354143466934853;
 struct FocusPoint { int64_t ticks{}; double x{0.5}, y{0.5}, from_x{0.5}, from_y{0.5}; int64_t transition_start{-1}; };
+struct SubtitleWord {
+    std::string text;
+    double start_offset{}; // seconds relative to cue source_start
+    double end_offset{};
+};
+struct SubtitleCueStyleOverride {
+    std::optional<double> position_x, position_y, font_size;
+    std::optional<std::string> text_color, outline_color, background_color, highlight_color, alignment;
+};
 struct VisualEffect {
     std::string id, kind, mode, path, text, attachment{"screen"}, target{"screen"}, easing{"cubic"};
     int64_t start{}, duration{};
@@ -15,6 +25,10 @@ struct VisualEffect {
     double strength{16}, opacity{1}, angle_x{}, angle_y{}, rotation{}, frequency{default_spring_frequency}, damping{default_spring_damping};
     bool outside_hidden{};
     std::vector<FocusPoint> focus_points;
+    std::string secondary_text;
+    std::vector<SubtitleWord> words;
+    SubtitleCueStyleOverride subtitle_override;
+    bool custom_fade{};
 };
 struct PlaneMotion {
     double scale{1}, focus_x{0.5}, focus_y{0.5}, angle_x{}, angle_y{}, opacity{1}, reveal{1}, offset_x{}, offset_y{};
@@ -23,7 +37,7 @@ struct PlaneMotion {
 struct VisualScene {
     PlaneMotion screen, camera;
     std::string camera_shape{"rounded"}, frame_style{"none"};
-    std::vector<VisualEffect> regions, stickers;
+    std::vector<VisualEffect> regions, stickers, subtitles;
 };
 void validate_visual_parameters(const Effect& effect);
 VisualEffect parse_visual_effect(const Effect& effect);

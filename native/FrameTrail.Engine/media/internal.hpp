@@ -83,7 +83,7 @@ struct Renderer {
     Renderer(const std::filesystem::path& path);
     ~Renderer();
     void resize(uint32_t w, uint32_t h, double sx, double sy);
-    ID3D11Texture2D* render(const Project& project, const FrameScene& scene, uint32_t w, uint32_t h);
+    ID3D11Texture2D* render(const Project& project, const FrameScene& scene, uint32_t w, uint32_t h, bool render_subtitles = true);
     void present();
     void clear_decoders() { readers.clear(); }
 private:
@@ -94,7 +94,9 @@ private:
     void ensure_surface(ComPtr<ID3D11Texture2D>& texture, uint32_t w, uint32_t h);
     void background(const Project& project, const FrameScene& scene);
     void stickers(const FrameScene& scene, bool attached);
+    void subtitles(const Project& project, const FrameScene& scene, ID3D11Texture2D* target, uint32_t w, uint32_t h, bool render_subtitles);
 };
+void extract_audio_pcm16k(const std::filesystem::path& source_path, const std::filesystem::path& output_wav_path, int64_t source_start_ticks, int64_t source_duration_ticks);
 struct AudioReader {
     ComPtr<IMFSourceReader> reader; std::vector<float> data;
     int64_t start{}, count{};

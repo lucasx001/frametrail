@@ -94,6 +94,7 @@ public sealed record ExportSettings
     [JsonRequired] public string VideoCodec { get; init; } = "h264";
     [JsonRequired] public string AudioCodec { get; init; } = "aac";
     [JsonRequired] public string Container { get; init; } = "mp4";
+    public bool BurnSubtitles { get; init; } = true;
 }
 
 public sealed record PrimarySource
@@ -156,6 +157,132 @@ public sealed record EditorSettings
     public string FrameBrowserAddress { get; init; } = "";
     public string CameraShape { get; init; } = "rounded";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public BackdropSettings? Backdrop { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public SubtitleStyleSettings? SubtitleStyle { get; init; }
+}
+
+public sealed record SubtitleStyleSettings
+{
+    public string Preset { get; init; } = "classicOutline";
+    public string FontFamily { get; init; } = "Alibaba PuHuiTi 3.0";
+    public double FontSize { get; init; } = 44.0;
+    public string TextColor { get; init; } = "#FFFFFF";
+    public string OutlineColor { get; init; } = "#09090B";
+    public double OutlineWidth { get; init; } = 3.0;
+    public bool ShadowEnabled { get; init; } = true;
+    public double ShadowBlur { get; init; } = 6.0;
+    public double ShadowOpacity { get; init; } = 0.65;
+    public string BackgroundColor { get; init; } = "#09090B";
+    public double BackgroundOpacity { get; init; } = 0.0;
+    public double BackgroundRadius { get; init; } = 12.0;
+    public string HighlightColor { get; init; } = "#FACC15";
+    public string HighlightMode { get; init; } = "none";
+    public double PositionX { get; init; } = 0.5;
+    public double PositionY { get; init; } = 0.88;
+    public string Alignment { get; init; } = "center";
+    public double MaxWidthRatio { get; init; } = 0.84;
+    public int MaxCharsPerLine { get; init; } = 18;
+    public bool BilingualEnabled { get; init; } = false;
+    public double SecondaryScale { get; init; } = 0.72;
+    public double FadeSeconds { get; init; } = 0.12;
+
+    public static SubtitleStyleSettings ClassicOutline() => new();
+
+    public static SubtitleStyleSettings DarkPill() => new()
+    {
+        Preset = "darkPill",
+        FontSize = 40.0,
+        OutlineWidth = 0.0,
+        ShadowEnabled = false,
+        ShadowBlur = 0.0,
+        ShadowOpacity = 0.0,
+        BackgroundColor = "#09090B",
+        BackgroundOpacity = 0.78,
+        BackgroundRadius = 14.0,
+        HighlightMode = "none"
+    };
+
+    public static SubtitleStyleSettings KaraokePop() => new()
+    {
+        Preset = "karaokePop",
+        FontSize = 48.0,
+        OutlineWidth = 4.0,
+        ShadowEnabled = true,
+        ShadowBlur = 8.0,
+        ShadowOpacity = 0.75,
+        BackgroundOpacity = 0.0,
+        HighlightColor = "#FACC15",
+        HighlightMode = "wordPill"
+    };
+
+    public static SubtitleStyleSettings BilingualClean() => new()
+    {
+        Preset = "bilingualClean",
+        FontSize = 40.0,
+        OutlineWidth = 2.5,
+        ShadowEnabled = true,
+        ShadowBlur = 5.0,
+        ShadowOpacity = 0.55,
+        BackgroundColor = "#09090B",
+        BackgroundOpacity = 0.55,
+        BackgroundRadius = 10.0,
+        PositionY = 0.86,
+        BilingualEnabled = true,
+        SecondaryScale = 0.72
+    };
+
+    public static SubtitleStyleSettings ForPreset(string? preset) => (preset ?? "").Trim() switch
+    {
+        "classicOutline" => ClassicOutline(),
+        "darkPill" => DarkPill(),
+        "karaokePop" => KaraokePop(),
+        "bilingualClean" => BilingualClean(),
+        "custom" => new SubtitleStyleSettings { Preset = "custom" },
+        _ => ClassicOutline()
+    };
+}
+
+public sealed record SubtitleWordTiming
+{
+    public string Text { get; init; } = "";
+    public double StartOffset { get; init; }
+    public double EndOffset { get; init; }
+}
+
+public sealed record SubtitleCueStyleOverride
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public double? PositionX { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public double? PositionY { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public double? FontSize { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? TextColor { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? OutlineColor { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? BackgroundColor { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? HighlightColor { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Alignment { get; init; }
+}
+
+public sealed record SubtitleCueParameters
+{
+    private static readonly JsonSerializerOptions CueJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    public string Text { get; init; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SecondaryText { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public IReadOnlyList<SubtitleWordTiming>? Words { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public SubtitleCueStyleOverride? StyleOverride { get; init; }
+
+    public JsonElement ToJsonElement() => JsonSerializer.SerializeToElement(this, CueJsonOptions);
+
+    public static SubtitleCueParameters FromEffect(SourceEffect effect)
+    {
+        ArgumentNullException.ThrowIfNull(effect);
+        if (effect.Parameters.ValueKind != JsonValueKind.Object)
+            return new SubtitleCueParameters();
+        return effect.Parameters.Deserialize<SubtitleCueParameters>(CueJsonOptions) ?? new SubtitleCueParameters();
+    }
 }
 
 public sealed record BackdropSettings

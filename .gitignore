@@ -11,3 +11,6 @@ CMakeUserPresets.json
 *.frametrailproject/
 __pycache__/
 *.py[cod]
+**/node_modules/
+src/FrameTrail.AiUi/dist/
+*.tsbuildinfo

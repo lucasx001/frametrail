@@ -189,10 +189,11 @@ internal sealed class PreviewScrubber : Grid
     private void Draw()
     {
         double w = TrackWidth;
-        var accent = (Brush)Application.Current.Resources["EditorBlue"];
+        var accent = RecorderTheme.Brush(this, "EditorAccent");
         track.Background = RecorderTheme.Brush(this, "EditorControlTrack");
         hoverTrack.Background = RecorderTheme.Brush(this, "EditorInk");
         fill.Background = accent;
+        thumb.Background = RecorderTheme.Brush(this, "EditorSliderThumb");
         thumb.BorderBrush = accent;
         if (w <= 0) return;
         double fraction = durationTicks > 0 ? Math.Clamp((double)positionTicks / Math.Max(1, durationTicks - 1), 0, 1) : 0;

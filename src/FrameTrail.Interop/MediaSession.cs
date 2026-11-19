@@ -48,6 +48,7 @@ internal static class MediaNative
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_audio_stop(MediaHandle handle);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] internal static extern int ft_media_audio_stream(MediaHandle handle, long ticks);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_audio_peaks(MediaHandle handle, string json);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_extract_audio_pcm16k(string sourcePath, string outputWavPath, long sourceStartTicks, long sourceDurationTicks);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Unicode)] internal static extern int ft_media_error(StringBuilder text, uint capacity);
     internal static void Check(int result)
     {
@@ -67,6 +68,14 @@ public sealed class MediaSession : IDisposable
     { MediaNative.Check(MediaNative.ft_media_probe_visual(Path.GetFullPath(path), video ? 1u : 0u, out var width, out var height, out var duration)); return (width, height, duration); }
     public static (uint Width, uint Height, long Duration, bool HasAudio, uint SampleRate, uint Channels) ProbeClip(string path)
     { MediaNative.Check(MediaNative.ft_media_probe_clip(Path.GetFullPath(path), out var width, out var height, out var duration, out var hasAudio, out var sampleRate, out var channels)); return (width, height, duration, hasAudio != 0, sampleRate, channels); }
+    public static void ExtractAudioPcm16k(string sourcePath, string outputWavPath, long sourceStartTicks = 0, long sourceDurationTicks = -1)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath)) throw new ArgumentException("Source media path is required.", nameof(sourcePath));
+        if (string.IsNullOrWhiteSpace(outputWavPath)) throw new ArgumentException("Output WAV path is required.", nameof(outputWavPath));
+        var fullOutput = Path.GetFullPath(outputWavPath);
+        if (Path.GetDirectoryName(fullOutput) is { Length: > 0 } dir) Directory.CreateDirectory(dir);
+        MediaNative.Check(MediaNative.ft_media_extract_audio_pcm16k(Path.GetFullPath(sourcePath), fullOutput, Math.Max(0L, sourceStartTicks), sourceDurationTicks));
+    }
     public MediaSession(ProjectSnapshot snapshot, string directory)
     {
         var json = Encoding.UTF8.GetBytes(ProjectJson.Serialize(snapshot));

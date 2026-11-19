@@ -1,6 +1,7 @@
 #include "internal.hpp"
 #include "frametrail/core/cursor.hpp"
 #include "frametrail/core/mockup.hpp"
+#include "subtitle_renderer.hpp"
 #include "visual_gpu.hpp"
 #include "image_decode.hpp"
 #include <d2d1_1helper.h>
@@ -213,16 +214,36 @@ void Renderer::stickers(const FrameScene& scene,bool attached) {
         d2->SetTransform(original);
     }
 }
-ID3D11Texture2D* Renderer::render(const Project& p,const FrameScene& scene,uint32_t w,uint32_t h) {
+void Renderer::subtitles(const Project&, const FrameScene& scene, ID3D11Texture2D* target, uint32_t w, uint32_t h, bool render_subtitles) {
+    if (!render_subtitles || scene.visual.subtitles.empty() || !target) return;
+    auto surface = bitmap(target, true, false);
+    d2->SetTarget(surface.Get());
+    d2->SetTransform(D2D1::Matrix3x2F::Scale(static_cast<float>(w) / scene.width, static_cast<float>(h) / scene.height));
+    d2->BeginDraw();
+    bool drawing = true;
+    try {
+        draw_subtitles(factory.Get(), d2.Get(), text_factory.Get(), cached_settings, scene);
+        const HRESULT hr = d2->EndDraw();
+        drawing = false;
+        d2->SetTarget(nullptr);
+        FT_MEDIA_CHECK(hr);
+    } catch (...) {
+        if (drawing) d2->EndDraw();
+        d2->SetTarget(nullptr);
+        throw;
+    }
+}
+ID3D11Texture2D* Renderer::render(const Project& p,const FrameScene& scene,uint32_t w,uint32_t h,bool render_subtitles) {
     d2->SetTarget(nullptr);ensure_surface(composition,w,h);width=w;height=h;
     if(settings_source!=&p){cached_settings=Json::parse(p.editor_json);settings_source=&p;}
     const auto radius=float(cached_settings.value("cornerRadius",16.0));
     auto begin=[&](ID3D11Texture2D* texture,bool alpha) {auto target=bitmap(texture,true,alpha);d2->SetTarget(target.Get());d2->SetTransform(D2D1::Matrix3x2F::Scale(float(w)/scene.width,float(h)/scene.height));d2->BeginDraw();};
     auto end=[&] {auto hr=d2->EndDraw();d2->SetTarget(nullptr);FT_MEDIA_CHECK(hr);};
+    const bool has_visual_effects = std::any_of(p.effects.begin(), p.effects.end(), [](const Effect& e) { return e.kind != "subtitle"; });
     bool drawing=false;
     try {
         begin(composition.Get(),false);drawing=true;d2->Clear(D2D1::ColorF(float(scene.background.r),float(scene.background.g),float(scene.background.b),1));background(p,scene);
-        if(p.effects.empty()) {
+        if(!has_visual_effects) {
             layer(p,scene.screen,radius,true,cached_settings,true,scene.visual);if(scene.camera)layer(p,*scene.camera,radius,true,cached_settings,false,scene.visual);
             end();drawing=false;
         } else {
@@ -238,6 +259,7 @@ ID3D11Texture2D* Renderer::render(const Project& p,const FrameScene& scene,uint3
         }
         output=composition;std::vector<VisualEffect> regions;for(auto&e:scene.visual.regions)if(e.attachment=="canvas")regions.push_back(e);
         if(!regions.empty())output=visuals->process(composition.Get(),regions,Rect{},true);
+        subtitles(p,scene,output.Get(),w,h,render_subtitles);
     } catch(...) {if(drawing)d2->EndDraw();d2->SetTarget(nullptr);throw;}
     return output.Get();
 }

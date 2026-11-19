@@ -87,6 +87,14 @@ int32_t __cdecl ft_media_probe_clip(const wchar_t* path, uint32_t* width, uint32
         }
     });
 }
+int32_t __cdecl ft_media_extract_audio_pcm16k(const wchar_t* source_path, const wchar_t* output_wav_path, int64_t source_start_ticks, int64_t source_duration_ticks) {
+    return protect([&] {
+        if (!source_path || !*source_path || !output_wav_path || !*output_wav_path || source_start_ticks < 0)
+            winrt::throw_hresult(E_INVALIDARG);
+        MfScope runtime;
+        extract_audio_pcm16k(source_path, output_wav_path, source_start_ticks, source_duration_ticks);
+    });
+}
 int32_t __cdecl ft_media_create(const char* json, uint32_t length, const wchar_t* root, ft_media_handle* handle) {
     if (!handle) return E_POINTER; *handle = 0;
     return protect([&] {

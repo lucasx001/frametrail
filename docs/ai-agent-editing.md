@@ -107,9 +107,9 @@ flowchart LR
 在桌面端软件中，复用用户本地已有订阅的**三种正规、可落地的技术方案**如下：
 
 1. **方案 3.1：桥接本地已登录的官方 CLI Agent（最推荐，极客与开发者最爱）**
-   - 许多拥有 Claude Pro/Max、ChatGPT Plus/Pro 或 GitHub Copilot 订阅的用户，电脑上已经登录了官方命令行工具：**Claude Code (`claude`)**、**OpenAI Codex CLI (`codex`)** 或 **GitHub Copilot CLI**。
-   - 这些 CLI 工具原生支持 **非交互式 JSON 流输出**（例如 `claude -p "指令" --output-format stream-json --mcp-config frametrail-mcp.json`）。
-   - **对接方式**：将 FrameTrail 的编辑器操作封装为一个本地 **MCP Server (Model Context Protocol)**，当用户在聊天框选择“本地 Claude Code 订阅”时，直接通过子进程调用 `claude` CLI 并挂载 FrameTrail 的 MCP 工具集，即可直接消耗用户的订阅额度完成视频剪辑！
+   - 许多拥有 Google Antigravity、Claude Pro/Max、ChatGPT Plus/Pro 或 GitHub Copilot 订阅的用户，电脑上已经登录了官方命令行工具：**Antigravity CLI (`agy`)**、**Claude Code (`claude`)**、**OpenAI Codex CLI (`codex`)** 或 **GitHub Copilot CLI**。
+   - 这些 CLI 工具（以及 `google-antigravity` Python SDK）原生支持 **非交互式 JSON 流输出** 与本地 MCP 协议挂载（例如 `agy -p "指令" --output-format json --mcp-config frametrail-mcp.json` 或 `claude -p "指令" --output-format stream-json --mcp-config frametrail-mcp.json`）。
+   - **对接方式**：将 FrameTrail 的编辑器操作封装为一个本地 **MCP Server (Model Context Protocol)**，当用户在聊天框选择“Antigravity CLI 本地订阅”或“Claude Code 本地订阅”时，直接通过子进程调用本地 `agy` / `claude` / `codex` CLI 并挂载 FrameTrail 的 MCP 工具集，即可直接消耗用户的订阅额度完成视频剪辑！
 2. **方案 3.2：支持本地 OpenAI 兼容网关 / 代理端点**
    - 允许用户在模型配置中自定义 `Base URL`。如果用户在本地运行了统一订阅管理网关（如本地 OneAPI / LiteLLM / Copilot 转发服务），填入本地地址即可直接使用。
 3. **方案 3.3：开放平台 OAuth PKCE 授权登录**

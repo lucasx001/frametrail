@@ -32,7 +32,20 @@ FrameSceneEvaluator::FrameSceneEvaluator(Project project)
     const auto crop = settings.value("crop", nlohmann::json::object()); crop_width_ = crop.value("width", 1.0); crop_height_ = crop.value("height", 1.0);
     frame_style_=settings.value("frameStyle",std::string("none")); camera_shape_=settings.value("cameraShape",std::string("rounded"));
     frame_scale_=settings.value("frameScale",1.0); frame_toolbar_scale_=settings.value("frameToolbarScale",1.0);
-    for(auto&e:project_.effects)effects_.push_back(parse_visual_effect(e));
+    double subtitle_fade = 0.12;
+    if (settings.contains("subtitleStyle") && settings["subtitleStyle"].is_object()) {
+        const auto& ss = settings["subtitleStyle"];
+        if (ss.contains("fadeSeconds") && ss["fadeSeconds"].is_number())
+            subtitle_fade = std::clamp(ss["fadeSeconds"].get<double>(), 0.0, 1.5);
+    }
+    for (auto& e : project_.effects) {
+        auto parsed = parse_visual_effect(e);
+        if (parsed.kind == "subtitle" && !parsed.custom_fade) {
+            parsed.enter = subtitle_fade;
+            parsed.exit = subtitle_fade;
+        }
+        effects_.push_back(std::move(parsed));
+    }
 }
 
 std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_ticks) const {

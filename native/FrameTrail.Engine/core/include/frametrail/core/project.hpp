@@ -68,6 +68,7 @@ struct ExportSettings {
     std::uint32_t width{1920}, height{1080};
     Rational fps{30, 1};
     std::string video_codec{"h264"}, audio_codec{"aac"}, container{"mp4"};
+    bool burn_subtitles{true};
 };
 struct RecordingMarker { std::string id; Time time; std::string label; };
 struct Project {

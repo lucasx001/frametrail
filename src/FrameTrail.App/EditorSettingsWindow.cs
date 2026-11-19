@@ -42,8 +42,12 @@ internal sealed partial class EditorSettingsWindow : Window
     {
         navigation.Children.Clear();
         for (int i = 0; i < names.Length; i++) {
-            int target = i; var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 }; row.Children.Add(new EditorGlyph { Kind = icons[i], Width = 17, Height = 17, Foreground = RecorderTheme.Brush(root, "EditorInk") }); if (i == index) row.Children.Add(Text(names[i], 13));
-            var button = new Button { Style = (Style)Application.Current.Resources["EditorButton"], Content = row, Height = 44, MinWidth = 44, Padding = new Thickness(i == index ? 14 : 0, 0, i == index ? 16 : 0, 0), CornerRadius = new CornerRadius(22), Background = i == index ? RecorderTheme.Brush(root, "EditorHover") : new SolidColorBrush(Colors.Transparent) }; ToolTipService.SetToolTip(button, names[i]); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, names[i]); button.Click += (_, _) => Select(target); navigation.Children.Add(button);
+            int target = i; bool active = i == index;
+            var ink = RecorderTheme.Brush(root, active ? "EditorAccentInk" : "EditorSecondary");
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+            row.Children.Add(new EditorGlyph { Kind = icons[i], Width = 17, Height = 17, Foreground = ink });
+            if (active) row.Children.Add(new TextBlock { Text = names[i], FontSize = 13, FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"], Foreground = ink });
+            var button = new Button { Style = (Style)Application.Current.Resources["EditorButton"], Content = row, Height = 44, MinWidth = 44, Padding = new Thickness(active ? 14 : 0, 0, active ? 16 : 0, 0), CornerRadius = new CornerRadius(22), Background = active ? RecorderTheme.Brush(root, "EditorAccent") : new SolidColorBrush(Colors.Transparent) }; ToolTipService.SetToolTip(button, names[i]); Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, names[i]); button.Click += (_, _) => Select(target); navigation.Children.Add(button);
         }
         page.Children.Clear(); page.Children.Add(Text(names[index], 26));
         if (index == 0) {
@@ -82,7 +86,7 @@ internal sealed partial class EditorSettingsWindow : Window
                 var clear = Button(L.T("SC6ABBA0F95CC")); clear.Click += async (_, _) => { clear.IsEnabled=false;try { await System.Threading.Tasks.Task.Run(mediaCache.ClearRebuildable);cacheStatus.Text=L.T("S84354BD74567"); } catch(Exception error) { cacheStatus.Text=error.Message; } finally { clear.IsEnabled=true; } };
                 var cachePanel=new StackPanel {Spacing=10};cachePanel.Children.Add(budget);cachePanel.Children.Add(clear);cachePanel.Children.Add(cacheStatus);page.Children.Add(Tile(cachePanel));
             }
-            page.Children.Add(Text(L.T("S86A63F23A076"), 12, true)); var row = new Grid { ColumnSpacing = 8 }; for (int i = 0; i < 3; i++) { var theme = new[] { ElementTheme.Light, ElementTheme.Dark, ElementTheme.Default }[i]; row.ColumnDefinitions.Add(new ColumnDefinition()); var button = Button(new[] { L.T("SAA0819DFC4D8"), L.T("SA6B75D068032"), L.T("S217CFE7DB1E3") }[i]); button.Background = RecorderTheme.Brush(root, root.RequestedTheme == theme ? "EditorHover" : "EditorWell"); button.Click += (_, _) => applyTheme(theme); Grid.SetColumn(button, i); row.Children.Add(button); } page.Children.Add(Tile(row));
+            page.Children.Add(Text(L.T("S86A63F23A076"), 12, true)); var row = new Grid { ColumnSpacing = 8 }; for (int i = 0; i < 3; i++) { var theme = new[] { ElementTheme.Light, ElementTheme.Dark, ElementTheme.Default }[i]; bool active = root.RequestedTheme == theme; row.ColumnDefinitions.Add(new ColumnDefinition()); var button = Button(new[] { L.T("SAA0819DFC4D8"), L.T("SA6B75D068032"), L.T("S217CFE7DB1E3") }[i]); button.Background = RecorderTheme.Brush(root, active ? "EditorAccent" : "EditorWell"); button.Foreground = RecorderTheme.Brush(root, active ? "EditorAccentInk" : "EditorInk"); button.Click += (_, _) => applyTheme(theme); Grid.SetColumn(button, i); row.Children.Add(button); } page.Children.Add(Tile(row));
             page.Children.Add(Text(L.T("S899432D83D98"), 12, true)); foreach(var help in EditorShortcuts.Help)page.Children.Add(Tile(Text(help,12,true)));
         } else if (index == 2) {
             var guide=Button(L.T("S0BBB77BE9877"));guide.Click+=async(_,_)=>await GettingStarted.ShowAsync(this,true);page.Children.Add(guide);

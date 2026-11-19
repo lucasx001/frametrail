@@ -38,6 +38,17 @@ jobs:
           # A per-run probe avoids depending on the existence of a real release.
           $probeVersion = "65534.$([long]$env:GITHUB_RUN_ID % 65535).$([long]$env:GITHUB_RUN_ATTEMPT % 65535)"
           ./scripts/publish-release.ps1 -Repository $env:GITHUB_REPOSITORY -Version $probeVersion -ExpectedCommit (git rev-parse HEAD) -CheckOnly
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: src/FrameTrail.AiUi/pnpm-lock.yaml
+      - name: Build AI Copilot WebView UI
+        shell: pwsh
+        run: ./scripts/build-ai-ui.ps1
       - name: Build native engine, WinUI app, and run CPU tests
         shell: pwsh
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore

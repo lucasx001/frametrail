@@ -95,6 +95,12 @@ bool valid_id(std::string_view value) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
     });
 }
+bool valid_hex_color(std::string_view value) {
+    if (value.size() != 7 || value[0] != '#') return false;
+    return std::all_of(value.begin() + 1, value.end(), [](unsigned char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
+}
 void validate_rect(Rect value, const std::string& path) {
     if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.width) || !std::isfinite(value.height) ||
         value.x < 0 || value.y < 0 || value.width <= 0 || value.height <= 0 || value.x + value.width > 1.000000001 || value.y + value.height > 1.000000001)
@@ -210,13 +216,15 @@ Project parse_project(std::string_view text) {
             }
         }
         const auto& output = required(root, "export", "$");
-        object(output, "export", {"width", "height", "fps", "videoCodec", "audioCodec", "container"});
+        object(output, "export", {"width", "height", "fps", "videoCodec", "audioCodec", "container", "burnSubtitles"});
         result.export_settings.width = static_cast<std::uint32_t>(integer(required(output, "width", "export"), "export.width", 2, 7680));
         result.export_settings.height = static_cast<std::uint32_t>(integer(required(output, "height", "export"), "export.height", 2, 7680));
         result.export_settings.fps = read_rational(required(output, "fps", "export"), "export.fps");
         result.export_settings.video_codec = string_value(required(output, "videoCodec", "export"), "export.videoCodec", 16);
         result.export_settings.audio_codec = string_value(required(output, "audioCodec", "export"), "export.audioCodec", 16);
         result.export_settings.container = string_value(required(output, "container", "export"), "export.container", 16);
+        if (output.contains("burnSubtitles") && !output["burnSubtitles"].is_null())
+            result.export_settings.burn_subtitles = boolean(output["burnSubtitles"], "export.burnSubtitles");
         validate_project(result);
         return result;
     } catch (const ValidationError&) { throw; }
@@ -225,7 +233,7 @@ Project parse_project(std::string_view text) {
 
 void validate_project(const Project& project) {
     const auto editor = Json::parse(project.editor_json);
-    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "cursorStyle", "cursorHideWhenIdle", "cursorIdleDelay", "cursorTimeOffset", "cursorClickStyle", "cursorClickOpacity", "cursorClickScale", "cursorClickColor", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "backdrop"});
+    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "cursorStyle", "cursorHideWhenIdle", "cursorIdleDelay", "cursorTimeOffset", "cursorClickStyle", "cursorClickOpacity", "cursorClickScale", "cursorClickColor", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "backdrop", "subtitleStyle"});
     if(editor.contains("cursorStyle")) { auto value=string_value(editor["cursorStyle"],"editor.cursorStyle",16); if(value!="recorded" && value!="arrow" && value!="dot" && value!="crosshair")invalid("editor.cursorStyle","invalid cursor style"); }
     if(editor.contains("cursorClickStyle")) { auto value=string_value(editor["cursorClickStyle"],"editor.cursorClickStyle",16); if(value!="none" && value!="ripple" && value!="highlight")invalid("editor.cursorClickStyle","invalid click style"); }
     if(editor.contains("cursorHideWhenIdle") && !editor["cursorHideWhenIdle"].is_boolean())invalid("editor.cursorHideWhenIdle","must be boolean");
@@ -255,6 +263,56 @@ void validate_project(const Project& project) {
         auto path=b.value("path",std::string{});
         if((kind=="image" || kind=="video") && (!is_project_relative_path(path) || !path.starts_with("assets/")))invalid("editor.backdrop.path","background must reference a project asset");
         if(b.contains("secondary")) { auto c=read_color(b["secondary"],"editor.backdrop.secondary"); for(auto v:{c.r,c.g,c.b,c.a})if(v<0 || v>1)invalid("editor.backdrop.secondary","invalid color"); }
+    }
+    if (editor.contains("subtitleStyle") && !editor["subtitleStyle"].is_null()) {
+        const auto& ss = editor["subtitleStyle"];
+        object(ss, "editor.subtitleStyle", {"preset", "fontFamily", "fontSize", "textColor", "outlineColor", "outlineWidth", "shadowEnabled", "shadowBlur", "shadowOpacity", "backgroundColor", "backgroundOpacity", "backgroundRadius", "highlightColor", "highlightMode", "positionX", "positionY", "alignment", "maxWidthRatio", "maxCharsPerLine", "bilingualEnabled", "secondaryScale", "fadeSeconds"});
+        if (ss.contains("preset") && !ss["preset"].is_null()) {
+            const auto v = string_value(ss["preset"], "editor.subtitleStyle.preset", 32);
+            if (v != "classicOutline" && v != "darkPill" && v != "karaokePop" && v != "bilingualClean" && v != "custom")
+                invalid("editor.subtitleStyle.preset", "unsupported subtitle preset");
+        }
+        if (ss.contains("fontFamily") && !ss["fontFamily"].is_null())
+            (void)string_value(ss["fontFamily"], "editor.subtitleStyle.fontFamily", 128);
+        auto check_range = [&](const char* key, double lo, double hi) {
+            if (!ss.contains(key) || ss[key].is_null()) return;
+            const auto v = number(ss[key], std::string("editor.subtitleStyle.") + key);
+            if (v < lo || v > hi) invalid(std::string("editor.subtitleStyle.") + key, "value outside allowed range");
+        };
+        auto check_hex = [&](const char* key) {
+            if (!ss.contains(key) || ss[key].is_null()) return;
+            const auto v = string_value(ss[key], std::string("editor.subtitleStyle.") + key, 16);
+            if (!valid_hex_color(v)) invalid(std::string("editor.subtitleStyle.") + key, "expected #RRGGBB hex color");
+        };
+        check_range("fontSize", 12.0, 160.0);
+        check_hex("textColor");
+        check_hex("outlineColor");
+        check_range("outlineWidth", 0.0, 16.0);
+        if (ss.contains("shadowEnabled") && !ss["shadowEnabled"].is_null()) (void)boolean(ss["shadowEnabled"], "editor.subtitleStyle.shadowEnabled");
+        check_range("shadowBlur", 0.0, 32.0);
+        check_range("shadowOpacity", 0.0, 1.0);
+        check_hex("backgroundColor");
+        check_range("backgroundOpacity", 0.0, 1.0);
+        check_range("backgroundRadius", 0.0, 48.0);
+        check_hex("highlightColor");
+        if (ss.contains("highlightMode") && !ss["highlightMode"].is_null()) {
+            const auto v = string_value(ss["highlightMode"], "editor.subtitleStyle.highlightMode", 16);
+            if (v != "none" && v != "wordColor" && v != "wordPill")
+                invalid("editor.subtitleStyle.highlightMode", "unsupported highlight mode");
+        }
+        check_range("positionX", 0.05, 0.95);
+        check_range("positionY", 0.05, 0.96);
+        if (ss.contains("alignment") && !ss["alignment"].is_null()) {
+            const auto v = string_value(ss["alignment"], "editor.subtitleStyle.alignment", 16);
+            if (v != "left" && v != "center" && v != "right")
+                invalid("editor.subtitleStyle.alignment", "unsupported alignment");
+        }
+        check_range("maxWidthRatio", 0.3, 0.96);
+        if (ss.contains("maxCharsPerLine") && !ss["maxCharsPerLine"].is_null())
+            (void)integer(ss["maxCharsPerLine"], "editor.subtitleStyle.maxCharsPerLine", 6, 80);
+        if (ss.contains("bilingualEnabled") && !ss["bilingualEnabled"].is_null()) (void)boolean(ss["bilingualEnabled"], "editor.subtitleStyle.bilingualEnabled");
+        check_range("secondaryScale", 0.4, 1.2);
+        check_range("fadeSeconds", 0.0, 1.5);
     }
     for (const auto* key : {"systemGain", "microphoneGain", "cornerRadius", "shadow", "cursorScale"}) if (editor.contains(key)) {
         const auto v = number(editor[key], std::string("editor.") + key);
@@ -350,7 +408,7 @@ void validate_project(const Project& project) {
         const auto start = normalized_ticks(effect.source_start);
         const auto length = normalized_ticks(effect.source_duration);
         if (start < 0 || length <= 0 || start >= duration || length > duration - start) invalid("effects", "effect outside source duration");
-        if (effect.kind != "zoom" && effect.kind != "mask" && effect.kind != "sticker" && effect.kind != "focus" && effect.kind != "tilt" && effect.kind != "intro")
+        if (effect.kind != "zoom" && effect.kind != "mask" && effect.kind != "sticker" && effect.kind != "focus" && effect.kind != "tilt" && effect.kind != "intro" && effect.kind != "subtitle")
             invalid("effects.kind", "unsupported effect kind");
         try {
             const auto parameters = Json::parse(effect.parameters_json);
@@ -404,6 +462,7 @@ std::string serialize_project(const Project& project) {
     const auto& output = project.export_settings;
     result["export"] = {{"width", output.width}, {"height", output.height}, {"fps", ratio_json(output.fps)},
         {"videoCodec", output.video_codec}, {"audioCodec", output.audio_codec}, {"container", output.container}};
+    if (!output.burn_subtitles) result["export"]["burnSubtitles"] = false;
     if (!project.primary_source_json.empty()) result["primarySource"] = Json::parse(project.primary_source_json);
     if (project.editor_json != "{}") result["editor"] = Json::parse(project.editor_json);
     auto text = result.dump(2);

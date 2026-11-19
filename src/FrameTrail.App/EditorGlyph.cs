@@ -46,6 +46,10 @@ public sealed class EditorGlyph : UserControl
             "Sun" => "M12.2,9 A3.2,3.2 0 1 0 5.8,9 A3.2,3.2 0 1 0 12.2,9 M9,1.6 L9,3.5 M9,14.5 L9,16.4 M1.6,9 L3.5,9 M14.5,9 L16.4,9 M3.8,3.8 L5.1,5.1 M12.9,12.9 L14.2,14.2 M3.8,14.2 L5.1,12.9 M12.9,5.1 L14.2,3.8",
             "Settings" => "M7,2 L11,2 L11.6,4.3 L13,5.1 L15.2,4.5 L17,7.5 L15.4,9 L15.4,10.4 L17,12 L15.2,15 L13,14.4 L11.6,15.2 L11,17 L7,17 L6.4,15.2 L5,14.4 L2.8,15 L1,12 L2.6,10.4 L2.6,9 L1,7.5 L2.8,4.5 L5,5.1 L6.4,4.3 Z M12,9.5 A3,3 0 1 0 6,9.5 A3,3 0 1 0 12,9.5",
             "Refresh" => "M15,5 L15,1.5 M15,5 L11.5,5 M15,5 A6.5,6.5 0 1 0 15.5,12",
+            "Sparkle" => "M9,2 Q9.5,8.5 16,9 Q9.5,9.5 9,16 Q8.5,9.5 2,9 Q8.5,8.5 9,2 Z",
+            "SendUp" => "M9,14 L9,4 M5,8 L9,4 L13,8",
+            "StopSquare" => "M5.5,5.5 L12.5,5.5 L12.5,12.5 L5.5,12.5 Z",
+            "Subtitles" => "M3.5,3.5 L14.5,3.5 Q16.5,3.5 16.5,5.5 L16.5,12.5 Q16.5,14.5 14.5,14.5 L3.5,14.5 Q1.5,14.5 1.5,12.5 L1.5,5.5 Q1.5,3.5 3.5,3.5 M4.5,8.5 L8.5,8.5 M10.5,8.5 L13.5,8.5 M4.5,11.5 L7,11.5 M9,11.5 L13.5,11.5",
             _ => "M3,3 L15,3 L15,15 L3,15 Z"
         };
         var path = (Microsoft.UI.Xaml.Shapes.Path)XamlReader.Load($"<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='{data}' StrokeThickness='1.45' StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round' />");

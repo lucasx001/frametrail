@@ -58,7 +58,7 @@ public sealed partial class EditorWindow
         foreach (var (wallpaper, button) in wallpaperButtons) {
             bool selected = backdrop is { Kind: "image" } && backdrop.Path == wallpaper.ProjectPath;
             button.IsChecked = selected;
-            button.BorderBrush = selected ? (Brush)Application.Current.Resources["EditorBlue"] : new SolidColorBrush(Colors.Transparent);
+            button.BorderBrush = selected ? RecorderTheme.Brush(Root, "EditorAccent") : new SolidColorBrush(Colors.Transparent);
             button.Background = RecorderTheme.Brush(Root, "EditorWell");
         }
     }

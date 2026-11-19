@@ -153,10 +153,11 @@ public sealed class EditorMockupTurntable : UserControl
             card.Button.Projection = new PlaneProjection { RotationY = -angle * 0.8 };
             card.Button.Opacity = Math.Clamp(facing * 1.25 + 0.05, 0, 1); card.Button.IsHitTestVisible = facing > 0.2;
             bool front = Math.Abs(offset) < 0.5 && FrameStyles.All[i] == selected;
-            card.Surface.BorderBrush = front ? (Brush)Application.Current.Resources["EditorBlue"] : RecorderTheme.Brush(this, "EditorLine");
+            var accent = RecorderTheme.Brush(this, "EditorAccent");
+            card.Surface.BorderBrush = front ? accent : RecorderTheme.Brush(this, "EditorLine");
             card.Surface.BorderThickness = new Thickness(front ? 2 : 0.5); card.Surface.Background = Gradient(dark ? 0x222428 : 0xF1F2F5, dark ? 0x17181B : 0xE2E4E8);
             card.Glow.Opacity = dark ? 0.06 : 0.8; card.Shade.Opacity = 0.25 * (1 - Math.Max(facing, 0));
-            var dot = (Border)dots.Children[i]; dot.Width = FrameStyles.All[i] == selected ? 18 : 5; dot.Background = FrameStyles.All[i] == selected ? (Brush)Application.Current.Resources["EditorBlue"] : RecorderTheme.Brush(this, "EditorLine");
+            var dot = (Border)dots.Children[i]; dot.Width = FrameStyles.All[i] == selected ? 18 : 5; dot.Background = FrameStyles.All[i] == selected ? accent : RecorderTheme.Brush(this, "EditorLine");
         }
         name.Text = FrameStyles.Name(selected); name.Foreground = RecorderTheme.Brush(this, "EditorInk");
     }

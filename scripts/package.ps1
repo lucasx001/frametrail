@@ -24,6 +24,14 @@ $version = [string]$versions.Project.PropertyGroup.FileVersion
 [xml] $executableManifest = Get-Content (Join-Path $ProjectRoot 'src\FrameTrail.App\app.manifest') -Raw -Encoding UTF8
 if ($manifest.Package.Identity.Version -ne $version -or $executableManifest.assembly.assemblyIdentity.version -ne $version) { throw 'Version mismatch: version.props, app.manifest and AppxManifest.xml must agree.' }
 if (!$SkipBuild) { & "$PSScriptRoot\build.ps1" -Configuration Release -NativeBuildDirectory $NativeBuildDirectory -ToolchainRoot $ToolchainRoot -LockedRestore }
+$aiRuntimeExe = Join-Path $ProjectRoot 'artifacts\ai-agent-runtime\frametrail-agent.exe'
+if (!(Test-Path -LiteralPath $aiRuntimeExe -PathType Leaf)) {
+    & "$PSScriptRoot\build-ai-agent.ps1"
+}
+$aiUiIndex = Join-Path $ProjectRoot 'artifacts\ai-ui-dist\index.html'
+if (!(Test-Path -LiteralPath $aiUiIndex -PathType Leaf)) {
+    & "$PSScriptRoot\build-ai-ui.ps1"
+}
 $packagingTools = Get-FrameTrailPackagingTools
 $makeappx = $packagingTools.MakeAppx; $makepri = $packagingTools.MakePri
 $dotnet = Resolve-FrameTrailTool 'dotnet'
@@ -46,7 +54,7 @@ Copy-Item -LiteralPath (Join-Path $nuget "microsoft.netcore.app.runtime.win-x64\
 $appSdkVersion = ($appProject.Project.ItemGroup.PackageReference | Where-Object Include -eq 'Microsoft.WindowsAppSDK').Version
 Copy-Item -LiteralPath (Join-Path $nuget "microsoft.windowsappsdk\$appSdkVersion\NOTICE.txt") -Destination (Join-Path $licenses 'WindowsAppSDK-NOTICE.txt')
 Copy-Item -LiteralPath (Join-Path $NativeBuildDirectory '_deps\nlohmann_json-src\LICENSE.MIT') -Destination (Join-Path $licenses 'nlohmann-json-MIT.txt')
-foreach ($required in @('FrameTrail.App.exe','FrameTrail.App.dll','FrameTrail.App.pri','App.xbf','MainWindow.xbf','EditorWindow.xbf','RecorderStyles.xbf','EditorStyles.xbf','coreclr.dll','hostfxr.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','Assets\Fonts\LICENSE.txt','Assets\Brand\FrameTrail.Icon.v1.ico','PackageAssets\StoreLogo.png','PackageAssets\Square44x44Logo.png','PackageAssets\Square150x150Logo.png','Licenses\dogsc-MIT.txt','THIRD-PARTY-NOTICES.md','Docs\privacy.md')) {
+foreach ($required in @('FrameTrail.App.exe','FrameTrail.App.dll','FrameTrail.App.pri','App.xbf','MainWindow.xbf','EditorWindow.xbf','RecorderStyles.xbf','EditorStyles.xbf','coreclr.dll','hostfxr.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','Assets\Fonts\LICENSE.txt','Assets\Brand\FrameTrail.Icon.v1.ico','PackageAssets\StoreLogo.png','PackageAssets\Square44x44Logo.png','PackageAssets\Square150x150Logo.png','Licenses\dogsc-MIT.txt','THIRD-PARTY-NOTICES.md','Docs\privacy.md','ai-agent-runtime\frametrail-agent.exe','ai-ui\index.html')) {
     if (!(Test-Path -LiteralPath (Join-Path $payload $required))) { throw "Candidate is missing $required" }
 }
 Get-ChildItem -LiteralPath $payload -Filter '*.pdb' -Recurse | Remove-Item
@@ -91,6 +99,15 @@ $revision = (& git -C $ProjectRoot rev-parse HEAD).Trim(); $dirty = [bool](& git
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'src\FrameTrail.App\packages.lock.json') -Destination (Join-Path $OutputDirectory 'nuget-dependencies.lock.json')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($payload,(Join-Path $OutputDirectory ($name + '-portable.zip')))
-if ($BuildInstaller) { & "$PSScriptRoot\package-installer.ps1" -PackageDirectory $OutputDirectory -InstallerCompiler $InstallerCompiler }
+if ($BuildInstaller) {
+    . "$PSScriptRoot\release-common.ps1"
+    $release = ConvertTo-FrameTrailReleaseVersion (([version]$version).ToString(3))
+    if ([Reflection.AssemblyName]::GetAssemblyName((Join-Path $payload 'FrameTrail.App.dll')).Version.ToString() -ne $release.FileVersion) { throw 'Installer payload version mismatch.' }
+    if (!$InstallerCompiler) { $InstallerCompiler = Resolve-FrameTrailTool 'ISCC.exe' @((Join-Path $ProjectRoot '.tools\inno-7.1.0\ISCC.exe')) }
+    Invoke-Checked $InstallerCompiler @('/Qp', "/DPayloadDirectory=$payload", "/DReleaseVersion=$($release.Version)", "/DFileVersion=$($release.FileVersion)", "/DPackageOutput=$OutputDirectory", (Join-Path $ProjectRoot 'packaging\FrameTrail.iss'))
+    $installer = Join-Path $OutputDirectory "FrameTrail-$($release.Version)-x64-Setup.exe"
+    if (!(Test-Path -LiteralPath $installer) -or (Get-Item -LiteralPath $installer).VersionInfo.FileVersion.Trim() -ne $release.FileVersion) { throw 'Installer executable or version metadata is missing.' }
+    Write-Output "Installer: $installer (unsigned, current user, Windows 11 x64)."
+}
 Get-ChildItem -LiteralPath $OutputDirectory -File | Sort-Object Name | ForEach-Object { (Get-FrameTrailSha256 $_.FullName) + '  ' + $_.Name } | Set-Content -LiteralPath (Join-Path $OutputDirectory 'SHA256SUMS.txt') -Encoding ASCII
 Write-Host "Candidate: $OutputDirectory ($signature). No package was installed or published."

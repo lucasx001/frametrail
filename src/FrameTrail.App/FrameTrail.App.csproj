@@ -15,6 +15,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Content Include="..\..\artifacts\android-runtime\**\*" Link="android-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\artifacts\ai-agent-runtime\**\*" Link="ai-agent-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\artifacts\ai-ui-dist\**\*" Link="ai-ui\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\*.otf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\MockupStudioGlow.svg" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\Wallpapers\*.jpg;Assets\Wallpapers\catalog.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

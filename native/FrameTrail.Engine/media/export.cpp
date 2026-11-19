@@ -156,7 +156,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         const auto end = std::min<int64_t>(duration, static_cast<int64_t>(video_position + 1) * time_scale / fps);
         const auto scene = evaluator.evaluate(ticks);
         if (!scene) throw ValidationError("export", "missing scheduled output frame");
-        auto* texture = gpu().render(project, *scene, project.export_settings.width, project.export_settings.height);
+        auto* texture = gpu().render(project, *scene, project.export_settings.width, project.export_settings.height, project.export_settings.burn_subtitles);
         auto sample = converter->convert(texture, ticks, end - ticks, *this);
         auto started = std::chrono::steady_clock::now();
         FT_MEDIA_CHECK(writer->WriteSample(video_stream, sample.Get()));

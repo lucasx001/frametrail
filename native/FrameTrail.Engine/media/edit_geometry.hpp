@@ -1,5 +1,6 @@
 #pragma once
 #include "internal.hpp"
+#include "subtitle_renderer.hpp"
 #include "frametrail/core/plane_projection.hpp"
 #include <cmath>
 #include <numbers>
@@ -28,6 +29,18 @@ inline Json edit_geometry(const Project& p,const FrameScene& scene,bool crop_mod
     } else {
         for(auto const& e:scene.visual.regions) add(e.id,e.kind,e.rect,e.attachment=="screen"?scene.screen.output_rect:canvas,e.attachment=="screen"?scene.visual.screen:PlaneMotion{});
         for(auto const& e:scene.visual.stickers) add(e.id,e.kind,e.rect,e.attachment=="screen"?scene.screen.output_rect:canvas,e.attachment=="screen"?scene.visual.screen:PlaneMotion{},e.rotation);
+        if (!scene.visual.subtitles.empty()) {
+            const auto settings = Json::parse(p.editor_json);
+            const auto base_style = parse_subtitle_style(settings);
+            const float scale_ref = static_cast<float>(std::min(scene.width, scene.height)) / 1080.0f;
+            float stack_offset_y = 0.0f;
+            for (const auto& e : scene.visual.subtitles) {
+                const auto cue_style = resolve_cue_style(base_style, e.subtitle_override);
+                const auto rect = measure_subtitle_rect(nullptr, e, cue_style, scene.width, scene.height, stack_offset_y);
+                add(e.id, "subtitle", rect, canvas, PlaneMotion{});
+                stack_offset_y += static_cast<float>(rect.height * scene.height) + 12.0f * scale_ref;
+            }
+        }
     }
     return items;
 }

@@ -113,8 +113,4 @@ CPU测试验证ABI、取消、1000次生命周期、重复销毁与并发。WinU
 
 具体构建、测试与UI运行结果见`docs/validation/0001-*.md`，未执行检查不视为完成。
 
-## M2 媒体验证
-
-`validate-m2.cmd -Matrix` 在全新 artifacts 子目录生成合成素材，运行原生解码/合成、剪辑、MP4/M4A/素材副本及六组输出能力验证，再用独立 Python 脚本核查图像、烧录帧号、音调和样本数。额外使用本机 ffmpeg、ffprobe 与 Python 标准库，只是开发验证依赖；产品不调用 FFmpeg。结果见 [M2 记录](validation/m2-editor-export.md)。
-
 `run.cmd -Configuration Release -ProjectPath <工程目录或project.json>` 可直接打开编辑器。普通运行入口会给当前进程设置项目 portable .NET 的 DOTNET_ROOT，不修改系统环境。

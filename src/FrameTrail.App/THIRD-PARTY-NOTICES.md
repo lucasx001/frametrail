@@ -107,3 +107,21 @@ contributors, Apache-2.0) and the ADB files from Google Android Platform-Tools
 alongside the application as `android-runtime/scrcpy-LICENSE.txt` and
 `android-runtime/ADB-NOTICE.txt`. No scrcpy desktop client or FFmpeg runtime is
 included. The server and ADB have separate notices; neither replaces the other.
+
+## AI Copilot WebView UI
+
+The AI Copilot panel is hosted in Microsoft Edge WebView2 (via the Evergreen
+WebView2 Runtime on Windows) and bundles static assets in `ai-ui/` built from
+open-source web libraries:
+
+- **React** and **React DOM** (MIT License, Meta Platforms, Inc.)
+- **Tailwind CSS** (MIT License, Tailwind Labs, Inc.)
+- **shadcn/ui** and **Radix UI** primitives (MIT License)
+- **Vercel AI Elements** (`@ai-elements/*`, Apache-2.0 License, Vercel, Inc.)
+- **Lucide React** (ISC License, Lucide Contributors)
+- **cmdk** (MIT License, Paco Coursey)
+- **Streamdown** / Markdown rendering & syntax highlighting dependencies (MIT / Apache-2.0 Licenses)
+
+## Offline Speech Recognition (Auto Captions)
+
+Local offline subtitle transcription uses **Whisper.net** (MIT License, Sandro Hadzic and contributors, https://github.com/sandrohanea/whisper.net) and **whisper.cpp** (MIT License, Georgi Gerganov and contributors, https://github.com/ggml-org/whisper.cpp) via the `Whisper.net`, `Whisper.net.Runtime`, and `Whisper.net.Runtime.Vulkan` packages. Quantized GGML model weights are downloaded on demand to `%LOCALAPPDATA%\FrameTrail\models\whisper\` and are not redistributed in the application package.

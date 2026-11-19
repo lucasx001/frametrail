@@ -53,7 +53,7 @@ internal sealed partial class ProjectLibraryWindow : Window
         foreach (var button in new[] { browse, refresh }) { button.Style = (Style)Application.Current.Resources["EditorButton"]; button.Padding = new Thickness(14, 0, 14, 0); }
         Grid.SetColumn(browse, 1); Grid.SetColumn(refresh, 2); footer.Children.Add(browse); footer.Children.Add(refresh); Grid.SetRow(footer, 4); root.Children.Add(footer);
         AutomationProperties.SetAutomationId(search, "projects.search"); AutomationProperties.SetName(search, L.T("SDFB59EA2B7A2"));
-        search.Resources["TextControlBorderBrushFocused"] = Application.Current.Resources["EditorBlue"];
+        search.Resources["TextControlBorderBrushFocused"] = Brush("EditorAccent");
         AutomationProperties.SetAutomationId(list, "projects.list"); AutomationProperties.SetName(list, L.T("S909A4F288125"));
         list.ItemContainerTransitions = new TransitionCollection { new AddDeleteThemeTransition(), new RepositionThemeTransition() };
         // The card owns its hover surface; the recycled ListViewItem must not draw a second one.
@@ -83,6 +83,7 @@ internal sealed partial class ProjectLibraryWindow : Window
         root.KeyDown += (_, e) => { if (e.Key == VirtualKey.Escape && !working && !confirming) { e.Handled = true; Close(); } };
         void Theme(ElementTheme theme) {
             root.RequestedTheme = theme; root.Background = Brush("EditorStage"); count.Foreground = empty.Foreground = Brush("EditorSecondary");
+            search.Resources["TextControlBorderBrushFocused"] = Brush("EditorAccent");
             ((TextBlock)heading.Children[0]).Foreground = Brush("EditorInk"); ((TextBlock)heading.Children[1]).Foreground = Brush("EditorSecondary"); RenderRows();
         }
         EditorAppearance.Changed += Theme;
@@ -145,7 +146,7 @@ internal sealed partial class ProjectLibraryWindow : Window
     {
             var row = new Grid();
             var content = new Grid { ColumnSpacing = 14, Margin = new Thickness(0, 0, 32, 0) }; content.ColumnDefinitions.Add(new() { Width = new GridLength(42) }); content.ColumnDefinitions.Add(new());
-            UIElement thumbnail = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorBlue") };
+            UIElement thumbnail = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorAccent") };
             try {
                 string cacheDir = Path.Combine(entry.Directory, "cache");
                 if (Directory.Exists(cacheDir)) {
@@ -154,7 +155,7 @@ internal sealed partial class ProjectLibraryWindow : Window
                         var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage { DecodePixelWidth = 96, UriSource = new Uri(png) };
                         var preview = new Image { Source = bitmap, Stretch = Stretch.UniformToFill };
                         preview.ImageFailed += (_, _) => {
-                            if (preview.Parent is Border host) host.Child = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorBlue") };
+                            if (preview.Parent is Border host) host.Child = new EditorGlyph { Kind = "Film", Width = 22, Height = 22, Foreground = Brush("EditorAccent") };
                         };
                         thumbnail = preview;
                     }

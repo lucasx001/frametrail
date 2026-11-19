@@ -85,6 +85,21 @@ jobs:
         run: |
           ./scripts/setup-android.ps1
           ./scripts/setup-installer-tool.ps1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build self-contained AI Agent runtime (frametrail-agent.exe)
+        run: ./scripts/build-ai-agent.ps1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: src/FrameTrail.AiUi/pnpm-lock.yaml
+      - name: Build AI Copilot WebView UI
+        run: ./scripts/build-ai-ui.ps1
       - name: Build and test Release
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore
       - name: Package self-contained application and installer

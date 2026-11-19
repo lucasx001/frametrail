@@ -19,6 +19,8 @@
     <Compile Include="..\..\src\FrameTrail.App\ProjectCatalog.cs" Link="ProjectCatalog.cs" />
     <Compile Include="..\..\src\FrameTrail.App\EditorMediaCache.cs" Link="EditorMediaCache.cs" />
     <Compile Include="..\..\src\FrameTrail.App\FilmstripSampling.cs" Link="FilmstripSampling.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\AiCopilotProtocol.cs" Link="AiCopilotProtocol.cs" />
+    <Compile Include="..\..\src\FrameTrail.App\SubtitleEditingMath.cs" Link="SubtitleEditingMath.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.1"><PrivateAssets>all</PrivateAssets></PackageReference>

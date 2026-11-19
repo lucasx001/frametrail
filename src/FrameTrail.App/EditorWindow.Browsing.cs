@@ -78,12 +78,19 @@ public sealed partial class EditorWindow
                 await FlushVisualChangesAsync();
                 if(ctrl) {
                     var effects=editor.Timeline.Effects.DistinctBy(v=>v.Id).ToArray();if(effects.Length==0)return;
-                    int index=Math.Clamp(Array.FindIndex(effects,v=>v.Id==selectedEffect)+direction,0,effects.Length-1);
-                    selectedEffect=effects[index].Id;ShowInspector(2);RefreshVisualInspector();timeline.SelectVisual(selectedEffect);
+                    string? activeId = inspectorTab == 6 ? selectedSubtitleId : selectedEffect;
+                    int index=Math.Clamp(Array.FindIndex(effects,v=>v.Id==activeId)+direction,0,effects.Length-1);
+                    if (effects[index].Kind == "subtitle") {
+                        selectedSubtitleId = effects[index].Id;
+                        selectedSubtitleIds.Clear(); selectedSubtitleIds.Add(selectedSubtitleId);
+                        ShowInspector(6); RefreshSubtitleInspector(); timeline.SelectVisual(selectedSubtitleId);
+                    } else {
+                        selectedEffect=effects[index].Id;ShowInspector(2);RefreshVisualInspector();timeline.SelectVisual(selectedEffect);
+                    }
                     timeline.Reveal(effects[index].OutputStart);
                 } else {
                     int index=Math.Clamp(editor.Timeline.Clips.ToList().FindIndex(v=>v.Id==selected)+direction,0,editor.Timeline.Clips.Count-1);
-                    selected=editor.Timeline.Clips[index].Id;selectedEffect=null;ShowInspector(6);LoadInspector();RefreshTimeline();timeline.Reveal(editor.Timeline.Clips[index].OutputStart);
+                    selected=editor.Timeline.Clips[index].Id;selectedEffect=null;ShowInspector(7);LoadInspector();RefreshTimeline();timeline.Reveal(editor.Timeline.Clips[index].OutputStart);
                 }
                 // Expanding a previously hidden inspector may restore one of its
                 // inputs' focus. Keep keyboard navigation on the timeline.

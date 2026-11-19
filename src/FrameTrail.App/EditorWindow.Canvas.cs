@@ -1,6 +1,7 @@
 using FrameTrail.Domain;
 using FrameTrail.Interop;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using System.Text.Json;
 
 namespace FrameTrail.App;
@@ -8,6 +9,7 @@ namespace FrameTrail.App;
 public sealed partial class EditorWindow
 {
     private readonly EditorCanvasOverlay canvasOverlay = new();
+    private readonly Canvas subtitleInlineHost = new() { Visibility = Visibility.Collapsed };
     private bool cropEditing;
     private bool canvasTransaction => editController.Owner == EditorEditOwner.Canvas;
     private Task canvasRenderWork = Task.CompletedTask, canvasCommitWork = Task.CompletedTask;
@@ -16,14 +18,22 @@ public sealed partial class EditorWindow
     private void InitializeCanvasEditing()
     {
         PreviewMount.Children.Add(canvasOverlay);
+        PreviewMount.Children.Add(subtitleInlineHost);
         canvasOverlay.Selected += id => {
             if (id == "camera") {
                 if (inspectorTab != 4) ShowInspector(4);
             } else if (id != "crop") {
-                selectedEffect = id; ShowInspector(2); RefreshVisualInspector();
+                var eff = editor.Snapshot.Effects.FirstOrDefault(e => e.Id == id);
+                if (eff?.Kind == "subtitle") {
+                    SelectSubtitleById(id, openTab: true);
+                } else {
+                    selectedEffect = id; ShowInspector(2); RefreshVisualInspector();
+                }
             }
         };
+        canvasOverlay.SubtitleInlineEditRequested += (id, bounds) => ShowSubtitleInlineEditor(id, bounds);
         canvasOverlay.Begin += () => {
+            DismissSubtitleInlineEditor(commit: true);
             if(working||playing||editor.IsExporting||visualPending||visualTransaction||!canvasCommitWork.IsCompleted){canvasOverlay.Finish(false);return;}
             editController.Begin(EditorEditOwner.Canvas);timeline.EditingEnabled=false;
         };
@@ -47,10 +57,26 @@ public sealed partial class EditorWindow
                 }
                 else {
                     var effect=editor.Snapshot.Effects.First(e=>e.Id==id);
-                    var p=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(effect.Parameters.GetRawText())!;
-                    p["x"]=JsonSerializer.SerializeToElement(rect.X);p["y"]=JsonSerializer.SerializeToElement(rect.Y);
-                    p["width"]=JsonSerializer.SerializeToElement(rect.Width);p["height"]=JsonSerializer.SerializeToElement(rect.Height);
-                    canvasPending=editController.Preview(EditorEditOwner.Canvas, new {op="effectUpsert",effectId=id,effect=effect with {Parameters=JsonSerializer.SerializeToElement(p)}});
+                    if (effect.Kind == "subtitle") {
+                        double posX = Math.Clamp(Math.Round(rect.X + rect.Width * 0.5, 4), 0.05, 0.95);
+                        double posY = Math.Clamp(Math.Round(rect.Y + rect.Height * 0.5, 4), 0.05, 0.95);
+                        var cueParams = SubtitleCueParameters.FromEffect(effect);
+                        if (cueParams.StyleOverride is { PositionX: not null } or { PositionY: not null }) {
+                            var nextOverride = (cueParams.StyleOverride ?? new SubtitleCueStyleOverride()) with { PositionX = posX, PositionY = posY };
+                            var nextParams = cueParams with { StyleOverride = nextOverride };
+                            canvasPending = editController.Preview(EditorEditOwner.Canvas, new { op = "effectUpsert", effectId = id, effect = effect with { Parameters = nextParams.ToJsonElement() } });
+                        } else {
+                            var existingEditor = editor.Snapshot.Editor ?? new EditorSettings();
+                            var nextStyle = (existingEditor.SubtitleStyle ?? SubtitleStyleSettings.ClassicOutline()) with { PositionX = posX, PositionY = posY };
+                            canvasPending = editController.Preview(EditorEditOwner.Canvas, new { op = "settings", editor = existingEditor with { SubtitleStyle = nextStyle } });
+                            SyncSubtitlePositionSlider(posY);
+                        }
+                    } else {
+                        var p=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(effect.Parameters.GetRawText())!;
+                        p["x"]=JsonSerializer.SerializeToElement(rect.X);p["y"]=JsonSerializer.SerializeToElement(rect.Y);
+                        p["width"]=JsonSerializer.SerializeToElement(rect.Width);p["height"]=JsonSerializer.SerializeToElement(rect.Height);
+                        canvasPending=editController.Preview(EditorEditOwner.Canvas, new {op="effectUpsert",effectId=id,effect=effect with {Parameters=JsonSerializer.SerializeToElement(p)}});
+                    }
                 }
                 if(canvasRenderWork.IsCompleted)canvasRenderWork=RenderCanvasDraftsAsync();
             } catch(Exception error){canvasOverlay.Finish(false);ShowNotice(L.T("S5052355CD087"),error.Message);}
@@ -88,11 +114,12 @@ public sealed partial class EditorWindow
             var media=preview.Session;if(media is null)return;
             var items=await Task.Run(()=>media.EditGeometry(position,cropEditing));
             if(request!=geometryRequest||closing||canvasOverlay.Dragging||working||playing||hoverOrigin is not null)return;
+            canvasOverlay.CanvasAspect = (double)editor.Snapshot.Canvas.Width / Math.Max(1u, editor.Snapshot.Canvas.Height);
             if(cropEditing && items.FirstOrDefault() is { } item){
                 var r=editor.Snapshot.Editor?.Crop??new NormalizedRect();var plane=new CanvasPlane(item.Base);
                 var q=new[]{plane.Map(r.X,r.Y),plane.Map(r.X+r.Width,r.Y),plane.Map(r.X+r.Width,r.Y+r.Height),plane.Map(r.X,r.Y+r.Height)};
                 items=new[]{item with {Rect=r,Quad=q.Select(v=>new[]{v.X,v.Y}).ToArray()}};
-            } else if (!cropEditing && editor.Snapshot.Canvas.Camera.Enabled && editor.Snapshot.Media.Any(m => m.Kind == MediaKind.Camera) && (inspectorTab == 4 || selectedEffect is null || !items.Any(i => i.Id == selectedEffect))) {
+            } else if (!cropEditing && editor.Snapshot.Canvas.Camera.Enabled && editor.Snapshot.Media.Any(m => m.Kind == MediaKind.Camera) && (inspectorTab == 4 || (inspectorTab != 6 && (selectedEffect is null || !items.Any(i => i.Id == selectedEffect))))) {
                 var cam = editor.Snapshot.Canvas.Camera;
                 var cameraItem = new CanvasEditItem(
                     "camera",
@@ -104,7 +131,7 @@ public sealed partial class EditorWindow
                     cam.Width / Math.Max(0.01, cam.Height));
                 items = new[] { cameraItem }.Concat(items).ToArray();
             }
-            canvasOverlay.Selection=cropEditing?"crop":inspectorTab==4?"camera":selectedEffect;canvasOverlay.SetItems(items);
+            canvasOverlay.Selection=cropEditing?"crop":inspectorTab==4?"camera":inspectorTab==6?selectedSubtitleId:selectedEffect;canvasOverlay.SetItems(items);
         } catch(OperationCanceledException) { }
         catch(ObjectDisposedException) { }
         catch(Exception error){SafeDiagnostics.Record(error);canvasOverlay.SetItems([]);}

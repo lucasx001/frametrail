@@ -106,9 +106,11 @@ public static class ProjectJson
         {
             if (effect is null) throw new ProjectFormatException("Effect cannot be null.");
             ValidateId(effect.Id); ValidateTime(effect.SourceStart); ValidateTime(effect.SourceDuration);
-            if (effect.Kind is not ("zoom" or "mask" or "sticker" or "focus" or "tilt" or "intro") || effect.Parameters.ValueKind != JsonValueKind.Object)
+            if (effect.Kind is not ("zoom" or "mask" or "sticker" or "focus" or "tilt" or "intro" or "subtitle") || effect.Parameters.ValueKind != JsonValueKind.Object)
                 throw new ProjectFormatException("Invalid effect envelope.");
             RejectDuplicateKeys(effect.Parameters);
+            if (effect.Kind == "subtitle")
+                ValidateSubtitleParameters(effect.Parameters);
         }
         if (snapshot.Markers.Count > 100_000) throw new ProjectFormatException("Marker count limit exceeded.");
         foreach (var marker in snapshot.Markers)
@@ -130,6 +132,103 @@ public static class ProjectJson
         if (output.Width is < 2 or > 7680 || output.Height is < 2 or > 7680 || output.Width % 2 != 0 || output.Height % 2 != 0 ||
             output.Fps.Denominator != 1 || output.Fps.Numerator is not (30 or 60) || !VideoCodecs.IsSupported(output.VideoCodec) || output.AudioCodec != "aac" || output.Container != "mp4")
             throw new ProjectFormatException("Unsupported export settings.");
+        if (snapshot.Editor?.SubtitleStyle is { } subtitleStyle)
+            ValidateSubtitleStyle(subtitleStyle);
+    }
+
+    public static void ValidateSubtitleStyle(SubtitleStyleSettings style)
+    {
+        if (style is null) throw new ProjectFormatException("Subtitle style cannot be null.");
+        if (style.Preset is not ("classicOutline" or "darkPill" or "karaokePop" or "bilingualClean" or "custom"))
+            throw new ProjectFormatException("Invalid subtitle style preset.");
+        if (string.IsNullOrEmpty(style.FontFamily) || Encoding.UTF8.GetByteCount(style.FontFamily) > 128)
+            throw new ProjectFormatException("Invalid subtitle font family.");
+        if (!double.IsFinite(style.FontSize) || style.FontSize is < 12.0 or > 160.0)
+            throw new ProjectFormatException("Subtitle font size must be 12..160.");
+        if (!IsHexRgb(style.TextColor) || !IsHexRgb(style.OutlineColor) || !IsHexRgb(style.BackgroundColor) || !IsHexRgb(style.HighlightColor))
+            throw new ProjectFormatException("Subtitle colors must be #RRGGBB hex strings.");
+        if (!double.IsFinite(style.OutlineWidth) || style.OutlineWidth is < 0.0 or > 16.0)
+            throw new ProjectFormatException("Subtitle outline width must be 0..16.");
+        if (!double.IsFinite(style.ShadowBlur) || style.ShadowBlur is < 0.0 or > 32.0)
+            throw new ProjectFormatException("Subtitle shadow blur must be 0..32.");
+        if (!double.IsFinite(style.ShadowOpacity) || style.ShadowOpacity is < 0.0 or > 1.0)
+            throw new ProjectFormatException("Subtitle shadow opacity must be 0..1.");
+        if (!double.IsFinite(style.BackgroundOpacity) || style.BackgroundOpacity is < 0.0 or > 1.0)
+            throw new ProjectFormatException("Subtitle background opacity must be 0..1.");
+        if (!double.IsFinite(style.BackgroundRadius) || style.BackgroundRadius is < 0.0 or > 48.0)
+            throw new ProjectFormatException("Subtitle background radius must be 0..48.");
+        if (style.HighlightMode is not ("none" or "wordColor" or "wordPill"))
+            throw new ProjectFormatException("Invalid subtitle highlight mode.");
+        if (!double.IsFinite(style.PositionX) || style.PositionX is < 0.05 or > 0.95)
+            throw new ProjectFormatException("Subtitle positionX must be 0.05..0.95.");
+        if (!double.IsFinite(style.PositionY) || style.PositionY is < 0.05 or > 0.96)
+            throw new ProjectFormatException("Subtitle positionY must be 0.05..0.96.");
+        if (style.Alignment is not ("left" or "center" or "right"))
+            throw new ProjectFormatException("Invalid subtitle alignment.");
+        if (!double.IsFinite(style.MaxWidthRatio) || style.MaxWidthRatio is < 0.3 or > 0.96)
+            throw new ProjectFormatException("Subtitle maxWidthRatio must be 0.3..0.96.");
+        if (style.MaxCharsPerLine is < 6 or > 80)
+            throw new ProjectFormatException("Subtitle maxCharsPerLine must be 6..80.");
+        if (!double.IsFinite(style.SecondaryScale) || style.SecondaryScale is < 0.4 or > 1.2)
+            throw new ProjectFormatException("Subtitle secondaryScale must be 0.4..1.2.");
+        if (!double.IsFinite(style.FadeSeconds) || style.FadeSeconds is < 0.0 or > 1.5)
+            throw new ProjectFormatException("Subtitle fadeSeconds must be 0..1.5.");
+    }
+
+    private static void ValidateSubtitleParameters(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("text", out var textEl) || textEl.ValueKind != JsonValueKind.String)
+            throw new ProjectFormatException("Subtitle effect requires a string text parameter.");
+        var text = textEl.GetString() ?? "";
+        if (Encoding.UTF8.GetByteCount(text) > 1024)
+            throw new ProjectFormatException("Subtitle text exceeds 1024 UTF-8 bytes.");
+
+        if (parameters.TryGetProperty("secondaryText", out var secEl) && secEl.ValueKind != JsonValueKind.Null)
+        {
+            if (secEl.ValueKind != JsonValueKind.String || Encoding.UTF8.GetByteCount(secEl.GetString() ?? "") > 1024)
+                throw new ProjectFormatException("Subtitle secondaryText must be a string up to 1024 UTF-8 bytes.");
+        }
+
+        if (parameters.TryGetProperty("words", out var wordsEl) && wordsEl.ValueKind != JsonValueKind.Null)
+        {
+            if (wordsEl.ValueKind != JsonValueKind.Array || wordsEl.GetArrayLength() > 256)
+                throw new ProjectFormatException("Subtitle words must be an array of at most 256 entries.");
+            foreach (var word in wordsEl.EnumerateArray())
+            {
+                if (word.ValueKind != JsonValueKind.Object ||
+                    !word.TryGetProperty("text", out var wt) || wt.ValueKind != JsonValueKind.String ||
+                    !word.TryGetProperty("startOffset", out var ws) || !ws.TryGetDouble(out var startOffset) || !double.IsFinite(startOffset) || startOffset < 0 ||
+                    !word.TryGetProperty("endOffset", out var we) || !we.TryGetDouble(out var endOffset) || !double.IsFinite(endOffset) || endOffset < startOffset)
+                    throw new ProjectFormatException("Invalid subtitle word timing entry.");
+            }
+        }
+
+        if (parameters.TryGetProperty("styleOverride", out var ovEl) && ovEl.ValueKind != JsonValueKind.Null)
+        {
+            if (ovEl.ValueKind != JsonValueKind.Object)
+                throw new ProjectFormatException("Subtitle styleOverride must be an object.");
+            if (ovEl.TryGetProperty("positionX", out var px) && px.ValueKind != JsonValueKind.Null && (!px.TryGetDouble(out var pxv) || !double.IsFinite(pxv) || pxv is < 0.05 or > 0.95))
+                throw new ProjectFormatException("Subtitle styleOverride.positionX out of range.");
+            if (ovEl.TryGetProperty("positionY", out var py) && py.ValueKind != JsonValueKind.Null && (!py.TryGetDouble(out var pyv) || !double.IsFinite(pyv) || pyv is < 0.05 or > 0.96))
+                throw new ProjectFormatException("Subtitle styleOverride.positionY out of range.");
+            if (ovEl.TryGetProperty("fontSize", out var fs) && fs.ValueKind != JsonValueKind.Null && (!fs.TryGetDouble(out var fsv) || !double.IsFinite(fsv) || fsv is < 12.0 or > 160.0))
+                throw new ProjectFormatException("Subtitle styleOverride.fontSize out of range.");
+            foreach (var colorProp in new[] { "textColor", "outlineColor", "backgroundColor", "highlightColor" })
+            {
+                if (ovEl.TryGetProperty(colorProp, out var cEl) && cEl.ValueKind != JsonValueKind.Null && (cEl.ValueKind != JsonValueKind.String || !IsHexRgb(cEl.GetString())))
+                    throw new ProjectFormatException($"Subtitle styleOverride.{colorProp} must be #RRGGBB.");
+            }
+            if (ovEl.TryGetProperty("alignment", out var al) && al.ValueKind != JsonValueKind.Null && (al.ValueKind != JsonValueKind.String || al.GetString() is not ("left" or "center" or "right")))
+                throw new ProjectFormatException("Subtitle styleOverride.alignment is invalid.");
+        }
+    }
+
+    private static bool IsHexRgb(string? value)
+    {
+        if (value is null || value.Length != 7 || value[0] != '#') return false;
+        for (int i = 1; i < 7; i++)
+            if (!Uri.IsHexDigit(value[i])) return false;
+        return true;
     }
 
     public static bool IsProjectRelativePath(string? path)

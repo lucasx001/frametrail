@@ -183,5 +183,154 @@ int main(){try{
         PlaneMotion motion;motion.scale=2;motion.angle_x=15;motion.angle_y=-20;
         auto point=plane_vertex(0.2,0.7,motion,1920,1080);expect(std::isfinite(point[0]) && point[2]>0,"tilted zoom has finite hit geometry");
     }
+    // Subtitle Track: validation, export.burnSubtitles, subtitlesReplace (>150 cues), and source-time projection
+    {
+        auto sp = p;
+        sp.effects.clear();
+        sp.segments = {{"seg-full", canonical_time(0), canonical_time(100'000'000), {1, 1}}};
+        // 1. Valid subtitle cue with words + styleOverride + subtitleStyle + burnSubtitles=false
+        Json valid_sub_params{
+            {"text", "Hello FrameTrail 字幕"},
+            {"secondaryText", "Hello FrameTrail Subtitles"},
+            {"words", Json::array({
+                {{"text", "Hello"}, {"startOffset", 0.0}, {"endOffset", 0.4}},
+                {{"text", "FrameTrail"}, {"startOffset", 0.4}, {"endOffset", 1.1}},
+                {{"text", "字幕"}, {"startOffset", 1.1}, {"endOffset", 1.8}}
+            })},
+            {"styleOverride", {
+                {"positionX", 0.5}, {"positionY", 0.82}, {"fontSize", 48.0},
+                {"textColor", "#FFFFFF"}, {"outlineColor", "#111827"},
+                {"backgroundColor", "#09090B"}, {"highlightColor", "#FACC15"},
+                {"alignment", "center"}
+            }}
+        };
+        sp.effects = {effect("sub-1", "subtitle", valid_sub_params, 10'000'000, 20'000'000)};
+        Json style_json{
+            {"preset", "karaokePop"},
+            {"fontFamily", "Alibaba PuHuiTi 3.0"},
+            {"fontSize", 46.0},
+            {"textColor", "#FFFFFF"},
+            {"outlineColor", "#09090B"},
+            {"outlineWidth", 3.5},
+            {"shadowEnabled", true},
+            {"shadowBlur", 6.0},
+            {"shadowOpacity", 0.65},
+            {"backgroundColor", "#09090B"},
+            {"backgroundOpacity", 0.45},
+            {"backgroundRadius", 12.0},
+            {"highlightColor", "#FACC15"},
+            {"highlightMode", "wordColor"},
+            {"positionX", 0.5},
+            {"positionY", 0.88},
+            {"alignment", "center"},
+            {"maxWidthRatio", 0.84},
+            {"maxCharsPerLine", 18},
+            {"bilingualEnabled", true},
+            {"secondaryScale", 0.72},
+            {"fadeSeconds", 0.2}
+        };
+        sp.editor_json = Json{{"subtitleStyle", style_json}}.dump();
+        sp.export_settings.burn_subtitles = false;
+        const auto rt_text = serialize_project(sp);
+        const auto rt = parse_project(rt_text);
+        expect(!rt.export_settings.burn_subtitles, "burnSubtitles=false must survive roundtrip");
+        expect(rt.effects.size() == 1 && rt.effects[0].kind == "subtitle", "subtitle effect must survive roundtrip");
+        auto parsed_sub = parse_visual_effect(rt.effects[0]);
+        expect(parsed_sub.text == "Hello FrameTrail 字幕" && parsed_sub.secondary_text == "Hello FrameTrail Subtitles", "subtitle text fields preserved");
+        expect(parsed_sub.words.size() == 3 && parsed_sub.subtitle_override.font_size && *parsed_sub.subtitle_override.font_size == 48.0, "subtitle words and styleOverride preserved");
+
+        // Reject invalid subtitle parameters & subtitleStyle
+        auto bad_sub = sp;
+        bad_sub.effects = {effect("sub-notext", "subtitle", Json::object(), 0, 10'000'000)};
+        rejects([&]{ validate_project(bad_sub); }, "subtitle without text rejected");
+        bad_sub.effects = {effect("sub-long", "subtitle", {{"text", std::string(1025, 'a')}}, 0, 10'000'000)};
+        rejects([&]{ validate_project(bad_sub); }, "oversized subtitle text rejected");
+        bad_sub.effects = {effect("sub-badword", "subtitle", {{"text", "hi"}, {"words", Json::array({{{"text", "hi"}, {"startOffset", 1.5}, {"endOffset", 0.5}}})}}, 0, 10'000'000)};
+        rejects([&]{ validate_project(bad_sub); }, "reversed word timing rejected");
+        bad_sub.effects = {effect("sub-badhex", "subtitle", {{"text", "hi"}, {"styleOverride", {{"textColor", "white"}}}}, 0, 10'000'000)};
+        rejects([&]{ validate_project(bad_sub); }, "invalid styleOverride hex rejected");
+        auto bad_style = sp;
+        bad_style.editor_json = Json{{"subtitleStyle", {{"fontSize", 500.0}}}}.dump();
+        rejects([&]{ validate_project(bad_style); }, "out-of-range subtitleStyle fontSize rejected");
+        bad_style.editor_json = Json{{"subtitleStyle", {{"highlightMode", "glow"}}}}.dump();
+        rejects([&]{ validate_project(bad_style); }, "invalid subtitleStyle highlightMode rejected");
+
+        // 2. Atomic subtitlesReplace with 180 cues (>100 batch cap) + non-subtitle preservation + ranged replace
+        auto with_zoom = sp;
+        with_zoom.effects = {effect("keep-zoom", "zoom", {{"scale", 1.5}}, 0, 10'000'000)};
+        Json many_cues = Json::array();
+        for (int i = 0; i < 180; ++i) {
+            const int64_t s_ticks = static_cast<int64_t>(i) * 500'000;
+            many_cues.push_back({
+                {"id", "sub-bulk-" + std::to_string(i)},
+                {"kind", "subtitle"},
+                {"sourceStart", {{"ticks", s_ticks}, {"timescale", time_scale}}},
+                {"sourceDuration", {{"ticks", 450'000}, {"timescale", time_scale}}},
+                {"parameters", {{"text", "Line " + std::to_string(i)}}}
+            });
+        }
+        const auto replaced_all = edit_project(with_zoom, Json{
+            {"op", "subtitlesReplace"},
+            {"subtitles", many_cues},
+            {"subtitleStyle", style_json}
+        }.dump());
+        expect(replaced_all.revision == with_zoom.revision + 1, "subtitlesReplace increments revision");
+        expect(replaced_all.effects.size() == 181, "subtitlesReplace appends >150 cues while keeping non-subtitle effects");
+        expect(replaced_all.effects.front().id == "keep-zoom", "non-subtitle zoom effect preserved");
+
+        // Ranged replace overlapping [10'000'000, 20'000'000): removes cues i=20..39 (20 cues) and inserts 1 new cue
+        Json range_cue = Json::array({{
+            {"id", "sub-ranged-new"},
+            {"kind", "subtitle"},
+            {"sourceStart", {{"ticks", 11'000'000}, {"timescale", time_scale}}},
+            {"sourceDuration", {{"ticks", 8'000'000}, {"timescale", time_scale}}},
+            {"parameters", {{"text", "Replaced Range"}}}
+        }});
+        const auto replaced_range = edit_project(replaced_all, Json{
+            {"op", "subtitlesReplace"},
+            {"rangeStart", 10'000'000},
+            {"rangeEnd", 20'000'000},
+            {"subtitles", range_cue}
+        }.dump());
+        expect(replaced_range.effects.size() == 181 - 20 + 1, "ranged subtitlesReplace removes only overlapping subtitle cues");
+        expect(std::any_of(replaced_range.effects.begin(), replaced_range.effects.end(), [](const Effect& e) { return e.id == "sub-ranged-new"; }), "ranged cue inserted");
+        expect(std::none_of(replaced_range.effects.begin(), replaced_range.effects.end(), [](const Effect& e) { return e.id == "sub-bulk-25"; }), "overlapping cue removed");
+        expect(std::any_of(replaced_range.effects.begin(), replaced_range.effects.end(), [](const Effect& e) { return e.id == "sub-bulk-0"; }), "non-overlapping earlier cue kept");
+        expect(std::any_of(replaced_range.effects.begin(), replaced_range.effects.end(), [](const Effect& e) { return e.id == "sub-bulk-50"; }), "non-overlapping later cue kept");
+        rejects([&]{ (void)edit_project(replaced_all, Json{{"op", "subtitlesReplace"}, {"rangeStart", 20'000'000}, {"rangeEnd", 10'000'000}, {"subtitles", Json::array()}}.dump()); }, "inverted rangeStart/rangeEnd rejected");
+
+        // 3. Source-time projection under clip cut [3s, 5s) + 2x speed on [5s, 10s)
+        auto proj = sp;
+        proj.segments = {
+            {"clip-a", canonical_time(0), canonical_time(30'000'000), {1, 1}},
+            {"clip-b", canonical_time(50'000'000), canonical_time(50'000'000), {2, 1}}
+        };
+        proj.effects = {
+            effect("sub-partial-cut", "subtitle", {{"text", "Partial"}}, 10'000'000, 30'000'000), // [1s, 4s) -> output [1s, 3s)
+            effect("sub-fully-cut", "subtitle", {{"text", "Cut"}}, 35'000'000, 10'000'000),       // [3.5s, 4.5s) -> hidden
+            effect("sub-fast", "subtitle", {{"text", "Fast 2x"}}, 60'000'000, 20'000'000)         // [6s, 8s) -> output [3.5s, 4.5s)
+        };
+        const auto tl = Json::parse(timeline_json(proj));
+        const auto& tl_effects = tl.at("effects");
+        expect(tl_effects.size() == 2, "fully cut subtitle must be excluded from resolved timeline");
+        bool saw_partial = false, saw_fast = false;
+        for (const auto& item : tl_effects) {
+            if (item["id"] == "sub-partial-cut") {
+                saw_partial = item["kind"] == "subtitle" && item["outputStart"] == 10'000'000 && item["outputDuration"] == 20'000'000;
+            } else if (item["id"] == "sub-fast") {
+                saw_fast = item["kind"] == "subtitle" && item["outputStart"] == 35'000'000 && item["outputDuration"] == 10'000'000;
+            }
+        }
+        expect(saw_partial, "partially cut subtitle output duration trimmed cleanly");
+        expect(saw_fast, "2x speed segment scales subtitle output start and duration cleanly");
+
+        // 4. FrameSceneEvaluator applies fadeSeconds envelope from editor.subtitleStyle
+        FrameSceneEvaluator sub_eval(proj);
+        const auto mid_scene = sub_eval.evaluate(40'000'000); // source 7.0s (middle of [6s, 8s))
+        expect(mid_scene && mid_scene->visual.subtitles.size() == 1 && mid_scene->visual.subtitles[0].id == "sub-fast", "active subtitle collected at 2x output time");
+        expect(std::abs(mid_scene->visual.subtitles[0].opacity - 1.0) < 1e-6, "subtitle at full opacity in middle of cue");
+        const auto fade_scene = sub_eval.evaluate(35'500'000); // source 6.1s (halfway into 0.2s fadeSeconds)
+        expect(fade_scene && fade_scene->visual.subtitles.size() == 1 && fade_scene->visual.subtitles[0].opacity > 0.05 && fade_scene->visual.subtitles[0].opacity < 0.95, "subtitle fades in using editor.subtitleStyle.fadeSeconds");
+    }
     std::cout<<"effects checks="<<checks<<'\n';return 0;
 }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -50,6 +50,16 @@ jobs:
           ./scripts/test-release.ps1
           ./scripts/test-store.ps1
           ./scripts/setup-android.ps1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: src/FrameTrail.AiUi/pnpm-lock.yaml
+      - name: Build AI Copilot WebView UI
+        run: ./scripts/build-ai-ui.ps1
       - name: Build application and run tests
         run: ./scripts/build.ps1 -Configuration Release -LockedRestore
       - name: Build source payload and verify archives

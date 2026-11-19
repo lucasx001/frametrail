@@ -16,9 +16,17 @@ double number(const Json& p, const char* key, double fallback, double low, doubl
     return value;
 }
 std::string choice(const Json& p, const char* key, const char* fallback, std::initializer_list<std::string_view> allowed) {
-    auto value = p.value(key, std::string(fallback));
+    if (!p.contains(key)) return std::string(fallback);
+    if (!p[key].is_string()) throw ValidationError(std::string("effects.parameters.") + key, "expected string");
+    auto value = p[key].get<std::string>();
     if (std::find(allowed.begin(), allowed.end(), value) == allowed.end()) throw ValidationError(std::string("effects.parameters.") + key, "unsupported value");
     return value;
+}
+bool valid_hex_color(std::string_view s) {
+    if (s.size() != 7 || s[0] != '#') return false;
+    return std::all_of(s.begin() + 1, s.end(), [](unsigned char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    });
 }
 bool overlaps(const Effect& a, int64_t start, int64_t end) {
     auto first = normalized_ticks(a.source_start); return first < end && first + normalized_ticks(a.source_duration) > start;
@@ -31,7 +39,10 @@ VisualEffect parse_visual_effect(const Effect& effect) {
     if ((effect.kind == "mask" || effect.kind == "focus" || effect.kind == "sticker") && (v.rect.x + v.rect.width > 1.00000001 || v.rect.y + v.rect.height > 1.00000001)) throw ValidationError("effects.rect", "rectangle must fit attachment");
     v.scale = number(p,"scale",1.6,1,4); v.focus_x = number(p,"focusX",0.5,0,1); v.focus_y = number(p,"focusY",0.5,0,1);
     bool motion=effect.kind=="zoom" || effect.kind=="tilt";
-    v.enter = number(p,"enter",motion || effect.kind=="intro" ? 0.7 : 0,0,5); v.exit = number(p,"exit",motion ? 0.7 : 0,0,5);
+    bool is_subtitle = effect.kind == "subtitle";
+    v.enter = number(p,"enter",is_subtitle ? 0.12 : (motion || effect.kind=="intro" ? 0.7 : 0),0,5);
+    v.exit = number(p,"exit",is_subtitle ? 0.12 : (motion ? 0.7 : 0),0,5);
+    v.custom_fade = p.contains("enter") || p.contains("exit");
     v.focus_transition = number(p,"focusTransition",v.enter,0,5);
     v.strength = number(p,"strength",16,1,64); v.opacity = number(p,"opacity",1,0,1);
     v.angle_x = number(p,"angleX",0,-35,35); v.angle_y = number(p,"angleY",0,-35,35); v.rotation = number(p,"rotation",0,-180,180);
@@ -40,9 +51,68 @@ VisualEffect parse_visual_effect(const Effect& effect) {
     v.attachment = choice(p,"attachment","screen",{"screen","canvas"}); v.target = choice(p,"target","screen",{"screen","camera"});
     if (effect.kind == "mask") v.mode = choice(p,"mode","solid",{"solid","pixelate","blur"});
     if (effect.kind == "intro") v.mode = choice(p,"style","fade",{"fade","rise","scale","slide"});
-    v.path = p.value("path",std::string{}); v.text = p.value("text",std::string{});
+    v.path = p.value("path",std::string{});
+    if (is_subtitle) {
+        if (!p.contains("text") || !p["text"].is_string()) throw ValidationError("effects.parameters.text", "subtitle requires text string");
+        v.text = p["text"].get<std::string>();
+        if (v.text.size() > 1024) throw ValidationError("effects.parameters.text", "subtitle text too long");
+        if (p.contains("secondaryText") && !p["secondaryText"].is_null()) {
+            if (!p["secondaryText"].is_string()) throw ValidationError("effects.parameters.secondaryText", "expected string");
+            v.secondary_text = p["secondaryText"].get<std::string>();
+            if (v.secondary_text.size() > 1024) throw ValidationError("effects.parameters.secondaryText", "secondary text too long");
+        }
+        if (p.contains("words") && !p["words"].is_null()) {
+            if (!p["words"].is_array() || p["words"].size() > 256) throw ValidationError("effects.parameters.words", "invalid words array");
+            v.words.reserve(p["words"].size());
+            for (const auto& w : p["words"]) {
+                if (!w.is_object()) throw ValidationError("effects.parameters.words", "word entry must be object");
+                if (!w.contains("text") || !w["text"].is_string()) throw ValidationError("effects.parameters.words.text", "word text required");
+                auto wtext = w["text"].get<std::string>();
+                if (wtext.size() > 256) throw ValidationError("effects.parameters.words.text", "word text too long");
+                if (!w.contains("startOffset") || !w["startOffset"].is_number() || !w.contains("endOffset") || !w["endOffset"].is_number())
+                    throw ValidationError("effects.parameters.words", "word offsets must be numbers");
+                const double start_off = w["startOffset"].get<double>();
+                const double end_off = w["endOffset"].get<double>();
+                if (!std::isfinite(start_off) || !std::isfinite(end_off) || start_off < 0.0 || end_off < start_off || end_off > 3600.0)
+                    throw ValidationError("effects.parameters.words", "invalid word timing offset");
+                v.words.push_back({std::move(wtext), start_off, end_off});
+            }
+        }
+        if (p.contains("styleOverride") && !p["styleOverride"].is_null()) {
+            const auto& ov = p["styleOverride"];
+            if (!ov.is_object()) throw ValidationError("effects.parameters.styleOverride", "expected object");
+            constexpr std::array<std::string_view, 8> allowed_ov{"positionX", "positionY", "fontSize", "textColor", "outlineColor", "backgroundColor", "highlightColor", "alignment"};
+            for (auto it = ov.begin(); it != ov.end(); ++it) {
+                if (std::find(allowed_ov.begin(), allowed_ov.end(), it.key()) == allowed_ov.end())
+                    throw ValidationError(std::string("effects.parameters.styleOverride.") + it.key(), "unknown styleOverride field");
+            }
+            auto opt_num = [&](const char* key, double lo, double hi) -> std::optional<double> {
+                if (!ov.contains(key) || ov[key].is_null()) return std::nullopt;
+                return number(ov, key, lo, lo, hi);
+            };
+            auto opt_hex = [&](const char* key) -> std::optional<std::string> {
+                if (!ov.contains(key) || ov[key].is_null()) return std::nullopt;
+                if (!ov[key].is_string()) throw ValidationError(std::string("effects.parameters.styleOverride.") + key, "expected hex color");
+                auto s = ov[key].get<std::string>();
+                if (!valid_hex_color(s)) throw ValidationError(std::string("effects.parameters.styleOverride.") + key, "expected #RRGGBB hex color");
+                return s;
+            };
+            v.subtitle_override.position_x = opt_num("positionX", 0.05, 0.95);
+            v.subtitle_override.position_y = opt_num("positionY", 0.05, 0.96);
+            v.subtitle_override.font_size = opt_num("fontSize", 12.0, 160.0);
+            v.subtitle_override.text_color = opt_hex("textColor");
+            v.subtitle_override.outline_color = opt_hex("outlineColor");
+            v.subtitle_override.background_color = opt_hex("backgroundColor");
+            v.subtitle_override.highlight_color = opt_hex("highlightColor");
+            if (ov.contains("alignment") && !ov["alignment"].is_null()) {
+                v.subtitle_override.alignment = choice(ov, "alignment", "center", {"left", "center", "right"});
+            }
+        }
+    } else {
+        v.text = p.value("text",std::string{});
+        if (v.text.size() > 1024) throw ValidationError("effects.text", "text too long");
+    }
     if (!v.path.empty() && (!is_project_relative_path(v.path) || !v.path.starts_with("assets/"))) throw ValidationError("effects.path", "import assets into the project first");
-    if (v.text.size() > 1024) throw ValidationError("effects.text", "text too long");
     v.outside_hidden = p.value("outsideHidden",false);
     if (p.contains("origin")) (void)choice(p,"origin","manual",{"manual","automatic","edited"});
     if (p.contains("focusPoints")) {
@@ -135,7 +205,9 @@ VisualScene evaluate_visuals(const std::vector<VisualEffect>& effects, int64_t t
         else if(e.kind=="intro") { plane.opacity*=std::clamp(amount,0.0,1.0); plane.reveal=std::min(plane.reveal,std::clamp(amount,0.0,1.0)); if(e.mode=="scale")plane.scale*=0.8+0.2*amount; if(e.mode=="rise")plane.offset_y+=0.12*(1-amount); if(e.mode=="slide")plane.offset_x-=0.12*(1-amount); }
         else if(e.kind=="mask" || e.kind=="focus") { auto value=e; value.opacity*=std::clamp(amount,0.0,1.0); result.regions.push_back(std::move(value)); }
         else if(e.kind=="sticker") { auto value=e; value.opacity*=std::clamp(amount,0.0,1.0); result.stickers.push_back(std::move(value)); }
+        else if(e.kind=="subtitle") { auto value=e; value.opacity*=std::clamp(amount,0.0,1.0); result.subtitles.push_back(std::move(value)); }
     }
+    std::stable_sort(result.subtitles.begin(), result.subtitles.end(), [](const auto& a, const auto& b) { return a.start < b.start; });
     return result;
 }
 void generate_auto_zoom(Project& project,std::string_view text) {
@@ -243,10 +315,11 @@ void append_auto_zoom(Project& project, std::string_view text) {
         // Authored effects always win. Never extend an automatic camera into one.
         for (const auto& other : project.effects) {
             if (other.kind != "zoom" || other.id == effect.id) continue;
+            auto t = normalized_ticks(other.source_start);
+            if (t < start || t >= end) continue;
             auto p = Json::parse(other.parameters_json);
             if (p.value("origin", "") == "automatic") continue;
-            auto t = normalized_ticks(other.source_start);
-            if (t >= start) end = std::min(end, t);
+            end = std::min(end, t);
         }
         end = std::max(start + 1, end);
         effect.source_duration = canonical_time(end - start);

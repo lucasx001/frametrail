@@ -18,13 +18,13 @@ public sealed partial class EditorWindow
         presetLibrary ??= new VisualPresetLibrary();
         var list = new ListView { DisplayMemberPath = "Name", SelectionMode = ListViewSelectionMode.Single, MaxHeight = 210, MinHeight = 80 };
         var name = new TextBox { Header = L.T("S5FE110AA6D1D"), MaxLength = 60, PlaceholderText = L.T("SB964ED541420") };
-        name.Resources["TextControlBorderBrushFocused"] = Application.Current.Resources["EditorBlue"];
+        name.Resources["TextControlBorderBrushFocused"] = RecorderTheme.Brush(Root, "EditorAccent");
         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, FontSize = 12 };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var save = new Button { Content = L.T("S2EAA45B7B1BD") }; var rename = new Button { Content = L.T("S0D0CBAC2EEE5") }; var delete = new Button { Content = L.T("S2F9DAA828907") };
         var defaults = new Button { Content = L.T("SE7049FF544D5") }; var resetDefault = new Button { Content = L.T("SA852F761801A") };
         foreach (var button in new[] { save, rename, delete, defaults, resetDefault }) { button.Style = (Style)Application.Current.Resources["EditorButton"]; button.Background = RecorderTheme.Brush(Root, "EditorWell"); button.Padding = new Thickness(12, 0, 12, 0); }
-        list.Resources["ListViewItemSelectionIndicatorBrush"] = Application.Current.Resources["EditorBlue"];
+        list.Resources["ListViewItemSelectionIndicatorBrush"] = RecorderTheme.Brush(Root, "EditorAccent");
         AutomationProperties.SetAutomationId(rename, "editor.presets.rename"); AutomationProperties.SetAutomationId(delete, "editor.presets.delete");
         AutomationProperties.SetAutomationId(defaults, "editor.presets.default"); AutomationProperties.SetAutomationId(resetDefault, "editor.presets.clearDefault");
         buttons.Children.Add(save); buttons.Children.Add(rename); buttons.Children.Add(delete);

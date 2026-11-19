@@ -6,7 +6,8 @@ param(
     [string] $NativeBuildDirectory,
     [switch] $NativeOnly,
     [switch] $SkipTests,
-    [switch] $LockedRestore
+    [switch] $LockedRestore,
+    [switch] $RebuildAiUi
 )
 . "$PSScriptRoot\common.ps1"
 Import-FrameTrailToolchain $ToolchainRoot
@@ -35,6 +36,10 @@ if (!$SkipTests) {
     Invoke-Checked $ctest @('--test-dir', $NativeBuildDirectory, '-C', $Configuration, '--output-on-failure')
 }
 if ($NativeOnly) { return }
+$aiUiIndex = Join-Path $ProjectRoot 'artifacts\ai-ui-dist\index.html'
+if ($RebuildAiUi -or !(Test-Path -LiteralPath $aiUiIndex -PathType Leaf)) {
+    & "$PSScriptRoot\build-ai-ui.ps1"
+}
 $dotnet = Resolve-FrameTrailTool 'dotnet' @("$ProjectRoot\.tools\dotnet\dotnet.exe")
 $app = Join-Path $ProjectRoot 'src\FrameTrail.App\FrameTrail.App.csproj'
 $restoreArgs = @('restore', $app, '-p:Platform=x64')

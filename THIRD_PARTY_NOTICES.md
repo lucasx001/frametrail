@@ -54,3 +54,21 @@ notices.
 FrameTrail does not bundle the scrcpy desktop client, SDL, FFmpeg or libusb.
 H.264 decoding and MP4 packaging use Windows Media Foundation. FFmpeg in the
 validation scripts is a development tool and is not copied into the application.
+
+## AI Copilot WebView UI
+
+The AI Copilot panel renders inside Microsoft Edge WebView2 (using the Evergreen
+WebView2 Runtime on Windows) and bundles a static web interface built from
+`src/FrameTrail.AiUi` using the following open-source projects:
+
+- **React** and **React DOM** (MIT License, Meta Platforms, Inc.)
+- **Tailwind CSS** (MIT License, Tailwind Labs, Inc.)
+- **shadcn/ui** and **Radix UI** primitives (MIT License)
+- **Vercel AI Elements** (`@ai-elements/*`, Apache-2.0 License, Vercel, Inc.)
+- **Lucide React** (ISC License, Lucide Contributors)
+- **cmdk** (MIT License, Paco Coursey)
+- **Streamdown** / Markdown rendering & syntax highlighting dependencies (MIT / Apache-2.0 Licenses)
+
+## Offline Speech Recognition (Auto Captions)
+
+Local offline subtitle transcription uses **Whisper.net** (MIT License, Sandro Hadzic and contributors, https://github.com/sandrohanea/whisper.net) wrapping **whisper.cpp** (MIT License, Georgi Gerganov and contributors, https://github.com/ggml-org/whisper.cpp) with CPU and Vulkan GPU runtimes. Quantized GGML model weights are downloaded on demand by the user to `%LOCALAPPDATA%\FrameTrail\models\whisper\` and are not bundled in the installer.

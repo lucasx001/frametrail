@@ -41,4 +41,5 @@ FTM_API int32_t __cdecl ft_media_edit_geometry(ft_media_handle handle, int64_t t
 FTM_API int32_t __cdecl ft_media_error(wchar_t* output, uint32_t capacity);
 FTM_API int32_t __cdecl ft_media_probe_visual(const wchar_t* path, uint32_t video, uint32_t* width, uint32_t* height, int64_t* duration);
 FTM_API int32_t __cdecl ft_media_probe_clip(const wchar_t* path, uint32_t* width, uint32_t* height, int64_t* duration, uint32_t* has_audio, uint32_t* sample_rate, uint32_t* channels);
+FTM_API int32_t __cdecl ft_media_extract_audio_pcm16k(const wchar_t* source_path, const wchar_t* output_wav_path, int64_t source_start_ticks, int64_t source_duration_ticks);
 }

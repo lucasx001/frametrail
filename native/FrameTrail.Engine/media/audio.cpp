@@ -177,4 +177,165 @@ void Session::stream_audio(int64_t ticks) {
 }
 void Session::stop_audio() { std::scoped_lock lock(audio_mutex); audio_stop = true; if (audio_thread.joinable()) audio_thread.join(); }
 Session::~Session() { stop_audio(); }
+
+void extract_audio_pcm16k(
+    const std::filesystem::path& source_path,
+    const std::filesystem::path& output_wav_path,
+    int64_t source_start_ticks,
+    int64_t source_duration_ticks) {
+    if (source_start_ticks < 0) winrt::throw_hresult(E_INVALIDARG);
+
+    AudioReader audio(source_path);
+    const int64_t start_48k = ticks_samples(source_start_ticks);
+    const bool has_end = source_duration_ticks > 0;
+    const int64_t end_48k = has_end
+        ? ticks_samples(source_start_ticks + source_duration_ticks)
+        : (std::numeric_limits<int64_t>::max)();
+
+    if (source_start_ticks > 0) {
+        const int64_t seek_ticks = std::max<int64_t>(0, source_start_ticks - time_scale / 4);
+        PROPVARIANT position{};
+        FT_MEDIA_CHECK(InitPropVariantFromInt64(seek_ticks, &position));
+        const HRESULT hr = audio.reader->SetCurrentPosition(GUID_NULL, position);
+        PropVariantClear(&position);
+        FT_MEDIA_CHECK(hr);
+    }
+
+    auto write_header_16k = [](std::ostream& out, uint32_t frames_16k) {
+        const uint32_t data_bytes = frames_16k * 2u;
+        const uint32_t riff_size = data_bytes + 36u;
+        auto u16 = [&](uint16_t v) { out.write(reinterpret_cast<const char*>(&v), 2); };
+        auto u32 = [&](uint32_t v) { out.write(reinterpret_cast<const char*>(&v), 4); };
+        out.write("RIFF", 4); u32(riff_size); out.write("WAVE", 4);
+        out.write("fmt ", 4); u32(16u);
+        u16(1u);       // WAVE_FORMAT_PCM
+        u16(1u);       // 1 channel (mono)
+        u32(16000u);   // 16 kHz sample rate
+        u32(32000u);   // byte rate = 16000 * 1 * 2
+        u16(2u);       // block align = 1 * 2
+        u16(16u);      // 16 bits per sample
+        out.write("data", 4); u32(data_bytes);
+    };
+
+    std::ofstream out(output_wav_path, std::ios::binary | std::ios::trunc);
+    if (!out) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED));
+    write_header_16k(out, 0u);
+    if (!out) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_DISK_FULL));
+
+    // 15-tap symmetric Hamming-windowed sinc low-pass filter (fc = 0.145 * 48kHz = 6.96kHz)
+    // for alias-free exact 3:1 decimation (48kHz -> 16kHz).
+    constexpr int taps = 15;
+    constexpr int half = taps / 2;
+    std::array<float, taps> kernel{};
+    {
+        constexpr double fc = 0.145;
+        constexpr double pi = 3.14159265358979323846;
+        double sum = 0.0;
+        for (int i = 0; i < taps; ++i) {
+            const int k = i - half;
+            const double sinc = (k == 0) ? (2.0 * fc) : (std::sin(2.0 * pi * fc * k) / (pi * k));
+            const double win = 0.54 - 0.46 * std::cos(2.0 * pi * i / (taps - 1));
+            kernel[static_cast<size_t>(i)] = static_cast<float>(sinc * win);
+            sum += sinc * win;
+        }
+        for (float& c : kernel) c = static_cast<float>(c / sum);
+    }
+
+    constexpr uint64_t max_16k_frames = (UINT32_MAX - 36u) / 2u;
+    std::vector<float> mono_buf(static_cast<size_t>(half), 0.0f);
+    std::vector<int16_t> pcm_out;
+    pcm_out.reserve(4096);
+    size_t read_pos = 0;
+    uint64_t written_16k = 0;
+
+    auto drain_decimator = [&]() {
+        while (read_pos + static_cast<size_t>(taps) <= mono_buf.size()) {
+            if (written_16k >= max_16k_frames) break;
+            float acc = 0.0f;
+            for (int i = 0; i < taps; ++i) {
+                acc += mono_buf[read_pos + static_cast<size_t>(i)] * kernel[static_cast<size_t>(i)];
+            }
+            pcm_out.push_back(static_cast<int16_t>(std::lround(std::clamp(acc, -1.0f, 1.0f) * 32767.0f)));
+            ++written_16k;
+            read_pos += 3;
+            if (pcm_out.size() >= 4096) {
+                out.write(reinterpret_cast<const char*>(pcm_out.data()), static_cast<std::streamsize>(pcm_out.size() * sizeof(int16_t)));
+                if (!out) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_DISK_FULL));
+                pcm_out.clear();
+            }
+        }
+        if (read_pos > 16384) {
+            mono_buf.erase(mono_buf.begin(), mono_buf.begin() + static_cast<std::ptrdiff_t>(read_pos));
+            read_pos = 0;
+        }
+    };
+
+    int64_t cursor_48k = start_48k;
+    bool started = false;
+    while (cursor_48k < end_48k && written_16k < max_16k_frames) {
+        DWORD flags{};
+        LONGLONG sample_time{};
+        ComPtr<IMFSample> sample;
+        FT_MEDIA_CHECK(audio.reader->ReadSample(audio_stream_id, 0, nullptr, &flags, &sample_time, &sample));
+        if (flags & MF_SOURCE_READERF_ERROR) winrt::throw_hresult(MF_E_INVALID_FILE_FORMAT);
+        if (sample) {
+            ComPtr<IMFMediaBuffer> buffer;
+            FT_MEDIA_CHECK(sample->ConvertToContiguousBuffer(&buffer));
+            BYTE* bytes{};
+            DWORD length{};
+            FT_MEDIA_CHECK(buffer->Lock(&bytes, nullptr, &length));
+            const auto* floats = reinterpret_cast<const float*>(bytes);
+            const int64_t frame_count = static_cast<int64_t>(length / (channels * sizeof(float)));
+            int64_t sample_offset = ticks_samples(sample_time);
+
+            // Treat tiny timestamp rounding jitter as contiguous to prevent micro-gaps.
+            if (started && std::abs(sample_offset - cursor_48k) <= 16) {
+                sample_offset = cursor_48k;
+            }
+
+            if (sample_offset + frame_count > start_48k) {
+                if (sample_offset > cursor_48k) {
+                    const int64_t gap_end = std::min(sample_offset, end_48k);
+                    if (gap_end > cursor_48k) {
+                        mono_buf.insert(mono_buf.end(), static_cast<size_t>(gap_end - cursor_48k), 0.0f);
+                        cursor_48k = gap_end;
+                        started = true;
+                        drain_decimator();
+                    }
+                }
+                const int64_t slice_begin = std::max(sample_offset, cursor_48k);
+                const int64_t slice_end = std::min(sample_offset + frame_count, end_48k);
+                if (slice_end > slice_begin) {
+                    mono_buf.reserve(mono_buf.size() + static_cast<size_t>(slice_end - slice_begin));
+                    for (int64_t s = slice_begin; s < slice_end; ++s) {
+                        const size_t idx = static_cast<size_t>(s - sample_offset) * channels;
+                        mono_buf.push_back(0.5f * (floats[idx] + floats[idx + 1]));
+                    }
+                    cursor_48k = slice_end;
+                    started = true;
+                    drain_decimator();
+                }
+            }
+            buffer->Unlock();
+            if (has_end && cursor_48k >= end_48k) break;
+        }
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
+    }
+
+    // Flush filter tail so exact sample count equals total_48k / 3.
+    const int64_t total_48k = cursor_48k - start_48k;
+    if (total_48k > 0) {
+        mono_buf.insert(mono_buf.end(), static_cast<size_t>(half), 0.0f);
+        drain_decimator();
+    }
+    if (!pcm_out.empty()) {
+        out.write(reinterpret_cast<const char*>(pcm_out.data()), static_cast<std::streamsize>(pcm_out.size() * sizeof(int16_t)));
+        if (!out) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_DISK_FULL));
+    }
+
+    out.seekp(0, std::ios::beg);
+    write_header_16k(out, static_cast<uint32_t>(written_16k));
+    out.flush();
+    if (!out) winrt::throw_hresult(HRESULT_FROM_WIN32(ERROR_WRITE_FAULT));
+}
 }
