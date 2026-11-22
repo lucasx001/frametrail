@@ -5,7 +5,6 @@ import {
   PromptInputBody,
   PromptInputFooter,
   PromptInputTextarea,
-  PromptInputTools,
 } from '@/components/ai-elements/prompt-input';
 import { SpeechInput } from '@/components/ai-elements/speech-input';
 import { Button } from '@/components/ui/button';
@@ -296,23 +295,23 @@ export const Composer: React.FC = () => {
             />
           </PromptInputBody>
 
-          <PromptInputFooter className="px-2 pt-0.5 pb-2">
-            <PromptInputTools className="gap-1">
-              <ModelProviderPicker />
+          <PromptInputFooter className="min-w-0 flex-wrap justify-start gap-1 px-2 pt-0.5 pb-2">
+            <ModelProviderPicker />
 
-              <Button
-                type="button"
-                variant="ghost"
-                size="xs"
-                data-testid="mode-toggle-btn"
-                onClick={() => toggleAutoApply(!settings.autoApply)}
-                className="h-6.5 rounded-lg bg-[var(--well)] px-2 text-[10px] font-normal text-muted-foreground hover:bg-[var(--hover-well)] hover:text-foreground"
-              >
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              data-testid="mode-toggle-btn"
+              onClick={() => toggleAutoApply(!settings.autoApply)}
+              className="h-6.5 min-w-0 max-w-full shrink rounded-lg bg-[var(--well)] px-2 text-[10px] font-normal text-muted-foreground hover:bg-[var(--hover-well)] hover:text-foreground"
+            >
+              <span className="truncate">
                 {settings.autoApply ? tr('AiModeAuto') : tr('AiModeReview')}
-              </Button>
-            </PromptInputTools>
+              </span>
+            </Button>
 
-            <div className="flex items-center gap-1.5">
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
               <SpeechInput disabled={isSending} />
 
               {isSending ? (

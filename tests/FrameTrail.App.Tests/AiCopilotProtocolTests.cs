@@ -228,4 +228,42 @@ public sealed class AiCopilotProtocolTests
             Assert.True(payload.GetProperty("isFinal").GetBoolean());
         }
     }
+
+    [Fact]
+    public void ActionConfirmationPayloadsRoundTripCorrectly()
+    {
+        var reqJson = AiCopilotProtocol.SerializeEnvelope(
+            "confirmation.request",
+            new AiActionConfirmationPayload(
+                RequestId: "confirm-001",
+                TurnId: "turn-42",
+                Kind: "whisper_model_download",
+                Title: "下载本地语音转字幕模型",
+                Description: "是否允许下载 Whisper Large v3 Turbo？",
+                Detail: "ggml-large-v3-turbo-q5_0.bin · 547 MB",
+                ConfirmLabel: "允许下载",
+                RejectLabel: "拒绝",
+                Status: "pending"));
+
+        using (var doc = JsonDocument.Parse(reqJson))
+        {
+            var root = doc.RootElement;
+            Assert.Equal("confirmation.request", root.GetProperty("type").GetString());
+            var payload = root.GetProperty("payload");
+            Assert.Equal("confirm-001", payload.GetProperty("requestId").GetString());
+            Assert.Equal("turn-42", payload.GetProperty("turnId").GetString());
+            Assert.Equal("whisper_model_download", payload.GetProperty("kind").GetString());
+            Assert.Equal("pending", payload.GetProperty("status").GetString());
+            Assert.Equal("允许下载", payload.GetProperty("confirmLabel").GetString());
+            Assert.False(payload.TryGetProperty("progressPercent", out _));
+        }
+
+        const string respondMsg = """{"type":"confirmation.respond","payload":{"requestId":"confirm-001","approved":true}}""";
+        Assert.True(AiCopilotProtocol.TryParseIncoming(respondMsg, out var parsed));
+        Assert.NotNull(parsed);
+        Assert.Equal("confirmation.respond", parsed.Type);
+        var respPayload = AiCopilotProtocol.DeserializePayload<AiConfirmationRespondPayload>(parsed.Payload);
+        Assert.Equal("confirm-001", respPayload?.RequestId);
+        Assert.True(respPayload?.Approved);
+    }
 }

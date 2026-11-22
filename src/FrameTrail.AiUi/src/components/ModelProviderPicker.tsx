@@ -218,7 +218,7 @@ export const ModelProviderPicker: React.FC = () => {
   );
 
   return (
-    <div className="flex items-center gap-1">
+    <>
       <ModelSelector open={open} onOpenChange={setOpen}>
         <ModelSelectorTrigger asChild>
           <Button
@@ -227,7 +227,7 @@ export const ModelProviderPicker: React.FC = () => {
             size="xs"
             data-testid="model-picker-trigger"
             aria-label={tr('AiProviderLabel')}
-            className="h-6.5 max-w-[165px] gap-1.5 rounded-lg bg-[var(--well)] px-2 text-[11px] font-normal text-foreground hover:bg-[var(--hover-well)]"
+            className="h-6.5 min-w-0 max-w-[min(165px,100%)] shrink gap-1.5 rounded-lg bg-[var(--well)] px-2 text-[11px] font-normal text-foreground hover:bg-[var(--hover-well)]"
           >
             <span
               className={cn(
@@ -270,7 +270,7 @@ export const ModelProviderPicker: React.FC = () => {
               size="xs"
               data-testid="cli-submodel-picker-trigger"
               aria-label={tr('AiCliSubModelLabel')}
-              className="h-6.5 max-w-[145px] gap-1 rounded-lg bg-[var(--well)] px-2 text-[10px] font-normal text-muted-foreground hover:bg-[var(--hover-well)] hover:text-foreground"
+              className="h-6.5 min-w-0 max-w-[min(145px,100%)] shrink gap-1 rounded-lg bg-[var(--well)] px-2 text-[10px] font-normal text-muted-foreground hover:bg-[var(--hover-well)] hover:text-foreground"
             >
               <Cpu className="size-3 shrink-0 text-muted-foreground" />
               <span className="truncate">{subModelButtonLabel}</span>
@@ -313,6 +313,6 @@ export const ModelProviderPicker: React.FC = () => {
           </ModelSelectorContent>
         </ModelSelector>
       )}
-    </div>
+    </>
   );
 };

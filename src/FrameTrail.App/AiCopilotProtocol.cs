@@ -182,9 +182,26 @@ public sealed record AiVoiceTranscriptPayload(
     string Text,
     bool IsFinal);
 
+public sealed record AiActionConfirmationPayload(
+    string RequestId,
+    string TurnId,
+    string Kind,
+    string Title,
+    string Description,
+    string? Detail = null,
+    string? ConfirmLabel = null,
+    string? RejectLabel = null,
+    string Status = "pending",
+    double? ProgressPercent = null,
+    string? StatusMessage = null);
+
 // --- Web -> Host Payloads ---
 
 public sealed record AiVoiceStartPayload(string? Lang = null);
+
+public sealed record AiConfirmationRespondPayload(
+    string RequestId,
+    bool Approved);
 
 public sealed record AiChatSendPayload(string Prompt);
 

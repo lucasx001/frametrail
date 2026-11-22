@@ -768,7 +768,7 @@ public sealed class AiAgentBridge
     public AiAgentBridge(HttpClient? httpClient = null)
     {
         ownsHttpClient = httpClient is null;
-        this.httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(240) };
+        this.httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
     }
 
     public async Task<bool> IsSidecarHealthyAsync(string sidecarUrl, CancellationToken ct = default)

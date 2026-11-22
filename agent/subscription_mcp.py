@@ -302,17 +302,20 @@ class SubscriptionCliBridge:
                 "- frametrail_set_clip_speed: set clip speed (0.25x..4.0x)",
                 "- frametrail_cut_range: split/remove a time range",
                 "- frametrail_update_canvas: change aspect ratio, padding, corner radius, frame style",
+                "- frametrail_list_whisper_models: inspect local Whisper speech-to-text models ('small-q5', 'large-v3-turbo-q5_0') and whether any is installed",
+                "- frametrail_download_whisper_model: download a local Whisper model via FrameTrail (automatically asks the user for confirmation in Review mode before downloading)",
                 "- frametrail_generate_subtitles: transcribe speech from project audio/video tracks (whole timeline, 1-based clip_indices like [2, 3], or [start_sec, end_sec]) and apply styled subtitles",
                 "- frametrail_upsert_subtitle: add or update a single subtitle cue (text and optional secondary_text) over [start_sec, end_sec]",
                 "- frametrail_update_subtitle_style: customize subtitle preset (classicOutline/darkPill/karaokePop/bilingualClean/custom), font size, vertical position, colors, background pill, karaoke highlight, or bilingual display",
                 "- frametrail_delete_subtitles: remove subtitles by subtitle_ids, by [start_sec, end_sec], or clear the entire subtitle track",
                 "Strict operating rules:",
                 "1. Stay strictly inside the active FrameTrail project and the 'frametrail' MCP tools. "
-                "NEVER inspect, grep, or search FrameTrail application source code, binaries, or directories outside the project folder.",
-                "2. For speech-to-subtitle requests (including specific clips like '第2段和第3段' -> clip_indices=[2, 3] or placing subtitles at the bottom -> position_y=0.88), call frametrail_generate_subtitles / frametrail_upsert_subtitle / frametrail_update_subtitle_style / frametrail_delete_subtitles directly.",
-                "3. If the user requests a capability that FrameTrail's MCP tools and project schema genuinely do NOT support, "
-                "do NOT run exploratory shell commands searching for workarounds. Immediately give a clear, concise reply in the user's language explaining what is not yet supported and what supported edits you can perform instead.",
-                "4. Keep tool calls minimal and reply concisely in the user's language.",
+                "NEVER inspect, grep, read, or search FrameTrail application source code, binaries, project files, or directories outside the 'frametrail' MCP tools (do NOT call read_file/grep/shell to debug MCP errors).",
+                "2. For speech-to-subtitle requests (including specific clips like '第2段和第3段' -> clip_indices=[2, 3] or placing subtitles at the bottom -> position_y=0.88), verify the actual clip count from Timeline overview or frametrail_get_timeline FIRST. If the user references a clip index beyond the timeline's clip count (for example clip #3 when only 2 clips exist), do NOT pass out-of-range clip_indices and do NOT call read_file — clearly tell the user how many clips exist (with their time ranges) and ask whether to transcribe the available clip(s), or transcribe only the explicitly valid clip(s) if unambiguous.",
+                "3. When generating subtitles and no local Whisper model is installed yet (either detected via frametrail_list_whisper_models or reported by frametrail_generate_subtitles), do NOT merely tell the user to download it manually — call frametrail_download_whisper_model directly (defaulting to the selected/recommended model unless the user prefers 'small-q5'). FrameTrail automatically enforces the user's Review confirmation permission before downloading. If the download succeeds, immediately continue by calling frametrail_generate_subtitles; if the user declines the download, stop and acknowledge cleanly without retrying.",
+                "4. If any frametrail_* MCP tool returns an unrecoverable error, or if the user requests a capability that FrameTrail's MCP tools genuinely do NOT support, "
+                "do NOT run exploratory read_file/shell/search commands looking for workarounds. Immediately stop and give a clear, concise reply in the user's language explaining the exact error or limitation.",
+                "5. Keep tool calls minimal and reply concisely in the user's language.",
             ]
         )
 
@@ -427,7 +430,7 @@ class SubscriptionCliBridge:
         callback_url: str = "",
         model_name: str = "",
         stream: bool = False,
-        timeout_sec: float = 180.0,
+        timeout_sec: float = 900.0,
     ) -> tuple[list[str], dict[str, str]]:
         discovered = self.discover_local_subscription_clis()
         kind = cli_kind.strip().lower()
@@ -816,6 +819,41 @@ class SubscriptionCliBridge:
             "error": error,
         }
 
+    @staticmethod
+    def _is_transient_cli_transport_error(detail: str) -> bool:
+        low = (detail or "").strip().lower()
+        if not low:
+            return False
+        markers = (
+            ": eof",
+            "unexpected eof",
+            "connection reset",
+            "broken pipe",
+            "tls handshake timeout",
+            "i/o timeout",
+            "http2: client connection lost",
+            "status code 502",
+            "status code 503",
+            "status code 504",
+            "502 bad gateway",
+            "503 service unavailable",
+            "504 gateway timeout",
+        )
+        return any(m in low for m in markers)
+
+    @staticmethod
+    def _is_read_only_tool_name(tool_name: str) -> bool:
+        low = (tool_name or "").strip().lower()
+        return low in (
+            "frametrail_get_timeline",
+            "frametrail_list_whisper_models",
+            "read_file",
+            "view_file",
+            "list_dir",
+            "find_by_name",
+            "grep_search",
+        )
+
     def run_subscription_cli_turn(
         self,
         cli_kind: str,
@@ -823,7 +861,7 @@ class SubscriptionCliBridge:
         project_dir: str,
         thread_id: str = "default",
         callback_url: str = "",
-        timeout_sec: float = 180.0,
+        timeout_sec: float = 900.0,
         model_name: str = "",
         playhead_sec: float = 0.0,
         timeline_overview: dict[str, Any] | None = None,
@@ -945,7 +983,7 @@ class SubscriptionCliBridge:
         project_dir: str,
         thread_id: str = "default",
         callback_url: str = "",
-        timeout_sec: float = 180.0,
+        timeout_sec: float = 900.0,
         model_name: str = "",
         playhead_sec: float = 0.0,
         timeline_overview: dict[str, Any] | None = None,
@@ -1061,7 +1099,7 @@ class SubscriptionCliBridge:
         project_dir: str,
         thread_id: str = "default",
         callback_url: str = "",
-        timeout_sec: float = 180.0,
+        timeout_sec: float = 900.0,
         model_name: str = "",
         playhead_sec: float = 0.0,
         timeline_overview: dict[str, Any] | None = None,
@@ -1103,124 +1141,147 @@ class SubscriptionCliBridge:
         if os.name == "nt":
             create_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-        proc: asyncio.subprocess.Process | None = None
-        stderr_chunks: list[str] = []
-        stderr_task: asyncio.Task[None] | None = None
+        max_attempts = 2
+        for attempt in range(max_attempts):
+            proc: asyncio.subprocess.Process | None = None
+            stderr_chunks: list[str] = []
+            stderr_task: asyncio.Task[None] | None = None
 
-        async def _drain_stderr(stream: asyncio.StreamReader) -> None:
+            async def _drain_stderr(stream: asyncio.StreamReader) -> None:
+                try:
+                    while True:
+                        chunk = await stream.read(4096)
+                        if not chunk:
+                            break
+                        stderr_chunks.append(chunk.decode("utf-8", errors="replace"))
+                except Exception:
+                    pass
+
             try:
+                proc = await asyncio.create_subprocess_exec(*cmd, **create_kwargs)
+                assert proc.stdout is not None and proc.stderr is not None
+                stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
+
+                deadline = time.monotonic() + float(timeout_sec)
+                streamed_tokens: list[str] = []
+                tool_calls: list[dict[str, Any]] = []
+                session_id: str | None = None
+                final_result_text = ""
+                result_error: str | None = None
+                mutating_tool_succeeded = False
+
                 while True:
-                    chunk = await stream.read(4096)
-                    if not chunk:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError()
+                    raw_line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
+                    if not raw_line:
                         break
-                    stderr_chunks.append(chunk.decode("utf-8", errors="replace"))
-            except Exception:
-                pass
+                    line = raw_line.decode("utf-8", errors="replace")
+                    for parsed in self._parse_stream_json_line(line):
+                        ptype = parsed.get("type")
+                        if parsed.get("session_id"):
+                            session_id = session_id or str(parsed["session_id"])
 
-        try:
-            proc = await asyncio.create_subprocess_exec(*cmd, **create_kwargs)
-            assert proc.stdout is not None and proc.stderr is not None
-            stderr_task = asyncio.create_task(_drain_stderr(proc.stderr))
+                        if ptype == "init":
+                            yield {
+                                "type": "thinking",
+                                "text": f"Local {cli_kind} session connected.",
+                            }
+                        elif ptype == "tool_start":
+                            yield {
+                                "type": "tool_start",
+                                "tool_name": str(parsed.get("tool_name") or "tool"),
+                                "summary": str(parsed.get("summary") or ""),
+                            }
+                        elif ptype == "tool_end":
+                            tname = str(parsed.get("tool_name") or "tool")
+                            succeeded = bool(parsed.get("succeeded", True))
+                            if succeeded and not self._is_read_only_tool_name(tname):
+                                mutating_tool_succeeded = True
+                            rec = {
+                                "tool_name": tname,
+                                "summary": str(parsed.get("summary") or ""),
+                                "succeeded": succeeded,
+                            }
+                            tool_calls.append(rec)
+                            yield {"type": "tool_end", **rec}
+                        elif ptype == "token":
+                            delta = str(parsed.get("text") or "")
+                            if delta:
+                                streamed_tokens.append(delta)
+                                yield {"type": "token", "text": delta}
+                        elif ptype == "result":
+                            if parsed.get("response"):
+                                final_result_text = str(parsed["response"])
+                            if parsed.get("ok") is False and parsed.get("error"):
+                                result_error = str(parsed["error"])
 
-            deadline = time.monotonic() + float(timeout_sec)
-            streamed_tokens: list[str] = []
-            tool_calls: list[dict[str, Any]] = []
-            session_id: str | None = None
-            final_result_text = ""
-            result_error: str | None = None
+                remaining = max(1.0, deadline - time.monotonic())
+                await asyncio.wait_for(proc.wait(), timeout=remaining)
+                if stderr_task is not None:
+                    await asyncio.wait_for(stderr_task, timeout=2.0)
 
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise asyncio.TimeoutError()
-                raw_line = await asyncio.wait_for(proc.stdout.readline(), timeout=remaining)
-                if not raw_line:
-                    break
-                line = raw_line.decode("utf-8", errors="replace")
-                for parsed in self._parse_stream_json_line(line):
-                    ptype = parsed.get("type")
-                    if parsed.get("session_id"):
-                        session_id = session_id or str(parsed["session_id"])
-
-                    if ptype == "init":
+                stderr_text = "".join(stderr_chunks)
+                returncode = proc.returncode or 0
+                if returncode != 0 or result_error:
+                    clean_err = self._clean_stderr_summary(stderr_text)
+                    detail = result_error or clean_err or f"{cli_kind} exited with code {returncode}"
+                    can_retry = (
+                        attempt + 1 < max_attempts
+                        and not mutating_tool_succeeded
+                        and not streamed_tokens
+                        and self._is_transient_cli_transport_error(detail)
+                    )
+                    if can_retry:
                         yield {
                             "type": "thinking",
-                            "text": f"Local {cli_kind} session connected.",
+                            "text": f"Upstream {cli_kind} connection dropped unexpectedly; retrying automatically...",
                         }
-                    elif ptype == "tool_start":
-                        yield {
-                            "type": "tool_start",
-                            "tool_name": str(parsed.get("tool_name") or "tool"),
-                            "summary": str(parsed.get("summary") or ""),
-                        }
-                    elif ptype == "tool_end":
-                        rec = {
-                            "tool_name": str(parsed.get("tool_name") or "tool"),
-                            "summary": str(parsed.get("summary") or ""),
-                            "succeeded": bool(parsed.get("succeeded", True)),
-                        }
-                        tool_calls.append(rec)
-                        yield {"type": "tool_end", **rec}
-                    elif ptype == "token":
-                        delta = str(parsed.get("text") or "")
-                        if delta:
-                            streamed_tokens.append(delta)
-                            yield {"type": "token", "text": delta}
-                    elif ptype == "result":
-                        if parsed.get("response"):
-                            final_result_text = str(parsed["response"])
-                        if parsed.get("ok") is False and parsed.get("error"):
-                            result_error = str(parsed["error"])
+                        await asyncio.sleep(1.5)
+                        continue
+                    yield {"type": "error", "detail": detail, "tool_calls": tool_calls}
+                    return
 
-            remaining = max(1.0, deadline - time.monotonic())
-            await asyncio.wait_for(proc.wait(), timeout=remaining)
-            if stderr_task is not None:
-                await asyncio.wait_for(stderr_task, timeout=2.0)
+                reply = (final_result_text or "".join(streamed_tokens)).strip()
+                if reply and not streamed_tokens:
+                    yield {"type": "token", "text": reply}
 
-            stderr_text = "".join(stderr_chunks)
-            returncode = proc.returncode or 0
-            if returncode != 0 or result_error:
-                clean_err = self._clean_stderr_summary(stderr_text)
-                detail = result_error or clean_err or f"{cli_kind} exited with code {returncode}"
-                yield {"type": "error", "detail": detail, "tool_calls": tool_calls}
+                checkpoint_manager.record_turn(
+                    thread_id,
+                    "assistant",
+                    reply,
+                    tool_calls=tool_calls,
+                )
+                yield {
+                    "type": "done",
+                    "reply": reply,
+                    "tool_calls": tool_calls,
+                    "session_id": session_id,
+                    "proposed_command": None,
+                }
                 return
-
-            reply = (final_result_text or "".join(streamed_tokens)).strip()
-            if reply and not streamed_tokens:
-                yield {"type": "token", "text": reply}
-
-            checkpoint_manager.record_turn(
-                thread_id,
-                "assistant",
-                reply,
-                tool_calls=tool_calls,
-            )
-            yield {
-                "type": "done",
-                "reply": reply,
-                "tool_calls": tool_calls,
-                "session_id": session_id,
-                "proposed_command": None,
-            }
-        except asyncio.TimeoutError:
-            await self._kill_async_proc(proc)
-            if stderr_task is not None:
-                stderr_task.cancel()
-            clean_err = self._clean_stderr_summary("".join(stderr_chunks))
-            detail = f"{cli_kind} timed out after {timeout_sec:.0f}s."
-            if clean_err:
-                detail = f"{detail} ({clean_err})"
-            yield {"type": "error", "detail": detail}
-        except asyncio.CancelledError:
-            await self._kill_async_proc(proc)
-            if stderr_task is not None:
-                stderr_task.cancel()
-            raise
-        except OSError as exc:
-            await self._kill_async_proc(proc)
-            if stderr_task is not None:
-                stderr_task.cancel()
-            yield {"type": "error", "detail": str(exc)}
+            except asyncio.TimeoutError:
+                await self._kill_async_proc(proc)
+                if stderr_task is not None:
+                    stderr_task.cancel()
+                clean_err = self._clean_stderr_summary("".join(stderr_chunks))
+                detail = f"{cli_kind} timed out after {timeout_sec:.0f}s."
+                if clean_err:
+                    detail = f"{detail} ({clean_err})"
+                yield {"type": "error", "detail": detail}
+                return
+            except asyncio.CancelledError:
+                await self._kill_async_proc(proc)
+                if stderr_task is not None:
+                    stderr_task.cancel()
+                raise
+            except OSError as exc:
+                await self._kill_async_proc(proc)
+                if stderr_task is not None:
+                    stderr_task.cancel()
+                yield {"type": "error", "detail": str(exc)}
+                return
 
 
 # --- LangGraph Checkpointer & Human-in-the-loop State Manager ---
@@ -1562,7 +1623,7 @@ def run_subscription_cli_turn(
     thread_id: str = "default",
     callback_url: str = "",
     model_name: str = "",
-    timeout_sec: float = 180.0,
+    timeout_sec: float = 900.0,
     playhead_sec: float = 0.0,
     timeline_overview: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1586,7 +1647,7 @@ async def arun_subscription_cli_turn(
     thread_id: str = "default",
     callback_url: str = "",
     model_name: str = "",
-    timeout_sec: float = 180.0,
+    timeout_sec: float = 900.0,
     playhead_sec: float = 0.0,
     timeline_overview: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1610,7 +1671,7 @@ async def astream_subscription_cli_turn(
     thread_id: str = "default",
     callback_url: str = "",
     model_name: str = "",
-    timeout_sec: float = 180.0,
+    timeout_sec: float = 900.0,
     playhead_sec: float = 0.0,
     timeline_overview: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:

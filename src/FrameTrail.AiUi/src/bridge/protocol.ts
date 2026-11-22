@@ -106,6 +106,22 @@ export interface VoiceTranscriptPayload {
   isFinal: boolean;
 }
 
+export type ConfirmationStatus = 'pending' | 'downloading' | 'completed' | 'rejected' | 'failed';
+
+export interface ActionConfirmationPayload {
+  requestId: string;
+  turnId: string;
+  kind: string;
+  title: string;
+  description: string;
+  detail?: string;
+  confirmLabel?: string;
+  rejectLabel?: string;
+  status: ConfirmationStatus;
+  progressPercent?: number;
+  statusMessage?: string;
+}
+
 export type HostToWebMessage =
   | { type: 'init'; payload: InitPayload }
   | { type: 'theme.changed'; payload: { theme: ThemeMode } }
@@ -116,6 +132,8 @@ export type HostToWebMessage =
   | { type: 'turn.stream'; payload: TurnStreamEventPayload }
   | { type: 'turn.completed'; payload: TurnCompletedPayload }
   | { type: 'turn.changes'; payload: TimelineChangesPayload }
+  | { type: 'confirmation.request'; payload: ActionConfirmationPayload }
+  | { type: 'confirmation.updated'; payload: ActionConfirmationPayload }
   | { type: 'session.cleared'; payload?: Record<string, never> }
   | { type: 'composer.focus'; payload?: Record<string, never> }
   | { type: 'voice.state'; payload: VoiceStatePayload }
@@ -131,6 +149,7 @@ export type WebToHostMessage =
   | { type: 'changes.accept'; payload: { turnId: string } }
   | { type: 'changes.reject'; payload: { turnId: string } }
   | { type: 'changes.undo'; payload: { turnId: string } }
+  | { type: 'confirmation.respond'; payload: { requestId: string; approved: boolean } }
   | { type: 'settings.selectProvider'; payload: { provider: AiProviderKey; modelOverride?: string } }
   | {
       type: 'settings.updateConfig';

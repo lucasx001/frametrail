@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using FrameTrail.Domain;
 using FrameTrail.Interop;
@@ -35,6 +36,7 @@ public sealed partial class EditorWindow
     private readonly AiVoiceRecognizer aiVoiceRecognizer = new();
     private readonly List<AiChatMessage> aiChatHistory = new();
     private readonly Dictionary<string, IReadOnlyList<AiProposedChangeDto>> aiTurnChangeItems = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> pendingAiConfirmations = new(StringComparer.Ordinal);
 
     private AiCopilotWebHost? aiWebHost;
     private AiLocalCommandCallbackServer? aiCallbackServer;
@@ -44,6 +46,7 @@ public sealed partial class EditorWindow
     private string aiModelName = "gpt-4o";
     private string aiBaseUrl = "";
     private string? activePendingTurnId;
+    private string? activeAiTurnId;
     private string? aiSidecarError;
     private bool aiCopilotOpen;
     private bool aiSending;
@@ -118,6 +121,7 @@ public sealed partial class EditorWindow
         try { aiTurnCts?.Cancel(); } catch { }
         try { aiTurnCts?.Dispose(); } catch { }
         aiTurnCts = null;
+        CancelAllPendingAiConfirmations();
 
         if (aiPreviewCoordinator.HasStagedPreview)
         {
@@ -144,11 +148,788 @@ public sealed partial class EditorWindow
         if (aiCallbackServer is not null) return;
         try
         {
-            aiCallbackServer = new AiLocalCommandCallbackServer(HandleExternalMcpCommandAsync);
+            aiCallbackServer = new AiLocalCommandCallbackServer(
+                HandleExternalMcpCommandAsync,
+                HandleExternalMcpActionAsync);
         }
         catch
         {
             // Loopback callback is optional if restricted by OS policy.
+        }
+    }
+
+    private void CancelAllPendingAiConfirmations()
+    {
+        foreach (var kv in pendingAiConfirmations.ToArray())
+        {
+            if (pendingAiConfirmations.TryRemove(kv.Key, out var tcs))
+                tcs.TrySetCanceled();
+        }
+    }
+
+    private Task<AiLocalCallbackActionResult> HandleExternalMcpActionAsync(
+        string action,
+        JsonElement parameters,
+        CancellationToken ct)
+    {
+        if (string.Equals(action, "list_whisper_models", StringComparison.OrdinalIgnoreCase))
+            return HandleExternalMcpListWhisperModelsAsync();
+
+        if (string.Equals(action, "download_whisper_model", StringComparison.OrdinalIgnoreCase))
+            return HandleExternalMcpDownloadWhisperModelAsync(parameters, ct);
+
+        if (string.Equals(action, "generate_subtitles", StringComparison.OrdinalIgnoreCase))
+            return HandleExternalMcpGenerateSubtitlesAsync(parameters, ct);
+
+        return Task.FromResult(new AiLocalCallbackActionResult(
+            Ok: false,
+            Error: $"Unsupported host callback action: '{action}'."));
+    }
+
+    private Task<AiLocalCallbackActionResult> HandleExternalMcpListWhisperModelsAsync()
+    {
+        var tcs = new TaskCompletionSource<AiLocalCallbackActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool enqueued = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                var (selectedEngine, selectedModelId) = SelectedAsrEngine();
+                var catalog = subtitleService.ModelManager.GetCatalog();
+                var models = catalog.Select(desc => new
+                {
+                    id = desc.Id,
+                    displayName = desc.DisplayName,
+                    fileName = desc.FileName,
+                    expectedBytes = desc.ExpectedBytes,
+                    sizeMb = Math.Round(desc.ExpectedBytes / (1024.0 * 1024.0), 1),
+                    installed = subtitleService.ModelManager.IsModelInstalled(desc.Id),
+                    isSelected = string.Equals(selectedEngine, "whisper-local", StringComparison.OrdinalIgnoreCase) &&
+                                 string.Equals(selectedModelId, desc.Id, StringComparison.OrdinalIgnoreCase)
+                }).ToArray();
+
+                bool anyInstalled = models.Any(m => m.installed);
+                tcs.TrySetResult(new AiLocalCallbackActionResult(
+                    Ok: true,
+                    Message: anyInstalled
+                        ? "Local Whisper model(s) installed."
+                        : "No local Whisper model is installed yet.",
+                    Data: new
+                    {
+                        selectedEngine,
+                        selectedModelId,
+                        anyLocalModelInstalled = anyInstalled,
+                        autoApply = aiAutoApply,
+                        requiresApproval = !aiAutoApply,
+                        modelsDirectory = subtitleService.ModelManager.ModelsDirectory,
+                        models
+                    }));
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetResult(new AiLocalCallbackActionResult(false, Error: ex.Message));
+            }
+        });
+
+        if (!enqueued)
+            tcs.TrySetResult(new AiLocalCallbackActionResult(false, Error: "Editor dispatcher unavailable."));
+
+        return tcs.Task;
+    }
+
+    private async Task<AiLocalCallbackActionResult> HandleExternalMcpDownloadWhisperModelAsync(
+        JsonElement parameters,
+        CancellationToken ct)
+    {
+        var prepTcs = new TaskCompletionSource<(
+            bool Ok,
+            string? Error,
+            string ModelId,
+            bool AutoApply,
+            string TurnId,
+            CancellationToken LinkedCt)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        bool enqueuedPrep = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (closing)
+                {
+                    prepTcs.TrySetResult((false, "Editor is closing.", "", false, "", CancellationToken.None));
+                    return;
+                }
+                if (subtitleBusy)
+                {
+                    prepTcs.TrySetResult((false, "Another subtitle or Whisper model task is already running.", "", false, "", CancellationToken.None));
+                    return;
+                }
+
+                var (selectedEngine, selectedModelId) = SelectedAsrEngine();
+                string requestedModelId = parameters.TryGetProperty("model_id", out var mEl) &&
+                                          mEl.ValueKind == JsonValueKind.String &&
+                                          !string.IsNullOrWhiteSpace(mEl.GetString())
+                    ? mEl.GetString()!.Trim()
+                    : (string.Equals(selectedEngine, "whisper-local", StringComparison.OrdinalIgnoreCase)
+                        ? selectedModelId
+                        : WhisperModelManager.LargeTurboModelId);
+
+                subtitleAsrCts?.Dispose();
+                subtitleAsrCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    ct,
+                    aiTurnCts?.Token ?? CancellationToken.None);
+
+                prepTcs.TrySetResult((
+                    true,
+                    null,
+                    requestedModelId,
+                    aiAutoApply,
+                    activeAiTurnId ?? "",
+                    subtitleAsrCts.Token));
+            }
+            catch (Exception ex)
+            {
+                prepTcs.TrySetResult((false, ex.Message, "", false, "", CancellationToken.None));
+            }
+        });
+
+        if (!enqueuedPrep)
+            return new AiLocalCallbackActionResult(false, Error: "Editor dispatcher unavailable.");
+
+        var prep = await prepTcs.Task.ConfigureAwait(false);
+        if (!prep.Ok)
+            return new AiLocalCallbackActionResult(false, Error: prep.Error ?? "Unable to prepare model download.");
+
+        WhisperModelDescriptor desc;
+        try
+        {
+            desc = subtitleService.ModelManager.GetDescriptor(prep.ModelId);
+        }
+        catch (Exception ex)
+        {
+            return new AiLocalCallbackActionResult(false, Error: ex.Message);
+        }
+
+        double sizeMb = Math.Round(desc.ExpectedBytes / (1024.0 * 1024.0), 1);
+        if (subtitleService.ModelManager.IsModelInstalled(desc.Id))
+        {
+            return new AiLocalCallbackActionResult(
+                Ok: true,
+                EngineUsed: $"whisper-local:{desc.Id}",
+                Message: $"Whisper model '{desc.Id}' ({desc.DisplayName}) is already installed.",
+                Data: new
+                {
+                    modelId = desc.Id,
+                    displayName = desc.DisplayName,
+                    sizeMb,
+                    alreadyInstalled = true,
+                    approved = true,
+                    autoApproved = prep.AutoApply
+                });
+        }
+
+        string requestId = "confirm-" + Guid.NewGuid().ToString("N")[..12];
+        string title = L.T("AiConfirmModelDownloadTitle");
+        string description = L.T("AiConfirmModelDownloadDesc", desc.DisplayName);
+        string detail = $"{desc.FileName} · {sizeMb:0} MB → {subtitleService.ModelManager.ModelsDirectory}";
+        bool cardPosted = false;
+
+        // Review mode (!autoApply): require explicit user approval in the AI Copilot chat panel first.
+        if (!prep.AutoApply)
+        {
+            var approvalTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            pendingAiConfirmations[requestId] = approvalTcs;
+            try
+            {
+                if (!string.IsNullOrEmpty(prep.TurnId))
+                {
+                    cardPosted = true;
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (closing) return;
+                        aiWebHost?.Post("confirmation.request", new AiActionConfirmationPayload(
+                            RequestId: requestId,
+                            TurnId: prep.TurnId,
+                            Kind: "whisper_model_download",
+                            Title: title,
+                            Description: description,
+                            Detail: detail,
+                            ConfirmLabel: L.T("AiConfirmApproveDownload"),
+                            RejectLabel: L.T("AiConfirmReject"),
+                            Status: "pending"));
+                    });
+                }
+
+                bool approved;
+                try
+                {
+                    approved = await approvalTcs.Task.WaitAsync(prep.LinkedCt).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    if (cardPosted)
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (closing) return;
+                            aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                                RequestId: requestId,
+                                TurnId: prep.TurnId,
+                                Kind: "whisper_model_download",
+                                Title: title,
+                                Description: description,
+                                Detail: detail,
+                                Status: "rejected",
+                                StatusMessage: L.T("AiConfirmModelRejectedStatus")));
+                        });
+                    }
+                    return new AiLocalCallbackActionResult(
+                        Ok: false,
+                        Error: "Model download confirmation was cancelled.",
+                        Data: new { rejected = true, cancelled = true, modelId = desc.Id });
+                }
+
+                if (!approved)
+                {
+                    if (cardPosted)
+                    {
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (closing) return;
+                            aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                                RequestId: requestId,
+                                TurnId: prep.TurnId,
+                                Kind: "whisper_model_download",
+                                Title: title,
+                                Description: description,
+                                Detail: detail,
+                                Status: "rejected",
+                                StatusMessage: L.T("AiConfirmModelRejectedStatus")));
+                        });
+                    }
+                    return new AiLocalCallbackActionResult(
+                        Ok: false,
+                        Error: $"User declined downloading local Whisper model '{desc.Id}' ({desc.DisplayName}). Do not retry downloading unless the user explicitly asks.",
+                        Data: new { rejected = true, modelId = desc.Id });
+                }
+            }
+            finally
+            {
+                pendingAiConfirmations.TryRemove(requestId, out _);
+            }
+        }
+
+        // Approved (or Auto mode): download with live progress in both AI Copilot chat and Subtitles panel.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (closing) return;
+            SetSubtitleBusy(true, L.T("SubModelDownloading", 0), 0);
+            if (!string.IsNullOrEmpty(prep.TurnId))
+            {
+                string msgType = cardPosted ? "confirmation.updated" : "confirmation.request";
+                aiWebHost?.Post(msgType, new AiActionConfirmationPayload(
+                    RequestId: requestId,
+                    TurnId: prep.TurnId,
+                    Kind: "whisper_model_download",
+                    Title: title,
+                    Description: description,
+                    Detail: detail,
+                    Status: "downloading",
+                    ProgressPercent: 0,
+                    StatusMessage: L.T("AiConfirmModelDownloadingStatus", 0)));
+                cardPosted = true;
+            }
+        });
+
+        double lastReportedPct = -10.0;
+        string lastReportedStage = "";
+        try
+        {
+            var downloadProgress = new Progress<WhisperDownloadProgress>(p =>
+            {
+                double pct = Math.Clamp(p.Percent, 0, 100);
+                bool stageChanged = !string.Equals(p.Status, lastReportedStage, StringComparison.Ordinal);
+                if (!stageChanged && pct - lastReportedPct < 2.0 && pct < 99.5)
+                    return;
+                lastReportedPct = pct;
+                lastReportedStage = p.Status;
+
+                string statusText = p.Status == "verifying"
+                    ? L.T("AiConfirmModelVerifyingStatus")
+                    : L.T("AiConfirmModelDownloadingStatus", pct);
+
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (closing) return;
+                    subProgressBar.IsIndeterminate = false;
+                    subProgressBar.Value = pct;
+                    subProgressLabel.Text = L.T("SubModelDownloading", pct);
+                    if (!string.IsNullOrEmpty(prep.TurnId))
+                    {
+                        aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                            RequestId: requestId,
+                            TurnId: prep.TurnId,
+                            Kind: "whisper_model_download",
+                            Title: title,
+                            Description: description,
+                            Detail: detail,
+                            Status: "downloading",
+                            ProgressPercent: Math.Round(pct, 1),
+                            StatusMessage: statusText));
+                    }
+                });
+            });
+
+            await Task.Run(
+                () => subtitleService.ModelManager.EnsureModelAsync(desc.Id, downloadProgress, prep.LinkedCt),
+                prep.LinkedCt).ConfigureAwait(false);
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (closing) return;
+                RefreshLocalModelStatus();
+                if (!string.IsNullOrEmpty(prep.TurnId))
+                {
+                    aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                        RequestId: requestId,
+                        TurnId: prep.TurnId,
+                        Kind: "whisper_model_download",
+                        Title: title,
+                        Description: description,
+                        Detail: detail,
+                        Status: "completed",
+                        ProgressPercent: 100,
+                        StatusMessage: L.T("AiConfirmModelInstalledStatus")));
+                }
+            });
+
+            return new AiLocalCallbackActionResult(
+                Ok: true,
+                EngineUsed: $"whisper-local:{desc.Id}",
+                Message: $"Downloaded and verified Whisper model '{desc.Id}' ({desc.DisplayName}).",
+                Data: new
+                {
+                    modelId = desc.Id,
+                    displayName = desc.DisplayName,
+                    sizeMb,
+                    alreadyInstalled = false,
+                    approved = true,
+                    autoApproved = prep.AutoApply
+                });
+        }
+        catch (OperationCanceledException)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (closing) return;
+                if (!string.IsNullOrEmpty(prep.TurnId))
+                {
+                    aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                        RequestId: requestId,
+                        TurnId: prep.TurnId,
+                        Kind: "whisper_model_download",
+                        Title: title,
+                        Description: description,
+                        Detail: detail,
+                        Status: "rejected",
+                        StatusMessage: L.T("AiConfirmModelRejectedStatus")));
+                }
+            });
+            return new AiLocalCallbackActionResult(false, Error: "Whisper model download was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (closing) return;
+                if (!string.IsNullOrEmpty(prep.TurnId))
+                {
+                    aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                        RequestId: requestId,
+                        TurnId: prep.TurnId,
+                        Kind: "whisper_model_download",
+                        Title: title,
+                        Description: description,
+                        Detail: detail,
+                        Status: "failed",
+                        StatusMessage: ex.Message));
+                }
+            });
+            return new AiLocalCallbackActionResult(false, Error: ex.Message);
+        }
+        finally
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!closing)
+                    SetSubtitleBusy(false);
+            });
+        }
+    }
+
+    private async Task<AiLocalCallbackActionResult> HandleExternalMcpGenerateSubtitlesAsync(
+        JsonElement parameters,
+        CancellationToken ct)
+    {
+        var prepareTcs = new TaskCompletionSource<(
+            bool Ok,
+            string? Error,
+            object? ErrorData,
+            ProjectSnapshot? Snapshot,
+            string? ProjectDir,
+            string Engine,
+            string ModelId,
+            bool AutoApply,
+            string TurnId,
+            bool NeedsModelDownload,
+            SubtitleStyleSettings BaseStyle,
+            CancellationToken LinkedCt)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        bool enqueuedPrepare = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (closing || editor.IsExporting)
+                {
+                    prepareTcs.TrySetResult((false, "Editor is currently busy or closing.", null, null, null, "", "", false, "", false, SubtitleStyleSettings.ClassicOutline(), CancellationToken.None));
+                    return;
+                }
+                if (subtitleBusy)
+                {
+                    prepareTcs.TrySetResult((false, "Subtitle transcription is already running.", null, null, null, "", "", false, "", false, SubtitleStyleSettings.ClassicOutline(), CancellationToken.None));
+                    return;
+                }
+
+                var (engine, modelId) = SelectedAsrEngine();
+                bool needsDownload = false;
+                if (string.Equals(engine, "whisper-local", StringComparison.OrdinalIgnoreCase) &&
+                    !subtitleService.ModelManager.IsModelInstalled(modelId))
+                {
+                    // Prefer any already-downloaded local model so AI Copilot runs without unnecessary waiting.
+                    var installedAlt = subtitleService.ModelManager
+                        .GetCatalog()
+                        .FirstOrDefault(m => subtitleService.ModelManager.IsModelInstalled(m.Id));
+                    if (installedAlt is not null)
+                    {
+                        modelId = installedAlt.Id;
+                    }
+                    else if (!aiAutoApply)
+                    {
+                        // Review mode: require the Agent to call frametrail_download_whisper_model so the user confirms first.
+                        var desc = subtitleService.ModelManager.GetDescriptor(modelId);
+                        double sizeMb = Math.Round(desc.ExpectedBytes / (1024.0 * 1024.0), 1);
+                        prepareTcs.TrySetResult((
+                            false,
+                            $"Local Whisper speech-to-text model '{desc.Id}' ({desc.DisplayName}, {sizeMb:0} MB) is not installed yet. Call frametrail_download_whisper_model(model_id='{desc.Id}') (or '{WhisperModelManager.SmallModelId}' ~181 MB) to request user confirmation and download the model, then call frametrail_generate_subtitles again.",
+                            new
+                            {
+                                missingLocalModel = true,
+                                recommendedModelId = desc.Id,
+                                fastModelId = WhisperModelManager.SmallModelId,
+                                requiresApproval = true
+                            },
+                            null,
+                            null,
+                            engine,
+                            modelId,
+                            aiAutoApply,
+                            activeAiTurnId ?? "",
+                            true,
+                            SubtitleStyleSettings.ClassicOutline(),
+                            CancellationToken.None));
+                        return;
+                    }
+                    else
+                    {
+                        needsDownload = true;
+                    }
+                }
+
+                subtitleAsrCts?.Dispose();
+                subtitleAsrCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    ct,
+                    aiTurnCts?.Token ?? CancellationToken.None);
+                SetSubtitleBusy(true, L.T("SubGenerating", 0), 0);
+
+                prepareTcs.TrySetResult((
+                    true,
+                    null,
+                    null,
+                    editor.Snapshot,
+                    editor.DirectoryPath,
+                    engine,
+                    modelId,
+                    aiAutoApply,
+                    activeAiTurnId ?? "",
+                    needsDownload,
+                    CurrentSubtitleStyle,
+                    subtitleAsrCts.Token));
+            }
+            catch (Exception ex)
+            {
+                prepareTcs.TrySetResult((false, ex.Message, null, null, null, "", "", false, "", false, SubtitleStyleSettings.ClassicOutline(), CancellationToken.None));
+            }
+        });
+
+        if (!enqueuedPrepare)
+            return new AiLocalCallbackActionResult(false, Error: "Editor dispatcher unavailable.");
+
+        var prep = await prepareTcs.Task.ConfigureAwait(false);
+        if (!prep.Ok || prep.Snapshot is null || string.IsNullOrWhiteSpace(prep.ProjectDir))
+            return new AiLocalCallbackActionResult(false, Error: prep.Error ?? "Unable to start subtitle generation.", Data: prep.ErrorData);
+
+        try
+        {
+            var snapshot = prep.Snapshot;
+
+            // Parse optional 1-based clip_indices and validate against current timeline segments.
+            List<string>? clipIds = null;
+            if (parameters.TryGetProperty("clip_indices", out var clipsEl) && clipsEl.ValueKind == JsonValueKind.Array)
+            {
+                var rawIndices = new List<int>();
+                foreach (var item in clipsEl.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out int idx))
+                        rawIndices.Add(idx);
+                }
+
+                if (rawIndices.Count > 0)
+                {
+                    if (snapshot.Segments.Count == 0)
+                        return new AiLocalCallbackActionResult(false, Error: "Project has no timeline clips to select by clip_indices.");
+
+                    clipIds = new List<string>();
+                    var seen = new HashSet<int>();
+                    foreach (int idx in rawIndices)
+                    {
+                        if (idx < 1 || idx > snapshot.Segments.Count)
+                        {
+                            return new AiLocalCallbackActionResult(
+                                false,
+                                Error: $"clip_indices contains {idx}, but the timeline only has {snapshot.Segments.Count} clip(s) (1-based: 1..{snapshot.Segments.Count}).");
+                        }
+                        if (seen.Add(idx))
+                            clipIds.Add(snapshot.Segments[idx - 1].Id);
+                    }
+                }
+            }
+
+            double? startSec = parameters.TryGetProperty("start_sec", out var sEl) && sEl.ValueKind == JsonValueKind.Number
+                ? sEl.GetDouble()
+                : null;
+            double? endSec = parameters.TryGetProperty("end_sec", out var eEl) && eEl.ValueKind == JsonValueKind.Number
+                ? eEl.GetDouble()
+                : null;
+
+            string language = parameters.TryGetProperty("language", out var langEl) &&
+                              langEl.ValueKind == JsonValueKind.String &&
+                              !string.IsNullOrWhiteSpace(langEl.GetString())
+                ? langEl.GetString()!.Trim()
+                : "auto";
+
+            int maxChars = parameters.TryGetProperty("max_chars_per_line", out var mcEl) &&
+                           mcEl.ValueKind == JsonValueKind.Number &&
+                           mcEl.TryGetInt32(out int parsedMc)
+                ? Math.Clamp(parsedMc, 6, 80)
+                : prep.BaseStyle.MaxCharsPerLine;
+
+            string? vocabularyPrompt = parameters.TryGetProperty("vocabulary_prompt", out var vpEl) &&
+                                       vpEl.ValueKind == JsonValueKind.String &&
+                                       !string.IsNullOrWhiteSpace(vpEl.GetString())
+                ? vpEl.GetString()!.Trim()
+                : null;
+
+            bool forceRefresh = parameters.TryGetProperty("force_refresh", out var frEl) &&
+                                frEl.ValueKind == JsonValueKind.True;
+
+            string? stylePreset = parameters.TryGetProperty("style_preset", out var spEl) &&
+                                  spEl.ValueKind == JsonValueKind.String &&
+                                  !string.IsNullOrWhiteSpace(spEl.GetString())
+                ? spEl.GetString()!.Trim()
+                : null;
+
+            double? positionY = parameters.TryGetProperty("position_y", out var pyEl) &&
+                                pyEl.ValueKind == JsonValueKind.Number
+                ? pyEl.GetDouble()
+                : null;
+
+            SubtitleStyleSettings? styleOverride = null;
+            if (stylePreset is not null || positionY.HasValue)
+            {
+                var baseStyle = stylePreset is not null
+                    ? SubtitleStyleSettings.ForPreset(stylePreset)
+                    : prep.BaseStyle;
+                styleOverride = baseStyle with
+                {
+                    PositionY = positionY.HasValue
+                        ? Math.Clamp(positionY.Value, 0.05, 0.95)
+                        : baseStyle.PositionY,
+                    MaxCharsPerLine = maxChars
+                };
+            }
+
+            var request = new SubtitleTranscriptionRequest(
+                Engine: prep.Engine,
+                ModelId: prep.ModelId,
+                Language: language,
+                TrackFilter: "all",
+                ClipIds: clipIds,
+                VocabularyPrompt: vocabularyPrompt,
+                MaxCharsPerLine: maxChars,
+                ForceRefresh: forceRefresh,
+                StartSeconds: startSec,
+                EndSeconds: endSec,
+                SubtitleStyle: styleOverride);
+
+            string? autoDownloadCardId = null;
+            string autoDownloadTitle = "";
+            string autoDownloadDesc = "";
+            string autoDownloadDetail = "";
+            bool autoDownloadCompleted = false;
+            double lastAutoDlPct = -10.0;
+            if (prep.NeedsModelDownload && !string.IsNullOrEmpty(prep.TurnId))
+            {
+                var dlDesc = subtitleService.ModelManager.GetDescriptor(prep.ModelId);
+                double dlSizeMb = Math.Round(dlDesc.ExpectedBytes / (1024.0 * 1024.0), 1);
+                autoDownloadCardId = "autodl-" + Guid.NewGuid().ToString("N")[..12];
+                autoDownloadTitle = L.T("AiConfirmModelDownloadTitle");
+                autoDownloadDesc = L.T("AiConfirmModelDownloadDesc", dlDesc.DisplayName);
+                autoDownloadDetail = $"{dlDesc.FileName} · {dlSizeMb:0} MB → {subtitleService.ModelManager.ModelsDirectory}";
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (closing) return;
+                    aiWebHost?.Post("confirmation.request", new AiActionConfirmationPayload(
+                        RequestId: autoDownloadCardId,
+                        TurnId: prep.TurnId,
+                        Kind: "whisper_model_download",
+                        Title: autoDownloadTitle,
+                        Description: autoDownloadDesc,
+                        Detail: autoDownloadDetail,
+                        Status: "downloading",
+                        ProgressPercent: 0,
+                        StatusMessage: L.T("AiConfirmModelDownloadingStatus", 0)));
+                });
+            }
+
+            var progress = new Progress<SubtitleTranscriptionProgress>(p =>
+            {
+                if (autoDownloadCardId is not null)
+                {
+                    if (p.Stage == "downloading")
+                    {
+                        // TranscribeProjectAsync scales download percent into [10..35]
+                        double dlPct = Math.Clamp((p.Percent - 10.0) / 0.25, 0, 100);
+                        if (dlPct - lastAutoDlPct >= 2.0 || dlPct >= 99.5)
+                        {
+                            lastAutoDlPct = dlPct;
+                            DispatcherQueue.TryEnqueue(() =>
+                            {
+                                if (closing) return;
+                                aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                                    RequestId: autoDownloadCardId,
+                                    TurnId: prep.TurnId,
+                                    Kind: "whisper_model_download",
+                                    Title: autoDownloadTitle,
+                                    Description: autoDownloadDesc,
+                                    Detail: autoDownloadDetail,
+                                    Status: "downloading",
+                                    ProgressPercent: Math.Round(dlPct, 1),
+                                    StatusMessage: L.T("AiConfirmModelDownloadingStatus", dlPct)));
+                            });
+                        }
+                    }
+                    else if (!autoDownloadCompleted && p.Stage is "transcribing" or "segmenting" or "done")
+                    {
+                        autoDownloadCompleted = true;
+                        DispatcherQueue.TryEnqueue(() =>
+                        {
+                            if (closing) return;
+                            RefreshLocalModelStatus();
+                            aiWebHost?.Post("confirmation.updated", new AiActionConfirmationPayload(
+                                RequestId: autoDownloadCardId,
+                                TurnId: prep.TurnId,
+                                Kind: "whisper_model_download",
+                                Title: autoDownloadTitle,
+                                Description: autoDownloadDesc,
+                                Detail: autoDownloadDetail,
+                                Status: "completed",
+                                ProgressPercent: 100,
+                                StatusMessage: L.T("AiConfirmModelInstalledStatus")));
+                        });
+                    }
+                }
+
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (closing) return;
+                    subProgressBar.IsIndeterminate = false;
+                    subProgressBar.Value = Math.Clamp(p.Percent, 0, 100);
+                    subProgressLabel.Text = p.Stage == "downloading"
+                        ? L.T("SubModelDownloading", p.Percent)
+                        : L.T("SubGenerating", p.Percent);
+                });
+            });
+
+            var result = await Task.Run(
+                () => subtitleService.TranscribeProjectAsync(prep.ProjectDir, snapshot, request, progress, prep.LinkedCt),
+                prep.LinkedCt).ConfigureAwait(false);
+
+            if (result.Cues.Count == 0)
+                return new AiLocalCallbackActionResult(false, Error: "No spoken speech was detected in the requested range.");
+
+            var applyTcs = new TaskCompletionSource<AiLocalCallbackActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool enqueuedApply = DispatcherQueue.TryEnqueue(async () =>
+            {
+                try
+                {
+                    if (closing || editor.IsExporting)
+                    {
+                        applyTcs.TrySetResult(new AiLocalCallbackActionResult(false, Error: "Editor is currently busy or closing."));
+                        return;
+                    }
+
+                    await PerformAsync(() => editor.ExecuteAsync(result.ReplaceCommand));
+                    if (result.Cues.Count > 0)
+                    {
+                        selectedSubtitleId = result.Cues[0].Id;
+                        selectedSubtitleIds.Clear();
+                        selectedSubtitleIds.Add(selectedSubtitleId);
+                        timeline.SelectVisual(selectedSubtitleId);
+                    }
+                    RefreshSubtitleInspector();
+                    UpdateAiContextPills();
+
+                    applyTcs.TrySetResult(new AiLocalCallbackActionResult(
+                        Ok: true,
+                        Revision: editor.Snapshot.Revision,
+                        CueCount: result.Cues.Count,
+                        EngineUsed: result.EngineUsed,
+                        Message: $"Generated {result.Cues.Count} subtitle cue(s) via {result.EngineUsed}."));
+                }
+                catch (Exception ex)
+                {
+                    applyTcs.TrySetResult(new AiLocalCallbackActionResult(false, Error: ex.Message));
+                }
+            });
+
+            if (!enqueuedApply)
+                return new AiLocalCallbackActionResult(false, Error: "Editor dispatcher unavailable.");
+
+            return await applyTcs.Task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return new AiLocalCallbackActionResult(false, Error: "Subtitle transcription was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return new AiLocalCallbackActionResult(false, Error: ex.Message);
+        }
+        finally
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!closing)
+                    SetSubtitleBusy(false);
+            });
         }
     }
 
@@ -367,6 +1148,15 @@ public sealed partial class EditorWindow
                 case "changes.undo":
                     if (AiCopilotProtocol.DeserializePayload<AiTurnIdPayload>(payload) is { } undoMsg)
                         await UndoAppliedTurnAsync(undoMsg.TurnId);
+                    break;
+
+                case "confirmation.respond":
+                    if (AiCopilotProtocol.DeserializePayload<AiConfirmationRespondPayload>(payload) is { } confirmMsg &&
+                        !string.IsNullOrWhiteSpace(confirmMsg.RequestId) &&
+                        pendingAiConfirmations.TryRemove(confirmMsg.RequestId, out var pendingTcs))
+                    {
+                        pendingTcs.TrySetResult(confirmMsg.Approved);
+                    }
                     break;
 
                 case "settings.selectProvider":
@@ -753,6 +1543,7 @@ public sealed partial class EditorWindow
             await RejectStagedPreviewAsync(activePendingTurnId);
 
         string turnId = Guid.NewGuid().ToString("N");
+        activeAiTurnId = turnId;
         aiWebHost?.Post("turn.started", new AiTurnStartedPayload(turnId, prompt));
         aiChatHistory.Add(new AiChatMessage("user", prompt));
 
@@ -849,6 +1640,8 @@ public sealed partial class EditorWindow
         }
         finally
         {
+            activeAiTurnId = null;
+            CancelAllPendingAiConfirmations();
             aiSending = false;
         }
     }

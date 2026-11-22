@@ -27,6 +27,7 @@ import {
 } from '@/components/ai-elements/tool';
 import { extractSeekSeconds, linkifyTimestamps } from '@/lib/timestamps';
 import { useAiCopilotStore, type CopilotTurn } from '@/store/useAiCopilotStore';
+import { ActionApprovalCard } from './ActionApprovalCard';
 import { TimelineChangesCard } from './TimelineChangesCard';
 
 export const ChatThread: React.FC = () => {
@@ -269,6 +270,14 @@ const TurnThreadItem: React.FC<TurnThreadItemProps> = ({ turn, onSeek, onRetry, 
                   </Tool>
                 );
               })}
+            </div>
+          )}
+
+          {turn.confirmations.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {turn.confirmations.map((confirmation) => (
+                <ActionApprovalCard key={confirmation.requestId} confirmation={confirmation} />
+              ))}
             </div>
           )}
 

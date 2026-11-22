@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useReducer, useRef } from 'react';
 import { bridgeClient } from '../bridge/client';
 import type {
+  ActionConfirmationPayload,
   AiEnvStatusPayload,
   AiProviderKey,
   AiSettingsSummaryPayload,
@@ -87,6 +88,7 @@ export interface CopilotTurn {
   thinkingDone: boolean;
   elapsedSeconds?: number;
   toolCalls: TurnToolCallItem[];
+  confirmations: ActionConfirmationPayload[];
   streamMarkdown: string;
   finalMarkdown: string;
   status: 'streaming' | 'done' | 'cancelled' | 'error';
@@ -294,6 +296,7 @@ function copilotReducer(state: AiCopilotState, action: LocalAction): AiCopilotSt
         thinkingText: '',
         thinkingDone: false,
         toolCalls: [],
+        confirmations: [],
         streamMarkdown: '',
         finalMarkdown: '',
         status: 'streaming',
@@ -425,6 +428,28 @@ function copilotReducer(state: AiCopilotState, action: LocalAction): AiCopilotSt
       return { ...state, turns: nextTurns };
     }
 
+    case 'confirmation.request':
+    case 'confirmation.updated': {
+      const payload = msg.payload;
+      let idx = state.turns.findIndex((turn) => turn.id === payload.turnId);
+      if (idx < 0 && state.turns.length > 0) {
+        idx = state.turns.length - 1;
+      }
+      if (idx < 0) return state;
+      const turn = state.turns[idx];
+      const existingIdx = turn.confirmations.findIndex((c) => c.requestId === payload.requestId);
+      const nextConfirmations =
+        existingIdx >= 0
+          ? turn.confirmations.map((c, i) => (i === existingIdx ? { ...c, ...payload } : c))
+          : [...turn.confirmations, payload];
+      const nextTurns = [...state.turns];
+      nextTurns[idx] = {
+        ...turn,
+        confirmations: nextConfirmations,
+      };
+      return { ...state, turns: nextTurns };
+    }
+
     case 'session.cleared': {
       return {
         ...state,
@@ -491,6 +516,7 @@ interface AiCopilotContextValue {
   acceptChanges: (turnId: string) => void;
   rejectChanges: (turnId: string) => void;
   undoChanges: (turnId: string) => void;
+  respondToConfirmation: (requestId: string, approved: boolean) => void;
   selectProvider: (provider: AiProviderKey, modelOverride?: string) => void;
   updateConfig: (config: {
     modelName?: string;
@@ -608,6 +634,10 @@ export const AiCopilotProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     bridgeClient.post({ type: 'settings.toggleAutoApply', payload: { autoApply } });
   }, []);
 
+  const respondToConfirmation = useCallback((requestId: string, approved: boolean) => {
+    bridgeClient.post({ type: 'confirmation.respond', payload: { requestId, approved } });
+  }, []);
+
   const startSidecar = useCallback(() => {
     dispatch({ type: 'SET_SIDECAR_STARTING', starting: true });
     bridgeClient.post({ type: 'sidecar.start' });
@@ -694,6 +724,7 @@ export const AiCopilotProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         acceptChanges,
         rejectChanges,
         undoChanges,
+        respondToConfirmation,
         selectProvider,
         updateConfig,
         toggleAutoApply,

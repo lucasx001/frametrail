@@ -651,4 +651,145 @@ describe('FrameTrail AI Copilot UI', () => {
     expect(screen.getByText('Error')).toBeInTheDocument();
     expect(screen.queryByText('Completed')).not.toBeInTheDocument();
   });
+
+  it('wraps composer footer controls and prevents action button overlap in narrow containers', () => {
+    const mock = initEnglishHost(false);
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'settings.updated',
+        payload: {
+          provider: 'antigravity_cli',
+          modelName: 'gemini-4-hydrogen-high',
+          baseUrl: '',
+          baseUrlPlaceholder: 'Local Google Antigravity CLI (agy)',
+          autoApply: false,
+          hasApiKey: false,
+          providerHasApiKey: { openai: true },
+        },
+      });
+    });
+
+    const modelTrigger = screen.getByTestId('model-picker-trigger');
+    const subModelTrigger = screen.getByTestId('cli-submodel-picker-trigger');
+    const modeToggle = screen.getByTestId('mode-toggle-btn');
+    const sendBtn = screen.getByTestId('send-prompt-btn');
+
+    const footer = modelTrigger.closest('[data-slot="input-group-addon"]');
+    expect(footer).not.toBeNull();
+    expect(footer).toHaveClass('flex-wrap', 'justify-start', 'min-w-0');
+
+    expect(modelTrigger).toHaveClass('min-w-0', 'shrink');
+    expect(modelTrigger).not.toHaveClass('shrink-0');
+    expect(subModelTrigger).toHaveClass('min-w-0', 'shrink');
+    expect(subModelTrigger).not.toHaveClass('shrink-0');
+    expect(modeToggle).toHaveClass('min-w-0', 'shrink');
+    expect(modeToggle).not.toHaveClass('shrink-0');
+
+    const actionsGroup = sendBtn.parentElement;
+    expect(actionsGroup).not.toBeNull();
+    expect(actionsGroup).toHaveClass('ml-auto', 'shrink-0');
+  });
+
+  it('renders inline Whisper model download confirmation card in Review mode and sends approval/rejection to host', () => {
+    const mock = initEnglishHost(false);
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'turn.started',
+        payload: { turnId: 'turn-dl', userPrompt: 'Generate subtitles for clip 2' },
+      });
+      mock.dispatchFromHost({
+        type: 'confirmation.request',
+        payload: {
+          requestId: 'confirm-abc123',
+          turnId: 'turn-dl',
+          kind: 'whisper_model_download',
+          title: 'Download Local Speech Model',
+          description: 'Allow downloading Whisper Large v3 Turbo (Q5_0, ~574 MB)?',
+          detail: 'ggml-large-v3-turbo-q5_0.bin · 547 MB',
+          confirmLabel: 'Approve & Download',
+          rejectLabel: 'Decline',
+          status: 'pending',
+        },
+      });
+    });
+
+    const card = screen.getByTestId('action-approval-card');
+    expect(card).toHaveAttribute('data-status', 'pending');
+    expect(screen.getByText('Download Local Speech Model')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('action-approval-approve'));
+    expect(mock.getSentMessages()).toContainEqual({
+      type: 'confirmation.respond',
+      payload: { requestId: 'confirm-abc123', approved: true },
+    });
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'confirmation.updated',
+        payload: {
+          requestId: 'confirm-abc123',
+          turnId: 'turn-dl',
+          kind: 'whisper_model_download',
+          title: 'Download Local Speech Model',
+          description: 'Allow downloading Whisper Large v3 Turbo (Q5_0, ~574 MB)?',
+          status: 'downloading',
+          progressPercent: 48,
+          statusMessage: 'Downloading model 48%...',
+        },
+      });
+    });
+
+    expect(screen.getByTestId('action-approval-card')).toHaveAttribute('data-status', 'downloading');
+    expect(screen.getByTestId('action-approval-status')).toHaveTextContent('Downloading 48%');
+    expect(screen.queryByTestId('action-approval-approve')).not.toBeInTheDocument();
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'confirmation.updated',
+        payload: {
+          requestId: 'confirm-abc123',
+          turnId: 'turn-dl',
+          kind: 'whisper_model_download',
+          title: 'Download Local Speech Model',
+          description: 'Allow downloading Whisper Large v3 Turbo (Q5_0, ~574 MB)?',
+          status: 'completed',
+          progressPercent: 100,
+          statusMessage: 'Model downloaded and verified',
+        },
+      });
+    });
+
+    expect(screen.getByTestId('action-approval-card')).toHaveAttribute('data-status', 'completed');
+    expect(screen.getByTestId('action-approval-status')).toHaveTextContent('Completed');
+  });
+
+  it('sends approved=false when user declines a pending model download confirmation', () => {
+    const mock = initEnglishHost(false);
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'turn.started',
+        payload: { turnId: 'turn-decline', userPrompt: 'Generate subtitles' },
+      });
+      mock.dispatchFromHost({
+        type: 'confirmation.request',
+        payload: {
+          requestId: 'confirm-deny99',
+          turnId: 'turn-decline',
+          kind: 'whisper_model_download',
+          title: 'Download Local Speech Model',
+          description: 'Allow downloading Whisper Small?',
+          status: 'pending',
+        },
+      });
+    });
+
+    fireEvent.click(screen.getByTestId('action-approval-reject'));
+    expect(mock.getSentMessages()).toContainEqual({
+      type: 'confirmation.respond',
+      payload: { requestId: 'confirm-deny99', approved: false },
+    });
+  });
 });

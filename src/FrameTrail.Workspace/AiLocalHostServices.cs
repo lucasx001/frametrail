@@ -4,8 +4,19 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace FrameTrail.Workspace;
+
+/// <summary>Result returned by host-level MCP callback actions (such as Whisper model management or subtitle transcription).</summary>
+public sealed record AiLocalCallbackActionResult(
+    bool Ok,
+    long? Revision = null,
+    string? Error = null,
+    int? CueCount = null,
+    string? EngineUsed = null,
+    string? Message = null,
+    object? Data = null);
 
 /// <summary>
 /// Lightweight localhost HTTP callback server so external MCP servers (spawned by
@@ -16,6 +27,7 @@ public sealed class AiLocalCommandCallbackServer : IAsyncDisposable, IDisposable
 {
     private readonly HttpListener listener = new();
     private readonly Func<JsonElement, CancellationToken, Task<(bool Ok, long? Revision, string? Error)>> commandHandler;
+    private readonly Func<string, JsonElement, CancellationToken, Task<AiLocalCallbackActionResult>>? actionHandler;
     private readonly string sessionToken;
     private readonly CancellationTokenSource cts = new();
     private Task? loopTask;
@@ -24,9 +36,11 @@ public sealed class AiLocalCommandCallbackServer : IAsyncDisposable, IDisposable
     public string CallbackUrl { get; }
 
     public AiLocalCommandCallbackServer(
-        Func<JsonElement, CancellationToken, Task<(bool Ok, long? Revision, string? Error)>> commandHandler)
+        Func<JsonElement, CancellationToken, Task<(bool Ok, long? Revision, string? Error)>> commandHandler,
+        Func<string, JsonElement, CancellationToken, Task<AiLocalCallbackActionResult>>? actionHandler = null)
     {
         this.commandHandler = commandHandler ?? throw new ArgumentNullException(nameof(commandHandler));
+        this.actionHandler = actionHandler;
         sessionToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
         int port = FindFreeLoopbackPort();
         string prefix = $"http://127.0.0.1:{port}/api/commands/";
@@ -96,6 +110,47 @@ public sealed class AiLocalCommandCallbackServer : IAsyncDisposable, IDisposable
             using var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8);
             string body = await reader.ReadToEndAsync(token).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
+
+            if (doc.RootElement.TryGetProperty("action", out var actionEl) &&
+                actionEl.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(actionEl.GetString()))
+            {
+                if (actionHandler is null)
+                {
+                    await WriteJsonAsync(res, 501, new { ok = false, error = "Host callback actions are not supported." }).ConfigureAwait(false);
+                    return;
+                }
+
+                string actionName = actionEl.GetString()!.Trim();
+                JsonElement paramsEl = doc.RootElement.TryGetProperty("params", out var pEl) && pEl.ValueKind == JsonValueKind.Object
+                    ? pEl.Clone()
+                    : doc.RootElement.Clone();
+
+                var actionResult = await actionHandler(actionName, paramsEl, token).ConfigureAwait(false);
+                if (actionResult.Ok)
+                {
+                    await WriteJsonAsync(res, 200, new
+                    {
+                        ok = true,
+                        revision = actionResult.Revision,
+                        cueCount = actionResult.CueCount,
+                        engineUsed = actionResult.EngineUsed,
+                        message = actionResult.Message,
+                        data = actionResult.Data
+                    }).ConfigureAwait(false);
+                }
+                else
+                {
+                    await WriteJsonAsync(res, 422, new
+                    {
+                        ok = false,
+                        error = actionResult.Error ?? "Action rejected.",
+                        data = actionResult.Data
+                    }).ConfigureAwait(false);
+                }
+                return;
+            }
+
             if (!doc.RootElement.TryGetProperty("command", out var cmdEl) || cmdEl.ValueKind != JsonValueKind.Object)
             {
                 await WriteJsonAsync(res, 400, new { ok = false, error = "Missing 'command' JSON object." }).ConfigureAwait(false);
@@ -121,11 +176,17 @@ public sealed class AiLocalCommandCallbackServer : IAsyncDisposable, IDisposable
         }
     }
 
+    private static readonly JsonSerializerOptions CallbackJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
     private static async Task WriteJsonAsync(HttpListenerResponse response, int statusCode, object payload)
     {
         response.StatusCode = statusCode;
         response.ContentType = "application/json; charset=utf-8";
-        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
+        var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, CallbackJsonOptions));
         response.ContentLength64 = bytes.Length;
         await response.OutputStream.WriteAsync(bytes).ConfigureAwait(false);
         response.Close();

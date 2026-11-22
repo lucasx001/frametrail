@@ -151,7 +151,7 @@ public sealed class WhisperModelManager
                 progress?.Report(new WhisperDownloadProgress(desc.Id, finalSize, finalSize, 100.0, "installed"));
                 return targetPath;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 TryDeleteFile(tempPath);
                 throw;
@@ -178,7 +178,9 @@ public sealed class WhisperModelManager
         progress?.Report(new WhisperDownloadProgress(desc.Id, 0, desc.ExpectedBytes, 0.0, "downloading"));
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        headerCts.CancelAfter(TimeSpan.FromSeconds(15));
+        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, headerCts.Token).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
         long totalBytes = response.Content.Headers.ContentLength ?? desc.ExpectedBytes;

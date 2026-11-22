@@ -19,7 +19,10 @@ public sealed record SubtitleTranscriptionRequest(
     int MaxCharsPerLine = 18,
     bool ForceRefresh = false,
     string? ApiKeyOverride = null,
-    string? BaseUrlOverride = null);
+    string? BaseUrlOverride = null,
+    double? StartSeconds = null,
+    double? EndSeconds = null,
+    SubtitleStyleSettings? SubtitleStyle = null);
 
 public sealed record SubtitleTranscriptionProgress(
     string Stage,
@@ -107,7 +110,7 @@ public sealed class AiSubtitleTranscriptionService
 
         progress?.Report(new SubtitleTranscriptionProgress("extracting", 5, "Preparing audio tracks..."));
 
-        var targetRanges = ResolveTargetSourceRanges(snapshot, request.ClipIds);
+        var targetRanges = ResolveTargetSourceRanges(snapshot, request.ClipIds, request.StartSeconds, request.EndSeconds);
         var audioSlices = ResolveAudioSlices(projectDirectory, snapshot, request.TrackFilter, targetRanges);
         if (audioSlices.Count == 0)
             throw new InvalidOperationException("No audio track found in this project for subtitle transcription.");
@@ -229,7 +232,7 @@ public sealed class AiSubtitleTranscriptionService
                     .ConfigureAwait(false);
             }
 
-            object replaceCommand = BuildScopedReplaceCommand(snapshot, targetRanges, cues);
+            object replaceCommand = BuildScopedReplaceCommand(snapshot, targetRanges, cues, request.SubtitleStyle);
             double durationSec = totalSourceTicks / (double)TicksPerSecond;
 
             progress?.Report(new SubtitleTranscriptionProgress("done", 100, $"Generated {cues.Count} subtitle cue(s)."));
@@ -829,17 +832,19 @@ public sealed class AiSubtitleTranscriptionService
     private static object BuildScopedReplaceCommand(
         ProjectSnapshot snapshot,
         IReadOnlyList<(long Start, long End)>? targetRanges,
-        IReadOnlyList<SourceEffect> generatedCues)
+        IReadOnlyList<SourceEffect> generatedCues,
+        SubtitleStyleSettings? subtitleStyle = null)
     {
         if (targetRanges is null || targetRanges.Count == 0)
-            return AiAgentCommandBuilder.BuildSubtitlesReplaceCommand(generatedCues);
+            return AiAgentCommandBuilder.BuildSubtitlesReplaceCommand(generatedCues, subtitleStyle: subtitleStyle);
 
         if (targetRanges.Count == 1)
         {
             return AiAgentCommandBuilder.BuildSubtitlesReplaceCommand(
                 generatedCues,
                 rangeStartTicks: targetRanges[0].Start,
-                rangeEndTicks: targetRanges[0].End);
+                rangeEndTicks: targetRanges[0].End,
+                subtitleStyle: subtitleStyle);
         }
 
         // Multiple disjoint clip ranges: preserve untouched subtitle effects and atomically replace track.
@@ -856,31 +861,71 @@ public sealed class AiSubtitleTranscriptionService
         }
         combined.AddRange(generatedCues);
         combined.Sort((a, b) => VisualResources.Ticks(a.SourceStart).CompareTo(VisualResources.Ticks(b.SourceStart)));
-        return AiAgentCommandBuilder.BuildSubtitlesReplaceCommand(combined);
+        return AiAgentCommandBuilder.BuildSubtitlesReplaceCommand(combined, subtitleStyle: subtitleStyle);
     }
 
     private static IReadOnlyList<(long Start, long End)>? ResolveTargetSourceRanges(
         ProjectSnapshot snapshot,
-        IReadOnlyList<string>? clipIds)
+        IReadOnlyList<string>? clipIds,
+        double? startSeconds = null,
+        double? endSeconds = null)
     {
-        if (clipIds is null || clipIds.Count == 0)
-            return null;
-
-        var idSet = new HashSet<string>(clipIds.Where(id => !string.IsNullOrWhiteSpace(id)), StringComparer.Ordinal);
-        if (idSet.Count == 0)
-            return null;
-
+        long totalTicks = VisualResources.Ticks(snapshot.SourceDuration);
         var raw = new List<(long Start, long End)>();
-        foreach (var seg in snapshot.Segments)
+
+        if (clipIds is not null && clipIds.Count > 0)
         {
-            if (!idSet.Contains(seg.Id)) continue;
-            long s = VisualResources.Ticks(seg.SourceStart);
-            long e = s + VisualResources.Ticks(seg.SourceDuration);
-            if (e > s) raw.Add((s, e));
+            var idSet = new HashSet<string>(clipIds.Where(id => !string.IsNullOrWhiteSpace(id)), StringComparer.Ordinal);
+            if (idSet.Count > 0)
+            {
+                foreach (var seg in snapshot.Segments)
+                {
+                    if (!idSet.Contains(seg.Id)) continue;
+                    long s = VisualResources.Ticks(seg.SourceStart);
+                    long e = s + VisualResources.Ticks(seg.SourceDuration);
+                    if (e > s) raw.Add((s, e));
+                }
+
+                if (raw.Count == 0)
+                    throw new ArgumentException("None of the requested clip IDs exist in the project.", nameof(clipIds));
+            }
+        }
+
+        if (startSeconds.HasValue || endSeconds.HasValue)
+        {
+            long wStart = startSeconds.HasValue
+                ? Math.Max(0L, (long)Math.Round(startSeconds.Value * TicksPerSecond))
+                : 0L;
+            long wEnd = endSeconds.HasValue
+                ? (long)Math.Round(endSeconds.Value * TicksPerSecond)
+                : (totalTicks > 0 ? totalTicks : wStart + TicksPerSecond * 3600);
+            if (totalTicks > 0)
+                wEnd = Math.Min(totalTicks, wEnd);
+            if (wEnd <= wStart)
+                throw new ArgumentException($"Invalid time range [{startSeconds}, {endSeconds}]: end_sec must exceed start_sec.");
+
+            if (raw.Count > 0)
+            {
+                var clipped = new List<(long Start, long End)>();
+                foreach (var (rStart, rEnd) in raw)
+                {
+                    long ovStart = Math.Max(rStart, wStart);
+                    long ovEnd = Math.Min(rEnd, wEnd);
+                    if (ovEnd > ovStart)
+                        clipped.Add((ovStart, ovEnd));
+                }
+                if (clipped.Count == 0)
+                    throw new ArgumentException("Requested clips do not overlap the specified [start_sec, end_sec] time range.");
+                raw = clipped;
+            }
+            else
+            {
+                raw.Add((wStart, wEnd));
+            }
         }
 
         if (raw.Count == 0)
-            throw new ArgumentException("None of the requested clip IDs exist in the project.", nameof(clipIds));
+            return null;
 
         raw.Sort((a, b) => a.Start.CompareTo(b.Start));
         var merged = new List<(long Start, long End)>();
@@ -908,13 +953,23 @@ public sealed class AiSubtitleTranscriptionService
             .OrderBy(m => VisualResources.Ticks(m.StartOffset))
             .ToList();
 
-        // Fallback: if no dedicated audio MediaAsset exists and filter is "all", try Screen video files (e.g. imported MP4 with embedded audio).
-        if (audioAssets.Count == 0 && string.Equals(filter, "all", StringComparison.OrdinalIgnoreCase))
+        // Fallback: when filter is "all", also include Screen video assets whose time range is not
+        // already covered by a dedicated audio track (e.g. imported MP4/MOV clips without separate audio assets).
+        if (string.Equals(filter, "all", StringComparison.OrdinalIgnoreCase))
         {
-            audioAssets = snapshot.Media
-                .Where(m => m.Kind == MediaKind.Screen)
-                .OrderBy(m => VisualResources.Ticks(m.StartOffset))
+            var dedicatedRanges = audioAssets
+                .Select(a => (Start: VisualResources.Ticks(a.StartOffset), End: VisualResources.Ticks(a.StartOffset) + VisualResources.Ticks(a.Duration)))
                 .ToList();
+            foreach (var screenAsset in snapshot.Media
+                .Where(m => m.Kind == MediaKind.Screen)
+                .OrderBy(m => VisualResources.Ticks(m.StartOffset)))
+            {
+                long sStart = VisualResources.Ticks(screenAsset.StartOffset);
+                long sEnd = sStart + VisualResources.Ticks(screenAsset.Duration);
+                bool covered = dedicatedRanges.Any(r => sStart < r.End && sEnd > r.Start);
+                if (!covered)
+                    audioAssets.Add(screenAsset);
+            }
         }
 
         var slices = new List<AudioSlice>();

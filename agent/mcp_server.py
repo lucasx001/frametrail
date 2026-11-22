@@ -178,6 +178,70 @@ class FrameTrailProjectBridge:
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             return {"dispatched": False, "error": str(exc)}
 
+    def _post_action_callback(
+        self,
+        action: str,
+        params: dict[str, Any],
+        timeout: float = 600.0,
+    ) -> dict[str, Any] | None:
+        if not self.callback_url:
+            return None
+        body = json.dumps(
+            {
+                "projectDir": str(self.project_dir),
+                "action": action,
+                "params": params,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            self.callback_url,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+                parsed = json.loads(raw) if raw.strip() else {}
+                return {
+                    "supported": True,
+                    "ok": bool(parsed.get("ok", True)),
+                    "status": resp.status,
+                    "response": parsed,
+                    "error": parsed.get("error"),
+                }
+        except urllib.error.HTTPError as exc:
+            raw = ""
+            try:
+                raw = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            parsed_err: dict[str, Any] = {}
+            try:
+                if raw.strip():
+                    parsed_err = json.loads(raw)
+            except ValueError:
+                pass
+            err_msg = str(parsed_err.get("error") or raw or exc)
+            if exc.code == 501 or (exc.code == 400 and "Missing 'command'" in err_msg):
+                return {"supported": False, "ok": False, "status": exc.code, "error": err_msg}
+            return {
+                "supported": True,
+                "ok": False,
+                "status": exc.code,
+                "response": parsed_err,
+                "error": err_msg,
+            }
+        except TimeoutError as exc:
+            return {
+                "supported": True,
+                "ok": False,
+                "error": f"Host subtitle generation timed out after {int(timeout)}s: {exc}",
+            }
+        except (urllib.error.URLError, ValueError) as exc:
+            return {"supported": False, "ok": False, "error": str(exc)}
+
     def _resolve_segments(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         resolved: list[dict[str, Any]] = []
         output_cursor = 0
@@ -755,6 +819,81 @@ class FrameTrailProjectBridge:
         command = {"op": "settings", "canvas": canvas, "editor": editor}
         return self._commit_command(command, "Updated canvas/editor styling.")
 
+    def list_whisper_models(self) -> dict[str, Any]:
+        """List available local Whisper speech-to-text models and their install status."""
+        if self.callback_url:
+            cb = self._post_action_callback("list_whisper_models", {}, timeout=15.0)
+            if cb and cb.get("supported"):
+                if cb.get("ok"):
+                    payload = cb.get("response") or {}
+                    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+                    return {
+                        "ok": True,
+                        "appliedVia": "host_callback",
+                        "message": payload.get("message") or "",
+                        **data,
+                    }
+                raise ValueError(str(cb.get("error") or "Failed to list Whisper models from host."))
+
+        local_app_data = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        models_dir = Path(local_app_data) / "FrameTrail" / "models" / "whisper"
+        catalog = [
+            {
+                "id": "small-q5",
+                "displayName": "Whisper Small (Q5_1, ~190 MB)",
+                "fileName": "ggml-small-q5_1.bin",
+                "expectedBytes": 190_085_487,
+                "sizeMb": 181.3,
+            },
+            {
+                "id": "large-v3-turbo-q5_0",
+                "displayName": "Whisper Large v3 Turbo (Q5_0, ~574 MB)",
+                "fileName": "ggml-large-v3-turbo-q5_0.bin",
+                "expectedBytes": 574_041_195,
+                "sizeMb": 547.4,
+            },
+        ]
+        models: list[dict[str, Any]] = []
+        for item in catalog:
+            fp = models_dir / item["fileName"]
+            installed = fp.is_file() and fp.stat().st_size == item["expectedBytes"]
+            models.append({**item, "installed": installed, "isSelected": item["id"] == "large-v3-turbo-q5_0"})
+        any_installed = any(m["installed"] for m in models)
+        return {
+            "ok": True,
+            "appliedVia": "local_fs",
+            "selectedEngine": "whisper-local",
+            "selectedModelId": "large-v3-turbo-q5_0",
+            "anyLocalModelInstalled": any_installed,
+            "modelsDirectory": str(models_dir),
+            "models": models,
+        }
+
+    def download_whisper_model(self, model_id: str | None = None) -> dict[str, Any]:
+        """Download a local Whisper GGML model via FrameTrail host (respecting Review approval mode)."""
+        params: dict[str, Any] = {}
+        if model_id is not None and str(model_id).strip():
+            params["model_id"] = str(model_id).strip()
+
+        if self.callback_url:
+            cb = self._post_action_callback("download_whisper_model", params, timeout=900.0)
+            if cb and cb.get("supported"):
+                if cb.get("ok"):
+                    payload = cb.get("response") or {}
+                    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+                    return {
+                        "ok": True,
+                        "appliedVia": "host_callback",
+                        "engineUsed": payload.get("engineUsed"),
+                        "message": payload.get("message") or "Whisper model downloaded.",
+                        **data,
+                    }
+                raise ValueError(str(cb.get("error") or "Failed to download Whisper model."))
+
+        raise ValueError(
+            "FrameTrail desktop host callback is unavailable; open the project in FrameTrail to download local Whisper models."
+        )
+
     def generate_subtitles(
         self,
         clip_indices: list[int] | None = None,
@@ -767,6 +906,46 @@ class FrameTrailProjectBridge:
         max_chars_per_line: int = 18,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
+        # Prefer the running FrameTrail desktop host's native Whisper.net / BYOK subtitle engine
+        # whenever an authenticated loopback callback URL is available.
+        if self.callback_url:
+            action_params: dict[str, Any] = {
+                "language": language,
+                "vocabulary_prompt": vocabulary_prompt,
+                "max_chars_per_line": max_chars_per_line,
+                "force_refresh": bool(force_refresh),
+            }
+            if clip_indices is not None:
+                action_params["clip_indices"] = [int(i) for i in clip_indices]
+            if start_sec is not None:
+                action_params["start_sec"] = float(start_sec)
+            if end_sec is not None:
+                action_params["end_sec"] = float(end_sec)
+            if style_preset is not None:
+                action_params["style_preset"] = style_preset
+            if position_y is not None:
+                action_params["position_y"] = float(position_y)
+
+            cb = self._post_action_callback("generate_subtitles", action_params, timeout=600.0)
+            if cb and cb.get("supported"):
+                if cb.get("ok"):
+                    payload = cb.get("response") or {}
+                    cue_count = int(payload.get("cueCount") or 0)
+                    engine_used = str(payload.get("engineUsed") or "whisper-local")
+                    message = str(
+                        payload.get("message")
+                        or f"Generated {cue_count} subtitle cue(s) via {engine_used}."
+                    )
+                    return {
+                        "ok": True,
+                        "appliedVia": "host_callback",
+                        "revision": payload.get("revision"),
+                        "cueCount": cue_count,
+                        "engineUsed": engine_used,
+                        "message": message,
+                    }
+                raise ValueError(str(cb.get("error") or "FrameTrail host subtitle generation failed."))
+
         from agent.multimodal_tools import (
             build_subtitle_style,
             build_subtitles_replace_command,
@@ -1092,6 +1271,30 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "frametrail_list_whisper_models",
+        "description": "List FrameTrail's local offline Whisper speech-to-text models ('small-q5' ~181 MB, 'large-v3-turbo-q5_0' ~547 MB), whether each is installed, and whether user approval (Review mode) is required before downloading.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "frametrail_download_whisper_model",
+        "description": "Download and verify a local Whisper GGML speech-to-text model into FrameTrail's model store. When the user's permission mode is set to Review (preview confirm), FrameTrail automatically displays an inline approval card in the AI chat panel and waits for the user to approve or decline before downloading.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "model_id": {
+                    "type": "string",
+                    "enum": ["small-q5", "large-v3-turbo-q5_0"],
+                    "description": "Local Whisper model ID to download ('large-v3-turbo-q5_0' for best quality ~547 MB, or 'small-q5' for faster/smaller download ~181 MB). Defaults to the user's currently selected model in FrameTrail.",
+                }
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "frametrail_generate_subtitles",
         "description": "Transcribe speech from project audio/video tracks (whole timeline, 1-based clip_indices like [2, 3], or [start_sec, end_sec]) and apply an atomic op='subtitlesReplace' command.",
         "inputSchema": {
@@ -1191,6 +1394,10 @@ def _dispatch_tool(
         return bridge.cut_range(**arguments)
     if name == "frametrail_update_canvas":
         return bridge.update_canvas(**arguments)
+    if name == "frametrail_list_whisper_models":
+        return bridge.list_whisper_models()
+    if name == "frametrail_download_whisper_model":
+        return bridge.download_whisper_model(**arguments)
     if name == "frametrail_generate_subtitles":
         return bridge.generate_subtitles(**arguments)
     if name == "frametrail_upsert_subtitle":
@@ -1418,6 +1625,16 @@ def run_fastmcp_server(bridge: FrameTrailProjectBridge) -> bool:
     ) -> dict[str, Any]:
         """Update canvas aspect ratio, padding, corner radius, and mockup frameStyle."""
         return bridge.update_canvas(aspect_ratio, padding, corner_radius, frame_style)
+
+    @mcp.tool()
+    def frametrail_list_whisper_models() -> dict[str, Any]:
+        """List local Whisper speech-to-text models and their installation status."""
+        return bridge.list_whisper_models()
+
+    @mcp.tool()
+    def frametrail_download_whisper_model(model_id: str | None = None) -> dict[str, Any]:
+        """Download a local Whisper GGML model (prompts for user confirmation in Review mode)."""
+        return bridge.download_whisper_model(model_id=model_id)
 
     @mcp.tool()
     def frametrail_generate_subtitles(

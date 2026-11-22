@@ -76,6 +76,13 @@ export const FALLBACK_STRINGS: Record<LocaleCode, Record<string, string>> = {
     AiVoiceAutoSubmitLabel: '说完后自动发送',
     AiVoiceShortcutHint: '快捷键：Ctrl + M',
     AiVoiceUnsupported: '当前设备无法使用语音识别，请检查麦克风权限或系统语音设置。',
+    AiConfirmRequired: '待确认',
+    AiConfirmDownloading: '下载中',
+    AiConfirmCompleted: '已完成',
+    AiConfirmRejected: '已拒绝',
+    AiConfirmFailed: '失败',
+    AiConfirmApproveDownload: '允许下载',
+    AiConfirmReject: '拒绝',
   },
   en: {
     AiCopilotTitle: 'AI Editing Copilot',
@@ -152,6 +159,13 @@ export const FALLBACK_STRINGS: Record<LocaleCode, Record<string, string>> = {
     AiVoiceAutoSubmitLabel: 'Auto-send on finish',
     AiVoiceShortcutHint: 'Shortcut: Ctrl + M',
     AiVoiceUnsupported: 'Voice recognition is unavailable on this device.',
+    AiConfirmRequired: 'Approval Needed',
+    AiConfirmDownloading: 'Downloading',
+    AiConfirmCompleted: 'Completed',
+    AiConfirmRejected: 'Declined',
+    AiConfirmFailed: 'Failed',
+    AiConfirmApproveDownload: 'Approve & Download',
+    AiConfirmReject: 'Decline',
   },
 };
 

@@ -279,6 +279,77 @@ public sealed class AiSubtitleTranscriptionServiceTests : IAsyncLifetime
         Assert.Contains(catalog, m => m.Id == WhisperModelManager.LargeTurboModelId && m.FileName == "ggml-large-v3-turbo-q5_0.bin" && !string.IsNullOrEmpty(m.Sha256));
     }
 
+    [Fact]
+    public async Task AiLocalCommandCallbackServer_DispatchesGenerateSubtitlesActionAndReportsStructuredResult()
+    {
+        string? observedAction = null;
+        int[]? observedClips = null;
+        await using var server = new AiLocalCommandCallbackServer(
+            commandHandler: (_, _) => Task.FromResult<(bool, long?, string?)>((true, 1, null)),
+            actionHandler: (action, parameters, _) =>
+            {
+                observedAction = action;
+                if (parameters.TryGetProperty("clip_indices", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                    observedClips = arr.EnumerateArray().Select(e => e.GetInt32()).ToArray();
+
+                if (observedClips is not null && observedClips.Contains(3))
+                {
+                    return Task.FromResult(new AiLocalCallbackActionResult(
+                        Ok: false,
+                        Error: "clip_indices contains 3, but the timeline only has 2 clip(s) (1-based: 1..2)."));
+                }
+
+                return Task.FromResult(new AiLocalCallbackActionResult(
+                    Ok: true,
+                    Revision: 93,
+                    CueCount: 12,
+                    EngineUsed: "whisper-local:ggml-large-v3-turbo-q5_0",
+                    Message: "Generated 12 subtitle cue(s) via whisper-local:ggml-large-v3-turbo-q5_0."));
+            });
+
+        using var client = new HttpClient();
+
+        // 1. Valid action request succeeds with 200 and full metadata
+        var okResp = await client.PostAsync(
+            server.CallbackUrl,
+            new StringContent("""{"action":"generate_subtitles","params":{"clip_indices":[2],"language":"zh"}}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.OK, okResp.StatusCode);
+        using (var okDoc = JsonDocument.Parse(await okResp.Content.ReadAsStringAsync()))
+        {
+            Assert.Equal("generate_subtitles", observedAction);
+            Assert.NotNull(observedClips);
+            Assert.Equal([2], observedClips!);
+            Assert.True(okDoc.RootElement.GetProperty("ok").GetBoolean());
+            Assert.Equal(93, okDoc.RootElement.GetProperty("revision").GetInt64());
+            Assert.Equal(12, okDoc.RootElement.GetProperty("cueCount").GetInt32());
+            Assert.Equal("whisper-local:ggml-large-v3-turbo-q5_0", okDoc.RootElement.GetProperty("engineUsed").GetString());
+        }
+
+        // 2. Out-of-range clip index returns 422 with actionable error message
+        var errResp = await client.PostAsync(
+            server.CallbackUrl,
+            new StringContent("""{"action":"generate_subtitles","params":{"clip_indices":[2,3],"language":"zh"}}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, errResp.StatusCode);
+        using (var errDoc = JsonDocument.Parse(await errResp.Content.ReadAsStringAsync()))
+        {
+            Assert.False(errDoc.RootElement.GetProperty("ok").GetBoolean());
+            Assert.Contains("only has 2 clip(s)", errDoc.RootElement.GetProperty("error").GetString());
+        }
+    }
+
+    [Fact]
+    public async Task AiLocalCommandCallbackServer_ReturnsNotImplementedWhenNoActionHandlerConfigured()
+    {
+        await using var server = new AiLocalCommandCallbackServer(
+            commandHandler: (_, _) => Task.FromResult<(bool, long?, string?)>((true, 1, null)));
+
+        using var client = new HttpClient();
+        var resp = await client.PostAsync(
+            server.CallbackUrl,
+            new StringContent("""{"action":"generate_subtitles","params":{}}""", Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.NotImplemented, resp.StatusCode);
+    }
+
     private static void WriteToneWav(string path, int sampleRate, short channels, double durationSec)
     {
         int frames = (int)(sampleRate * durationSec);
