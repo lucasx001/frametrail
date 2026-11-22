@@ -67,7 +67,7 @@ struct Renderer {
     ComPtr<ID2D1Device> d2device;
     ComPtr<ID2D1DeviceContext> d2;
     ComPtr<ID3D11Texture2D> output;
-    ComPtr<ID3D11Texture2D> composition, screen_plane, camera_plane;
+    ComPtr<ID3D11Texture2D> composition, screen_plane, camera_plane, transition_plane;
     std::unique_ptr<VisualGpu> visuals;
     std::unique_ptr<VideoReader> backdrop_reader;
     std::string backdrop_path;

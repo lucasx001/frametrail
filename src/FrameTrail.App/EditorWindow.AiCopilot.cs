@@ -1399,7 +1399,7 @@ public sealed partial class EditorWindow
         {
             AiProviderKind.OpenAiApi => "gpt-4o",
             AiProviderKind.AnthropicApi => "claude-sonnet-4-20250514",
-            AiProviderKind.DeepSeekApi => "deepseek-chat",
+            AiProviderKind.DeepSeekApi => "deepseek-flash",
             AiProviderKind.OllamaLocal => "qwen2.5-coder:14b",
             AiProviderKind.ClaudeCodeCli => "claude-code-cli",
             AiProviderKind.CodexCli => "codex-cli",
@@ -1415,9 +1415,16 @@ public sealed partial class EditorWindow
             _ => ""
         };
 
-        aiModelName = !string.IsNullOrWhiteSpace(modelOverride)
+        string candidateModel = !string.IsNullOrWhiteSpace(modelOverride)
             ? modelOverride.Trim()
             : (settings.ProviderModels.TryGetValue(key, out var savedModel) && !string.IsNullOrWhiteSpace(savedModel) ? savedModel : defaultModel);
+        if (provider == AiProviderKind.DeepSeekApi &&
+            (candidateModel.Equals("deepseek-chat", StringComparison.OrdinalIgnoreCase) ||
+             candidateModel.Equals("deepseek-reasoner", StringComparison.OrdinalIgnoreCase)))
+        {
+            candidateModel = "deepseek-flash";
+        }
+        aiModelName = candidateModel;
         aiBaseUrl = settings.ProviderBaseUrls.TryGetValue(key, out var savedUrl) ? savedUrl : defaultBase;
     }
 

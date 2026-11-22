@@ -299,6 +299,8 @@ class SubscriptionCliBridge:
                 "- frametrail_add_zoom: add/update zoom effect",
                 "- frametrail_add_focus_or_mask: add spotlight focus blur or privacy mask",
                 "- frametrail_add_3d_tilt: add 3D perspective tilt",
+                "- frametrail_add_transition: add or update a clip-to-clip transition between adjacent clips (from_clip_index=1 for seam between clip #1 and #2; styles: crossfade, fadeBlack, fadeWhite, slideLeft, slideRight, wipeLeft, wipeRight, zoomIn; duration_sec=0.1..5.0)",
+                "- frametrail_remove_transition: remove a clip-to-clip transition by from_clip_index or effect_id",
                 "- frametrail_set_clip_speed: set clip speed (0.25x..4.0x)",
                 "- frametrail_cut_range: split/remove a time range",
                 "- frametrail_update_canvas: change aspect ratio, padding, corner radius, frame style",

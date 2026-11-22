@@ -331,6 +331,33 @@ int main(){try{
         expect(std::abs(mid_scene->visual.subtitles[0].opacity - 1.0) < 1e-6, "subtitle at full opacity in middle of cue");
         const auto fade_scene = sub_eval.evaluate(35'500'000); // source 6.1s (halfway into 0.2s fadeSeconds)
         expect(fade_scene && fade_scene->visual.subtitles.size() == 1 && fade_scene->visual.subtitles[0].opacity > 0.05 && fade_scene->visual.subtitles[0].opacity < 0.95, "subtitle fades in using editor.subtitleStyle.fadeSeconds");
+
+        // 5. Clip-to-clip transition validation, seam-centered timeline projection, and FrameSceneEvaluator
+        auto tp = sp;
+        tp.segments = {
+            {"clip-1", canonical_time(0), canonical_time(40'000'000), {1, 1}},
+            {"clip-2", canonical_time(40'000'000), canonical_time(60'000'000), {1, 1}}
+        };
+        tp.effects = {
+            effect("trans-1", "transition", {{"style", "slideLeft"}, {"duration", 0.8}, {"easing", "cubic"}, {"fromSegmentId", "clip-1"}, {"toSegmentId", "clip-2"}}, 40'000'000, 8'000'000)
+        };
+        validate_project(tp);
+        const auto ttl = Json::parse(timeline_json(tp));
+        expect(ttl.at("effects").size() == 1, "transition resolves to one centered seam interval");
+        expect(ttl.at("effects")[0]["kind"] == "transition" && ttl.at("effects")[0]["outputStart"] == 36'000'000 && ttl.at("effects")[0]["outputDuration"] == 8'000'000, "transition centers on cut seam [3.6s, 4.4s)");
+
+        FrameSceneEvaluator trans_eval(tp);
+        const auto before_trans = trans_eval.evaluate(35'000'000);
+        expect(before_trans && !before_trans->transition.has_value(), "no transition before seam window");
+        const auto at_seam = trans_eval.evaluate(40'000'000);
+        expect(at_seam && at_seam->transition.has_value() && at_seam->transition->style == "slideLeft", "transition active at seam midpoint");
+        expect(std::abs(at_seam->transition->progress - 0.5) < 0.02, "cubic transition midpoint progress ~ 0.5");
+        const auto after_trans = trans_eval.evaluate(45'000'000);
+        expect(after_trans && !after_trans->transition.has_value(), "no transition after seam window");
+
+        auto bad_trans = tp;
+        bad_trans.effects = {effect("trans-bad", "transition", {{"style", "starWarsWipe"}, {"duration", 0.6}}, 40'000'000, 6'000'000)};
+        rejects([&]{ validate_project(bad_trans); }, "unsupported transition style rejected");
     }
     std::cout<<"effects checks="<<checks<<'\n';return 0;
 }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

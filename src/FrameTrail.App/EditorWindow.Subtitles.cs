@@ -1923,7 +1923,13 @@ public sealed partial class EditorWindow
                 : baseUrl + "/v1/chat/completions";
             string model = !string.IsNullOrWhiteSpace(configuredModel)
                 ? configuredModel
-                : provider switch { "deepseek" => "deepseek-chat", "ollama" => "qwen2.5:7b", _ => "gpt-4o-mini" };
+                : provider switch { "deepseek" => "deepseek-flash", "ollama" => "qwen2.5:7b", _ => "gpt-4o-mini" };
+            if (provider == "deepseek" &&
+                (model.Equals("deepseek-chat", StringComparison.OrdinalIgnoreCase) ||
+                 model.Equals("deepseek-reasoner", StringComparison.OrdinalIgnoreCase)))
+            {
+                model = "deepseek-flash";
+            }
 
             using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
             if (!string.IsNullOrWhiteSpace(apiKey))

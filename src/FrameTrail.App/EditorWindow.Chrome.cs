@@ -239,6 +239,7 @@ public sealed partial class EditorWindow
             var (glyphKind, bgBrush, fgBrush, tipText, targetTab) = kind switch
             {
                 "subtitle" => ("Subtitles", new SolidColorBrush(Windows.UI.Color.FromArgb(36, 14, 165, 233)), Hex(0x0EA5E9u), L.T("SubTabTitle"), 6),
+                "transition" => ("Transition", new SolidColorBrush(Windows.UI.Color.FromArgb(40, 168, 85, 247)), Hex(0xA855F7u), L.T("TransitionName"), 2),
                 "zoom" => ("Zoom", RecorderTheme.Brush(Root, "EditorAccentSoft"), RecorderTheme.Brush(Root, "EditorAccent"), L.T("SB762AEC769A3"), 2),
                 "focus" => ("Sparkle", new SolidColorBrush(Windows.UI.Color.FromArgb(36, 255, 184, 48)), Hex(dark ? 0xFFB830u : 0xD97706u), L.T("SED19BD5E2620"), 2),
                 "mask" => ("Eye", new SolidColorBrush(Windows.UI.Color.FromArgb(36, 255, 107, 146)), Hex(0xFF6B92u), L.T("SAC7CE836857B"), 2),

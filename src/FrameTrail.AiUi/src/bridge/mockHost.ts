@@ -143,7 +143,7 @@ export function createMockHost(
         const defaults: Record<AiProviderKey, { model: string; placeholder: string }> = {
           openai: { model: 'gpt-4o', placeholder: 'https://api.openai.com/v1' },
           anthropic: { model: 'claude-sonnet-4-20250514', placeholder: 'https://api.anthropic.com' },
-          deepseek: { model: 'deepseek-chat', placeholder: 'https://api.deepseek.com/v1' },
+          deepseek: { model: 'deepseek-flash', placeholder: 'https://api.deepseek.com/v1' },
           ollama: { model: 'qwen2.5-coder:14b', placeholder: 'http://localhost:11434/v1' },
           claude_code_cli: { model: 'claude-code-cli', placeholder: 'Local Claude Code CLI' },
           codex_cli: { model: 'codex-cli', placeholder: 'Local OpenAI Codex CLI' },

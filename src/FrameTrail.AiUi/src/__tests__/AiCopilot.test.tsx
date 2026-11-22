@@ -792,4 +792,39 @@ describe('FrameTrail AI Copilot UI', () => {
       payload: { requestId: 'confirm-deny99', approved: false },
     });
   });
+
+  it('only offers deepseek-flash vision preset when DeepSeek provider is selected', async () => {
+    const mock = initEnglishHost(false);
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'settings.updated',
+        payload: {
+          provider: 'deepseek',
+          modelName: 'deepseek-flash',
+          baseUrl: 'https://api.deepseek.com/v1',
+          baseUrlPlaceholder: 'https://api.deepseek.com/v1',
+          autoApply: false,
+          hasApiKey: true,
+          providerHasApiKey: {
+            openai: true,
+            anthropic: false,
+            deepseek: true,
+          },
+        },
+      });
+    });
+
+    fireEvent.click(screen.getByLabelText('Model Settings'));
+    const flashPreset = await screen.findByTestId('settings-model-preset-deepseek-flash');
+    expect(flashPreset).toHaveTextContent('deepseek-flash (Vision)');
+    expect(screen.queryByTestId('settings-model-preset-deepseek-chat')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('settings-model-preset-deepseek-reasoner')).not.toBeInTheDocument();
+
+    fireEvent.click(flashPreset);
+    expect(mock.getSentMessages()).toContainEqual({
+      type: 'settings.updateConfig',
+      payload: { modelName: 'deepseek-flash' },
+    });
+  });
 });

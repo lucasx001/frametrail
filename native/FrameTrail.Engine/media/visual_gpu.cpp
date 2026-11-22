@@ -48,24 +48,114 @@ float4 ps(Pixel p):SV_TARGET {
     return color*info.z; // premultiplied alpha throughout projected layers
 }
 )hlsl";
+constexpr char transition_shader[] = R"hlsl(
+Texture2D outgoingTex : register(t0);
+Texture2D incomingTex : register(t1);
+SamplerState linearClamp : register(s0);
+cbuffer TransitionSettings : register(b0) {
+    float4 params; // x = style (0..7), y = progress (0..1)
+};
+struct Pixel { float4 position:SV_POSITION; float2 uv:TEXCOORD0; };
+float4 sampleBounded(Texture2D tex, float2 uv) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return float4(0, 0, 0, 0);
+    return tex.Sample(linearClamp, uv);
+}
+float4 ps_transition(Pixel p) : SV_TARGET {
+    float2 uv = p.uv;
+    int style = (int)(params.x + 0.5);
+    float t = saturate(params.y);
+    if (style == 1) { // fadeBlack
+        if (t < 0.5) {
+            float4 c = outgoingTex.Sample(linearClamp, uv);
+            float k = t * 2.0;
+            return float4(c.rgb * (1.0 - k), c.a);
+        } else {
+            float4 c = incomingTex.Sample(linearClamp, uv);
+            float k = (t - 0.5) * 2.0;
+            return float4(c.rgb * k, c.a);
+        }
+    }
+    if (style == 2) { // fadeWhite
+        if (t < 0.5) {
+            float4 c = outgoingTex.Sample(linearClamp, uv);
+            float k = t * 2.0;
+            return float4(lerp(c.rgb, float3(c.a, c.a, c.a), k), c.a);
+        } else {
+            float4 c = incomingTex.Sample(linearClamp, uv);
+            float k = (t - 0.5) * 2.0;
+            return float4(lerp(float3(c.a, c.a, c.a), c.rgb, k), c.a);
+        }
+    }
+    if (style == 3) { // slideLeft
+        float4 outC = sampleBounded(outgoingTex, uv + float2(t, 0.0));
+        float4 inC = sampleBounded(incomingTex, uv + float2(t - 1.0, 0.0));
+        return outC + inC;
+    }
+    if (style == 4) { // slideRight
+        float4 outC = sampleBounded(outgoingTex, uv - float2(t, 0.0));
+        float4 inC = sampleBounded(incomingTex, uv + float2(1.0 - t, 0.0));
+        return outC + inC;
+    }
+    if (style == 5) { // wipeLeft
+        float4 outC = outgoingTex.Sample(linearClamp, uv);
+        float4 inC = incomingTex.Sample(linearClamp, uv);
+        float edge = 1.0 - t;
+        float mask = (t <= 0.0) ? 0.0 : (t >= 1.0) ? 1.0 : smoothstep(edge - 0.025, edge + 0.025, uv.x);
+        return lerp(outC, inC, mask);
+    }
+    if (style == 6) { // wipeRight
+        float4 outC = outgoingTex.Sample(linearClamp, uv);
+        float4 inC = incomingTex.Sample(linearClamp, uv);
+        float mask = (t <= 0.0) ? 0.0 : (t >= 1.0) ? 1.0 : (1.0 - smoothstep(t - 0.025, t + 0.025, uv.x));
+        return lerp(outC, inC, mask);
+    }
+    if (style == 7) { // zoomIn
+        float outScale = 1.0 + 0.22 * t;
+        float inScale = 0.86 + 0.14 * t;
+        float4 outC = sampleBounded(outgoingTex, (uv - 0.5) / outScale + 0.5);
+        float4 inC = sampleBounded(incomingTex, (uv - 0.5) / inScale + 0.5);
+        return lerp(outC, inC, t);
+    }
+    // 0 = crossfade (default)
+    float4 outC = outgoingTex.Sample(linearClamp, uv);
+    float4 inC = incomingTex.Sample(linearClamp, uv);
+    return lerp(outC, inC, t);
+}
+)hlsl";
 struct Vertex { float x,y,z,w,u,v; };
 struct alignas(16) Constants { float info[4], crop[4], rectangles[32][4], modes[32][4]; };
-ComPtr<ID3DBlob> compile(const char* entry,const char* target) {
+struct alignas(16) TransitionConstants { float params[4]; };
+ComPtr<ID3DBlob> compile_source(const char* src, size_t len, const char* entry, const char* target) {
     ComPtr<ID3DBlob> code,error;
-    auto hr=D3DCompile(shader,sizeof(shader)-1,"FrameTrail.Visual",nullptr,nullptr,entry,target,D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&error);
+    auto hr=D3DCompile(src,len,"FrameTrail.Visual",nullptr,nullptr,entry,target,D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&error);
     if(FAILED(hr))throw winrt::hresult_error(hr,error?winrt::to_hstring(std::string(static_cast<const char*>(error->GetBufferPointer()),error->GetBufferSize())):L"Visual shader compilation failed");
     return code;
+}
+ComPtr<ID3DBlob> compile(const char* entry,const char* target) { return compile_source(shader, sizeof(shader)-1, entry, target); }
+int transition_style_index(std::string_view style) {
+    if (style == "fadeBlack") return 1;
+    if (style == "fadeWhite") return 2;
+    if (style == "slideLeft") return 3;
+    if (style == "slideRight") return 4;
+    if (style == "wipeLeft") return 5;
+    if (style == "wipeRight") return 6;
+    if (style == "zoomIn") return 7;
+    return 0;
 }
 }
 VisualGpu::VisualGpu(Renderer& gpu):gpu_(gpu) {
     auto vs=compile("vs","vs_4_0"),ps=compile("ps","ps_4_0");
+    auto tps=compile_source(transition_shader, sizeof(transition_shader)-1, "ps_transition", "ps_4_0");
     FT_MEDIA_CHECK(gpu.device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_));
     FT_MEDIA_CHECK(gpu.device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_));
+    FT_MEDIA_CHECK(gpu.device->CreatePixelShader(tps->GetBufferPointer(),tps->GetBufferSize(),nullptr,&transition_pixel_));
     D3D11_INPUT_ELEMENT_DESC elements[]{{"POSITION",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},{"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0}};
     FT_MEDIA_CHECK(gpu.device->CreateInputLayout(elements,2,vs->GetBufferPointer(),vs->GetBufferSize(),&layout_));
     D3D11_BUFFER_DESC buffer{};buffer.ByteWidth=sizeof(Vertex)*6;buffer.Usage=D3D11_USAGE_DYNAMIC;buffer.BindFlags=D3D11_BIND_VERTEX_BUFFER;buffer.CPUAccessFlags=D3D11_CPU_ACCESS_WRITE;
     FT_MEDIA_CHECK(gpu.device->CreateBuffer(&buffer,nullptr,&vertices_));buffer.ByteWidth=sizeof(Constants);buffer.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     FT_MEDIA_CHECK(gpu.device->CreateBuffer(&buffer,nullptr,&constants_));
+    buffer.ByteWidth=sizeof(TransitionConstants);
+    FT_MEDIA_CHECK(gpu.device->CreateBuffer(&buffer,nullptr,&transition_constants_));
     D3D11_SAMPLER_DESC sampler{};sampler.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sampler.MaxLOD=D3D11_FLOAT32_MAX;
     FT_MEDIA_CHECK(gpu.device->CreateSamplerState(&sampler,&sampler_));
     D3D11_BLEND_DESC blend{};auto& b=blend.RenderTarget[0];b.BlendEnable=TRUE;b.SrcBlend=D3D11_BLEND_ONE;b.DestBlend=D3D11_BLEND_INV_SRC_ALPHA;b.BlendOp=D3D11_BLEND_OP_ADD;b.SrcBlendAlpha=D3D11_BLEND_ONE;b.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;b.BlendOpAlpha=D3D11_BLEND_OP_ADD;b.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
@@ -109,4 +199,52 @@ ComPtr<ID3D11Texture2D> VisualGpu::process(ID3D11Texture2D* input,const std::vec
     draw(input,texture.Get(),{},desc.Width,desc.Height,regions,crop,true);return texture;
 }
 void VisualGpu::project(ID3D11Texture2D* input,ID3D11Texture2D* target,const PlaneMotion& motion,double width,double height) {draw(input,target,motion,width,height,{},Rect{},false);}
+void VisualGpu::transition(ID3D11Texture2D* outgoing, ID3D11Texture2D* incoming, ID3D11Texture2D* target, std::string_view style, double progress) {
+    D3D11_TEXTURE2D_DESC out{}; target->GetDesc(&out);
+    ComPtr<ID3D11ShaderResourceView> srv_out, srv_in;
+    FT_MEDIA_CHECK(gpu_.device->CreateShaderResourceView(outgoing, nullptr, &srv_out));
+    FT_MEDIA_CHECK(gpu_.device->CreateShaderResourceView(incoming, nullptr, &srv_in));
+    ComPtr<ID3D11RenderTargetView> result;
+    FT_MEDIA_CHECK(gpu_.device->CreateRenderTargetView(target, nullptr, &result));
+    Vertex quad[]{
+        {-1.f,  1.f, 0.f, 1.f, 0.f, 0.f},
+        { 1.f,  1.f, 0.f, 1.f, 1.f, 0.f},
+        {-1.f, -1.f, 0.f, 1.f, 0.f, 1.f},
+        {-1.f, -1.f, 0.f, 1.f, 0.f, 1.f},
+        { 1.f,  1.f, 0.f, 1.f, 1.f, 0.f},
+        { 1.f, -1.f, 0.f, 1.f, 1.f, 1.f}
+    };
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    FT_MEDIA_CHECK(gpu_.context->Map(vertices_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+    memcpy(mapped.pData, quad, sizeof(quad));
+    gpu_.context->Unmap(vertices_.Get(), 0);
+    TransitionConstants tc{{static_cast<float>(transition_style_index(style)), static_cast<float>(std::clamp(progress, 0.0, 1.0)), 0.f, 0.f}};
+    FT_MEDIA_CHECK(gpu_.context->Map(transition_constants_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+    memcpy(mapped.pData, &tc, sizeof(tc));
+    gpu_.context->Unmap(transition_constants_.Get(), 0);
+    auto rtv = result.Get();
+    gpu_.context->OMSetRenderTargets(1, &rtv, nullptr);
+    gpu_.context->OMSetBlendState(blend_.Get(), nullptr, 0xffffffff);
+    gpu_.context->OMSetDepthStencilState(depth_.Get(), 0);
+    D3D11_VIEWPORT viewport{0, 0, float(out.Width), float(out.Height), 0, 1};
+    gpu_.context->RSSetViewports(1, &viewport);
+    gpu_.context->RSSetState(raster_.Get());
+    UINT stride = sizeof(Vertex), offset = 0;
+    auto buffer = vertices_.Get();
+    gpu_.context->IASetVertexBuffers(0, 1, &buffer, &stride, &offset);
+    gpu_.context->IASetInputLayout(layout_.Get());
+    gpu_.context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    gpu_.context->VSSetShader(vertex_.Get(), nullptr, 0);
+    gpu_.context->PSSetShader(transition_pixel_.Get(), nullptr, 0);
+    auto constant = transition_constants_.Get();
+    gpu_.context->PSSetConstantBuffers(0, 1, &constant);
+    auto sampler = sampler_.Get();
+    gpu_.context->PSSetSamplers(0, 1, &sampler);
+    ID3D11ShaderResourceView* srvs[2]{srv_out.Get(), srv_in.Get()};
+    gpu_.context->PSSetShaderResources(0, 2, srvs);
+    gpu_.context->Draw(6, 0);
+    ID3D11ShaderResourceView* empty[2]{nullptr, nullptr};
+    gpu_.context->PSSetShaderResources(0, 2, empty);
+    gpu_.context->OMSetRenderTargets(0, nullptr, nullptr);
+}
 } // namespace frametrail::media

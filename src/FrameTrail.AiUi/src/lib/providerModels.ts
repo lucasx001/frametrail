@@ -101,15 +101,10 @@ export const PROVIDER_MODEL_PRESETS: Record<AiProviderKey, ProviderModelPreset[]
   ],
   deepseek: [
     {
-      id: 'deepseek-chat',
-      label: 'deepseek-chat',
-      pillLabel: 'deepseek-chat',
+      id: 'deepseek-flash',
+      label: 'deepseek-flash (Vision)',
+      pillLabel: 'deepseek-flash',
       isDefault: true,
-    },
-    {
-      id: 'deepseek-reasoner',
-      label: 'deepseek-reasoner',
-      pillLabel: 'deepseek-reasoner',
     },
   ],
   ollama: [],

@@ -408,7 +408,7 @@ void validate_project(const Project& project) {
         const auto start = normalized_ticks(effect.source_start);
         const auto length = normalized_ticks(effect.source_duration);
         if (start < 0 || length <= 0 || start >= duration || length > duration - start) invalid("effects", "effect outside source duration");
-        if (effect.kind != "zoom" && effect.kind != "mask" && effect.kind != "sticker" && effect.kind != "focus" && effect.kind != "tilt" && effect.kind != "intro" && effect.kind != "subtitle")
+        if (effect.kind != "zoom" && effect.kind != "mask" && effect.kind != "sticker" && effect.kind != "focus" && effect.kind != "tilt" && effect.kind != "intro" && effect.kind != "subtitle" && effect.kind != "transition")
             invalid("effects.kind", "unsupported effect kind");
         try {
             const auto parameters = Json::parse(effect.parameters_json);

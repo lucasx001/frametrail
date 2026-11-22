@@ -109,8 +109,11 @@ def _create_chat_model(req: ChatRequest) -> BaseChatModel:
     from langchain_openai import ChatOpenAI
 
     if provider == "deepseek":
+        ds_model = (req.model_name or "").strip()
+        if not ds_model or ds_model.lower() in ("deepseek-chat", "deepseek-reasoner"):
+            ds_model = "deepseek-flash"
         return ChatOpenAI(
-            model=req.model_name or "deepseek-chat",
+            model=ds_model,
             api_key=req.api_key or "missing-key",
             base_url=req.base_url or "https://api.deepseek.com/v1",
         )
@@ -242,6 +245,8 @@ async def _run_turn(req: ChatRequest) -> dict[str, Any]:
         "project_snapshot": req.project_snapshot,
         "project_dir": req.project_dir,
         "playhead_sec": req.playhead_sec,
+        "provider": req.provider,
+        "model_name": req.model_name,
         "api_key": req.api_key,
         "base_url": req.base_url,
         "proposed_commands": [],
@@ -482,6 +487,8 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 "project_snapshot": req.project_snapshot,
                 "project_dir": req.project_dir,
                 "playhead_sec": req.playhead_sec,
+                "provider": req.provider,
+                "model_name": req.model_name,
                 "api_key": req.api_key,
                 "base_url": req.base_url,
                 "proposed_commands": [],

@@ -432,6 +432,40 @@ public sealed class AiAgentBridgeTests : IAsyncLifetime
         Assert.Contains("subtitles:darkPill", styleRow.Detail);
     }
 
+    [Fact]
+    public async Task TransitionCommandCreatesUpdatesAndResolvesCenteredOnClipSeam()
+    {
+        await using var workspace = await CreateProjectAsync(100_000_000L);
+        var editor = new EditorSession(workspace);
+        // Split into 2 clips at 4.0s
+        await editor.ExecuteAsync(new { op = "split", segmentId = editor.Snapshot.Segments[0].Id, sourceTicks = 40_000_000L, newId = "clip-2" });
+        Assert.Equal(2, editor.Snapshot.Segments.Count);
+
+        var cmd = AiAgentCommandBuilder.BuildTransitionCommand(editor.Snapshot, fromClipIndex: 1, style: "crossfade", durationSec: 0.8, easing: "cubic");
+        var diff = AiAgentCommandBuilder.DescribeProposedChanges(cmd, editor.Snapshot, editor.Timeline);
+        var row = Assert.Single(diff);
+        Assert.Equal("+", row.Badge);
+        Assert.Equal("Transition", row.Label);
+        Assert.Contains("crossfade", row.Detail);
+
+        await editor.ExecuteAsync(cmd);
+        var transEffect = Assert.Single(editor.Snapshot.Effects, e => e.Kind == "transition");
+        var resolved = Assert.Single(editor.Timeline.Effects, e => e.Kind == "transition");
+        Assert.Equal(36_000_000L, resolved.OutputStart);
+        Assert.Equal(8_000_000L, resolved.OutputDuration);
+
+        // Updating the same seam reuses the existing transition ID instead of duplicating
+        var updateCmd = AiAgentCommandBuilder.BuildTransitionCommand(editor.Snapshot, fromClipIndex: 1, style: "wipeLeft", durationSec: 1.0);
+        await editor.ExecuteAsync(updateCmd);
+        var updated = Assert.Single(editor.Snapshot.Effects, e => e.Kind == "transition");
+        Assert.Equal(transEffect.Id, updated.Id);
+        Assert.Equal("wipeLeft", updated.Parameters.GetProperty("style").GetString());
+
+        // Undo restores prior state cleanly
+        await editor.UndoAsync();
+        Assert.Equal("crossfade", Assert.Single(editor.Snapshot.Effects, e => e.Kind == "transition").Parameters.GetProperty("style").GetString());
+    }
+
     private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>

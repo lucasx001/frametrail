@@ -9,6 +9,12 @@ struct MediaFrame {
     Rect output_rect; // physical output pixels, fitted with source aspect ratio
     bool mirror{};
 };
+struct TransitionScene {
+    std::string style{"crossfade"};
+    double progress{};
+    MediaFrame outgoing_screen;
+    MediaFrame incoming_screen;
+};
 struct FrameScene {
     std::int64_t revision{}, output_ticks{}, source_ticks{};
     std::string segment_id;
@@ -17,6 +23,7 @@ struct FrameScene {
     MediaFrame screen;
     std::optional<MediaFrame> camera;
     VisualScene visual;
+    std::optional<TransitionScene> transition;
 };
 
 // Returns nullopt outside the half-open output range. Immutable project input;

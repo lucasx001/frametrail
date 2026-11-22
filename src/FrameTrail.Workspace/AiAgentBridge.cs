@@ -402,6 +402,62 @@ public static class AiAgentCommandBuilder
         return new { op = "settings", canvas = nextCanvas, editor = nextEditor };
     }
 
+    public static object BuildTransitionCommand(
+        ProjectSnapshot snapshot,
+        int fromClipIndex = 1,
+        string style = "crossfade",
+        double durationSec = 0.6,
+        string easing = "cubic",
+        string? effectId = null)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.Segments.Count < 2)
+            throw new InvalidOperationException("At least two timeline clips are required to add a transition.");
+        if (fromClipIndex < 1 || fromClipIndex >= snapshot.Segments.Count)
+            throw new ArgumentOutOfRangeException(nameof(fromClipIndex), $"fromClipIndex must be between 1 and {snapshot.Segments.Count - 1}.");
+
+        var left = snapshot.Segments[fromClipIndex - 1];
+        var right = snapshot.Segments[fromClipIndex];
+
+        string normalizedStyle = style is "crossfade" or "fadeBlack" or "fadeWhite" or "slideLeft" or "slideRight" or "wipeLeft" or "wipeRight" or "zoomIn"
+            ? style
+            : "crossfade";
+        string normalizedEasing = easing is "linear" or "cubic" or "spring" ? easing : "cubic";
+        double clampedDuration = Math.Round(Math.Clamp(durationSec, 0.1, 5.0), 2);
+
+        // Reuse existing transition on the exact same seam unless an explicit effectId was requested.
+        string id = !string.IsNullOrWhiteSpace(effectId)
+            ? effectId.Trim()
+            : snapshot.Effects.FirstOrDefault(e =>
+                e.Kind == "transition" &&
+                e.Parameters.TryGetProperty("fromSegmentId", out var fEl) && fEl.GetString() == left.Id &&
+                e.Parameters.TryGetProperty("toSegmentId", out var tEl) && tEl.GetString() == right.Id)?.Id
+              ?? ("transition-" + Guid.NewGuid().ToString("N")[..12]);
+
+        long totalTicks = VisualResources.Ticks(snapshot.SourceDuration);
+        long anchorStart = Math.Clamp(VisualResources.Ticks(right.SourceStart), 0, Math.Max(0, totalTicks - 1));
+        long anchorDur = Math.Clamp((long)Math.Round(clampedDuration * TicksPerSecond), 1, Math.Max(1, totalTicks - anchorStart));
+
+        var effect = new SourceEffect
+        {
+            Id = id,
+            Kind = "transition",
+            SourceStart = MediaTime.FromTicks(anchorStart),
+            SourceDuration = MediaTime.FromTicks(anchorDur),
+            Parameters = JsonSerializer.SerializeToElement(new
+            {
+                origin = "manual",
+                style = normalizedStyle,
+                duration = clampedDuration,
+                easing = normalizedEasing,
+                fromSegmentId = left.Id,
+                toSegmentId = right.Id
+            })
+        };
+
+        return new { op = "effectUpsert", effectId = id, effect };
+    }
+
     public static object BuildSubtitlesReplaceCommand(
         IReadOnlyList<SourceEffect> subtitles,
         long? rangeStartTicks = null,
@@ -597,6 +653,8 @@ public static class AiAgentCommandBuilder
                         "mask" => "Privacy blur",
                         "subtitle" when eff.TryGetProperty("parameters", out var sp) && sp.TryGetProperty("text", out var st) && st.ValueKind == JsonValueKind.String
                             => TruncatePreviewText(st.GetString() ?? "", 36),
+                        "transition" when eff.TryGetProperty("parameters", out var tp)
+                            => $"{(tp.TryGetProperty("style", out var tStyle) && tStyle.ValueKind == JsonValueKind.String ? tStyle.GetString() : "crossfade")} · {(tp.TryGetProperty("duration", out var tDur) && tDur.TryGetDouble(out var tdv) ? tdv : 0.6):0.##}s",
                         _ => kind
                     };
                     string label = kind switch
@@ -608,6 +666,7 @@ public static class AiAgentCommandBuilder
                         "sticker" => "Sticker",
                         "intro" => "Intro",
                         "subtitle" => "Subtitle",
+                        "transition" => "Transition",
                         _ => kind
                     };
                     output.Add(new AiProposedChangeItem("+", label, detail, startSec, $"{FormatTimestamp(startSec)}–{FormatTimestamp(endSec)}"));
@@ -1353,6 +1412,25 @@ public sealed class AiAgentBridge
             e = Math.Clamp(e, s + 0.05, totalTimelineSec);
             var cmd = AiAgentCommandBuilder.BuildCutTimeRangeCommand(snapshot, timeline, s, e);
             return ("cut_time_range", $"Cut {s:0.##}s - {e:0.##}s", $"Cut time range {s:0.##}s to {e:0.##}s.", cmd);
+        }
+
+        // 2.5 Clip transition
+        if (ContainsAny(lower, "转场", "过渡", "叠化", "闪白", "黑场", "擦除", "transition", "crossfade", "dissolve", "wipe"))
+        {
+            if (snapshot.Segments.Count >= 2)
+            {
+                string style = ContainsAny(lower, "黑场", "fadeblack", "dip to black") ? "fadeBlack"
+                    : ContainsAny(lower, "闪白", "白场", "fadewhite", "flash white") ? "fadeWhite"
+                    : ContainsAny(lower, "左推", "向左推", "slideleft", "slide left") ? "slideLeft"
+                    : ContainsAny(lower, "右推", "向右推", "slideright", "slide right") ? "slideRight"
+                    : ContainsAny(lower, "左擦", "向左擦", "wipeleft", "wipe left") ? "wipeLeft"
+                    : ContainsAny(lower, "右擦", "向右擦", "wiperight", "wipe right") ? "wipeRight"
+                    : ContainsAny(lower, "缩放过渡", "zoomin", "zoom transition") ? "zoomIn"
+                    : "crossfade";
+                double dur = 0.6;
+                var cmd = AiAgentCommandBuilder.BuildTransitionCommand(snapshot, 1, style, dur);
+                return ("add_transition", $"Transition {style} ({dur:0.##}s)", $"Added {style} transition ({dur:0.##}s) between clip #1 and clip #2.", cmd);
+            }
         }
 
         // 3. Zoom effect

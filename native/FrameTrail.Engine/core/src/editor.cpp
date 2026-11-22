@@ -101,9 +101,38 @@ void apply_command(Project& p, const Json& cmd) {
     } else if (op == "effectAtOutput") {
         auto id=cmd.at("effectId").get<std::string>();auto found=std::find_if(p.effects.begin(),p.effects.end(),[&](auto&e){return e.id==id;});
         if(found==p.effects.end())throw ValidationError("effectId","effect no longer exists");
-        TimelineMap map(p.source_duration,p.segments);auto mapped=map.source_time(std::clamp(cmd.at("outputTicks").get<int64_t>(),int64_t(0),map.output_duration()-1));
-        auto start=normalized_ticks(found->source_start),end=start+normalized_ticks(found->source_duration),old=start,total=normalized_ticks(p.source_duration);auto edge=cmd.value("edge",std::string("move"));
+        TimelineMap map(p.source_duration,p.segments);
+        auto edge=cmd.value("edge",std::string("move"));
         if(edge!="start" && edge!="end" && edge!="move")throw ValidationError("edge","expected start, end or move");
+        if (found->kind == "transition") {
+            auto parsed = parse_visual_effect(*found);
+            const auto& segs = map.segments();
+            std::size_t seam = segs.size();
+            for (std::size_t i = 0; i + 1 < segs.size(); ++i) {
+                if (!parsed.from_segment_id.empty() && !parsed.to_segment_id.empty()) {
+                    if (segs[i].id == parsed.from_segment_id && segs[i + 1].id == parsed.to_segment_id) { seam = i; break; }
+                } else {
+                    auto e_end = parsed.start + parsed.duration;
+                    if ((segs[i + 1].source_start >= parsed.start && segs[i + 1].source_start <= e_end) ||
+                        (segs[i].source_end() >= parsed.start && segs[i].source_end() <= e_end)) { seam = i; break; }
+                }
+            }
+            if (seam + 1 < segs.size() && (edge == "start" || edge == "end")) {
+                auto cut = segs[seam].output_end();
+                auto target_tick = std::clamp(cmd.at("outputTicks").get<int64_t>(), int64_t(0), map.output_duration());
+                auto half_ticks = edge == "start" ? std::max<int64_t>(500'000, cut - target_tick) : std::max<int64_t>(500'000, target_tick - cut);
+                auto max_half = std::min(segs[seam].output_duration / 2, segs[seam + 1].output_duration / 2);
+                half_ticks = std::min(half_ticks, std::max<int64_t>(500'000, max_half));
+                double next_dur = std::clamp(half_ticks * 2.0 / double(time_scale), 0.1, 5.0);
+                auto parameters = Json::parse(found->parameters_json);
+                parameters["duration"] = std::round(next_dur * 100.0) / 100.0;
+                parameters["origin"] = "edited";
+                found->parameters_json = parameters.dump();
+            }
+            return;
+        }
+        auto mapped=map.source_time(std::clamp(cmd.at("outputTicks").get<int64_t>(),int64_t(0),map.output_duration()-1));
+        auto start=normalized_ticks(found->source_start),end=start+normalized_ticks(found->source_duration),old=start,total=normalized_ticks(p.source_duration);
         if(edge=="start")start=std::clamp(mapped->ticks,int64_t(0),end-1);
         else if(edge=="end")end=std::clamp(mapped->ticks,start+1,total);
         else {auto length=end-start;start=std::clamp(mapped->ticks,int64_t(0),total-length);end=start+length;}
@@ -268,6 +297,32 @@ std::string timeline_json(const Project& project) {
     };
     if(!ordered.empty())build(build,1,0,ordered.size());
     for(auto&e:project.effects) {
+      if (e.kind == "transition") {
+        const auto& segs = map.segments();
+        if (segs.size() < 2) continue;
+        auto parsed = parse_visual_effect(e);
+        std::size_t seam = segs.size();
+        if (!parsed.from_segment_id.empty() && !parsed.to_segment_id.empty()) {
+          for (std::size_t i = 0; i + 1 < segs.size(); ++i) {
+            if (segs[i].id == parsed.from_segment_id && segs[i + 1].id == parsed.to_segment_id) { seam = i; break; }
+          }
+        } else {
+          auto e_end = parsed.start + parsed.duration;
+          for (std::size_t i = 0; i + 1 < segs.size(); ++i) {
+            if ((segs[i + 1].source_start >= parsed.start && segs[i + 1].source_start <= e_end) ||
+                (segs[i].source_end() >= parsed.start && segs[i].source_end() <= e_end)) { seam = i; break; }
+          }
+        }
+        if (seam + 1 < segs.size()) {
+          auto cut = segs[seam].output_end();
+          auto desired = static_cast<int64_t>(std::llround(parsed.transition_duration * time_scale));
+          auto half = std::min({desired / 2, segs[seam].output_duration / 2, segs[seam + 1].output_duration / 2});
+          if (half > 0) {
+            effects.push_back({{"id",e.id},{"kind",e.kind},{"outputStart",cut - half},{"outputDuration",half * 2}});
+          }
+        }
+        continue;
+      }
       auto first=normalized_ticks(e.source_start),last=first+normalized_ticks(e.source_duration);
       auto visit=[&](auto&& self,size_t node,size_t lo,size_t hi)->void {
         if(maximum[node]<=first || ordered[lo]->source_start>=last)return;

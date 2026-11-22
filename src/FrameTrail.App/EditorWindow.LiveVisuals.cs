@@ -26,7 +26,7 @@ public sealed partial class EditorWindow
         visualPreviewTimer.Tick += (_, _) => StartVisualPreview();
         visualCommitTimer = DispatcherQueue.CreateTimer(); visualCommitTimer.Interval = TimeSpan.FromMilliseconds(400); visualCommitTimer.IsRepeating = false;
         visualCommitTimer.Tick += async (_, _) => await SafeAsync(FlushVisualChangesAsync);
-        visualSliders = [effectScale, effectX, effectY, effectWidth, effectHeight, effectStrength, effectOpacity, effectAngleX, effectAngleY, stickerRotation, springFrequency, springDamping];
+        visualSliders = [effectScale, effectX, effectY, effectWidth, effectHeight, effectStrength, effectOpacity, effectAngleX, effectAngleY, stickerRotation, springFrequency, springDamping, transitionDuration];
         foreach (var slider in visualSliders) {
             slider.ValueChanged += (_, _) => QueueVisualChange();
             slider.InteractionEnded += commit => {
@@ -42,7 +42,7 @@ public sealed partial class EditorWindow
                     double.TryParse(box.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out var value) && value != box.Value) QueueVisualChange();
             });
         }
-        foreach (var box in new[] { effectMode, effectEasing, effectAttachment, effectTarget }) box.SelectionChanged += (_, _) => QueueVisualChange();
+        foreach (var box in new[] { effectMode, effectEasing, effectAttachment, effectTarget, transitionStyle }) box.SelectionChanged += (_, _) => QueueVisualChange();
         stickerText.TextChanged += (_, _) => QueueVisualChange();
     }
     private bool TryVisualNumber(NumberBox box, out double value)

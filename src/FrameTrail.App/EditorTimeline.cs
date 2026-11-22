@@ -17,14 +17,14 @@ namespace FrameTrail.App;
 // Only visible clips, ruler marks and waveform buckets become XAML elements.
 internal sealed partial class EditorTimeline : ContentControl
 {
-    private static readonly string[] CanonicalEffectOrder = ["subtitle", "zoom", "tilt", "intro", "mask", "focus", "sticker"];
+    private static readonly string[] CanonicalEffectOrder = ["subtitle", "transition", "zoom", "tilt", "intro", "mask", "focus", "sticker"];
     private readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollMode = ScrollMode.Enabled, VerticalScrollMode = ScrollMode.Enabled };
     private readonly Grid scrollSurface = new() { Background = new SolidColorBrush(Colors.Transparent) };
     private readonly Canvas canvas = new() { Height = 148, Background = new SolidColorBrush(Colors.Transparent), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
     private readonly Canvas rulerLayer = new() { IsHitTestVisible = false };
     private readonly Canvas clipsLayer = new() { IsHitTestVisible = false };
     private readonly Canvas overlayLayer = new() { IsHitTestVisible = false };
-    private readonly InputSystemCursor arrowCursor = InputSystemCursor.Create(InputSystemCursorShape.Arrow), moveCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeAll), resizeHorizontalCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeWestEast);
+    private readonly InputSystemCursor arrowCursor = InputSystemCursor.Create(InputSystemCursorShape.Arrow), moveCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeAll), resizeHorizontalCursor = InputSystemCursor.Create(InputSystemCursorShape.SizeWestEast), handCursor = InputSystemCursor.Create(InputSystemCursorShape.Hand);
     private ResolvedTimeline? timeline;
     private string? selected;
     private long playhead;
@@ -75,6 +75,7 @@ internal sealed partial class EditorTimeline : ContentControl
     internal event Action<string>? SelectClip;
     internal event Action<string>? ClipDoubleClicked;
     internal event Action<string>? SelectEffect;
+    internal event Action<string, string>? TransitionSeamClicked;
     internal event Action<IReadOnlyList<string>>? SelectedEffectsChanged;
     internal event Action<string>? SubtitleDoubleClicked;
     internal event Action<string, string>? SubtitleContextActionRequested;
@@ -306,7 +307,7 @@ internal sealed partial class EditorTimeline : ContentControl
         if(Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.FromElement(this) is { } peer) peer.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
     }
     private double X(long ticks) => 16 + ticks / 10_000_000.0 * EffectiveScale;
-    private static string EffectLabel(string kind)=>kind switch{"subtitle"=>L.T("SubTabTitle"),"zoom"=>L.T("SB762AEC769A3"),"tilt"=>L.T("S17E14283A497"),"mask"=>L.T("SAC7CE836857B"),"focus"=>L.T("SED19BD5E2620"),"intro"=>L.T("SFD0D4B7258C2"),_=>L.T("S622DA0460277")};
+    private static string EffectLabel(string kind)=>kind switch{"subtitle"=>L.T("SubTabTitle"),"transition"=>L.T("TransitionName"),"zoom"=>L.T("SB762AEC769A3"),"tilt"=>L.T("S17E14283A497"),"mask"=>L.T("SAC7CE836857B"),"focus"=>L.T("SED19BD5E2620"),"intro"=>L.T("SFD0D4B7258C2"),_=>L.T("S622DA0460277")};
     private double EffectiveScale => timeline is null ? scale : Math.Min(scale, 8_000_000.0 / Math.Max(1, timeline.Duration / 10_000_000.0));
     private long T(double x) => timeline is null ? 0 : Math.Clamp((long)Math.Round((x - 16) / EffectiveScale * 10_000_000), 0, timeline.Duration);
     private long RawTicks(double x, double? scaleOverride = null) => timeline is null ? 0 : (long)Math.Round((x - 16) / (scaleOverride ?? EffectiveScale) * 10_000_000);
@@ -423,6 +424,42 @@ internal sealed partial class EditorTimeline : ContentControl
                 if (end <= right) At(overlayLayer, new Rectangle { Width = 3, Height = 16, RadiusX = 1.5, RadiusY = 1.5, Fill = selectedBorder, IsHitTestVisible = false }, end - 8, 56);
             }
         }
+        if (timeline.Clips.Count >= 2) {
+            for (int ci = 0; ci + 1 < timeline.Clips.Count; ci++) {
+                var leftClip = timeline.Clips[ci];
+                var rightClip = timeline.Clips[ci + 1];
+                double seamX = X(rightClip.OutputStart);
+                if (seamX < left - 16 || seamX > right + 16) continue;
+                var seamTrans = timeline.Effects.FirstOrDefault(ef =>
+                    ef.Kind == "transition" &&
+                    ef.OutputStart <= rightClip.OutputStart &&
+                    ef.OutputStart + ef.OutputDuration >= rightClip.OutputStart);
+                bool hasTrans = seamTrans is not null;
+                bool transSelected = hasTrans && (seamTrans!.Id == selectedVisual || selectedEffectIds.Contains(seamTrans.Id));
+                var pill = new Border
+                {
+                    Width = 20,
+                    Height = 20,
+                    CornerRadius = new CornerRadius(6),
+                    IsHitTestVisible = false,
+                    Background = hasTrans
+                        ? (transSelected ? Brush(168, 85, 247) : new SolidColorBrush(Windows.UI.Color.FromArgb(225, 147, 51, 234)))
+                        : new SolidColorBrush(Windows.UI.Color.FromArgb(190, 28, 30, 36)),
+                    BorderBrush = hasTrans
+                        ? (transSelected ? Brush(255, 255, 255) : Brush(216, 180, 254))
+                        : new SolidColorBrush(Windows.UI.Color.FromArgb(130, 255, 255, 255)),
+                    BorderThickness = new Thickness(transSelected ? 2 : 1),
+                    Child = new EditorGlyph
+                    {
+                        Kind = "Transition",
+                        Width = 11,
+                        Height = 11,
+                        Foreground = hasTrans ? Brush(255, 255, 255) : new SolidColorBrush(Windows.UI.Color.FromArgb(220, 228, 228, 231))
+                    }
+                };
+                At(overlayLayer, pill, seamX - 10, 54);
+            }
+        }
         At(overlayLayer, new Rectangle { Width = Math.Max(1, right - left), Height = 0.5, Fill = RecorderTheme.Brush(this, "EditorLine"), IsHitTestVisible = false }, left, 101);
         if (waveform is null || waveform.Length == 0) At(overlayLayer, new TextBlock { Text = waveform is null ? L.T("S0B2C11200068") : L.T("S923FBEB23043"), FontSize = 10, Foreground = RecorderTheme.Brush(this, "EditorTertiary"), IsHitTestVisible = false }, left + 16, 111);
         if (waveform is not null && waveform.Length > 0) {
@@ -451,7 +488,7 @@ internal sealed partial class EditorTimeline : ContentControl
             if(!effectViews.TryGetValue(viewKey,out var body))effectViews[viewKey]=body=new Border{Height=20,CornerRadius=new CornerRadius(6),IsHitTestVisible=false};
             var (r, g, b) = EffectColor(effect.Kind);
             bool isSubtitle = effect.Kind == "subtitle";
-            bool isAccentEffect = effect.Kind is not ("subtitle" or "focus" or "mask" or "tilt" or "intro" or "sticker");
+            bool isAccentEffect = effect.Kind is not ("subtitle" or "transition" or "focus" or "mask" or "tilt" or "intro" or "sticker");
             usedEffects.Add(viewKey);body.Width=width;body.BorderBrush=isAccentEffect?selectedBorder:Brush(r,g,b);body.Background=isAccentEffect?(isEffectSelected?selectedBorder:RecorderTheme.Brush(this,"EditorAccentSoft")):new SolidColorBrush(Windows.UI.Color.FromArgb(isEffectSelected?(byte)205:(byte)(isSubtitle?58:65),r,g,b));body.BorderThickness=new Thickness(isEffectSelected?2:1);body.Child=null;
             if(width > (isSubtitle ? 22 : 38)) {
                 string labelText;
@@ -552,6 +589,16 @@ internal sealed partial class EditorTimeline : ContentControl
         if (nearStart && nearEnd) return (effect, Math.Abs(p.X - startX) <= Math.Abs(p.X - endX) ? "start" : "end");
         return (effect, nearStart ? "start" : nearEnd ? "end" : "move");
     }
+    private (string FromClipId, string ToClipId)? HitTestTransitionSeam(Point p)
+    {
+        if (timeline is null || timeline.Clips.Count < 2 || p.Y < 50 || p.Y > 78) return null;
+        for (int i = 0; i + 1 < timeline.Clips.Count; i++) {
+            double seamX = X(timeline.Clips[i + 1].OutputStart);
+            if (Math.Abs(p.X - seamX) <= 11)
+                return (timeline.Clips[i].Id, timeline.Clips[i + 1].Id);
+        }
+        return null;
+    }
     private (ResolvedClip Clip, string Kind)? HitTestClip(Point p)
     {
         if (timeline is null || p.Y < 32 || p.Y > 96) return null;
@@ -616,6 +663,10 @@ internal sealed partial class EditorTimeline : ContentControl
             }
             else { Seek?.Invoke(Math.Min(ticks, Math.Max(0, timeline.Duration - 1))); dragKind = "seek"; ProtectedCursor = arrowCursor; }
             canvas.CapturePointer(e.Pointer); e.Handled = true; Draw(); return;
+        }
+        if (EditingEnabled && HitTestTransitionSeam(p) is { } seamHit) {
+            TransitionSeamClicked?.Invoke(seamHit.FromClipId, seamHit.ToClipId);
+            e.Handled = true; Draw(); return;
         }
         if (HitTestClip(p) is { } clipHit) {
             var clip = clipHit.Clip;
@@ -803,6 +854,10 @@ internal sealed partial class EditorTimeline : ContentControl
             ProtectedCursor = effectHit.Kind is "start" or "end" ? resizeHorizontalCursor : arrowCursor;
             return;
         }
+        if (HitTestTransitionSeam(p) is not null) {
+            ProtectedCursor = handCursor;
+            return;
+        }
         if (HitTestClip(p) is { } clipHit) {
             ProtectedCursor = clipHit.Kind is "start" or "end" ? resizeHorizontalCursor : arrowCursor;
             return;
@@ -811,9 +866,10 @@ internal sealed partial class EditorTimeline : ContentControl
     }
     private int InstanceEffectY(string kind) => effectRows.TryGetValue(kind, out int y) ? y : DefaultEffectY(kind);
     private static int EffectY(string kind) => lastEffectRows is not null && lastEffectRows.TryGetValue(kind, out int y) ? y : DefaultEffectY(kind);
-    private static int DefaultEffectY(string kind) => kind switch { "subtitle" => 148, "zoom" => 172, "tilt" => 196, "intro" => 220, "mask" => 244, "focus" => 268, _ => 292 };
+    private static int DefaultEffectY(string kind) => kind switch { "subtitle" => 148, "transition" => 172, "zoom" => 196, "tilt" => 220, "intro" => 244, "mask" => 268, "focus" => 292, _ => 316 };
     private static (byte R, byte G, byte B) EffectColor(string kind) => kind switch {
         "subtitle" => (14, 165, 233),
+        "transition" => (168, 85, 247),
         "zoom" => (24, 24, 27),
         "focus" => (255, 184, 48),
         "mask" => (255, 107, 146),

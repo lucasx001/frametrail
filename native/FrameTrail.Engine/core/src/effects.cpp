@@ -51,6 +51,20 @@ VisualEffect parse_visual_effect(const Effect& effect) {
     v.attachment = choice(p,"attachment","screen",{"screen","canvas"}); v.target = choice(p,"target","screen",{"screen","camera"});
     if (effect.kind == "mask") v.mode = choice(p,"mode","solid",{"solid","pixelate","blur"});
     if (effect.kind == "intro") v.mode = choice(p,"style","fade",{"fade","rise","scale","slide"});
+    if (effect.kind == "transition") {
+        v.mode = choice(p,"style","crossfade",{"crossfade","fadeBlack","fadeWhite","slideLeft","slideRight","wipeLeft","wipeRight","zoomIn"});
+        v.transition_duration = number(p,"duration",0.6,0.1,5.0);
+        if (p.contains("fromSegmentId") && !p["fromSegmentId"].is_null()) {
+            if (!p["fromSegmentId"].is_string()) throw ValidationError("effects.parameters.fromSegmentId", "expected string");
+            v.from_segment_id = p["fromSegmentId"].get<std::string>();
+            if (v.from_segment_id.size() > 128) throw ValidationError("effects.parameters.fromSegmentId", "segment ID too long");
+        }
+        if (p.contains("toSegmentId") && !p["toSegmentId"].is_null()) {
+            if (!p["toSegmentId"].is_string()) throw ValidationError("effects.parameters.toSegmentId", "expected string");
+            v.to_segment_id = p["toSegmentId"].get<std::string>();
+            if (v.to_segment_id.size() > 128) throw ValidationError("effects.parameters.toSegmentId", "segment ID too long");
+        }
+    }
     v.path = p.value("path",std::string{});
     if (is_subtitle) {
         if (!p.contains("text") || !p["text"].is_string()) throw ValidationError("effects.parameters.text", "subtitle requires text string");

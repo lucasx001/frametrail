@@ -43,6 +43,17 @@ VALID_FRAME_STYLES = (
     "browserDark",
     "devicePhone",
 )
+VALID_EASINGS = ("linear", "cubic", "spring")
+VALID_TRANSITION_STYLES = (
+    "crossfade",
+    "fadeBlack",
+    "fadeWhite",
+    "slideLeft",
+    "slideRight",
+    "wipeLeft",
+    "wipeRight",
+    "zoomIn",
+)
 ASPECT_RATIO_PRESETS: dict[str, tuple[int, int]] = {
     "16:9": (1920, 1080),
     "9:16": (1080, 1920),
@@ -819,6 +830,121 @@ class FrameTrailProjectBridge:
         command = {"op": "settings", "canvas": canvas, "editor": editor}
         return self._commit_command(command, "Updated canvas/editor styling.")
 
+    def add_transition(
+        self,
+        from_clip_index: int = 1,
+        to_clip_index: int | None = None,
+        style: str = "crossfade",
+        duration_sec: float = 0.6,
+        easing: str = "cubic",
+        effect_id: str | None = None,
+    ) -> dict[str, Any]:
+        snapshot = self._load_project()
+        segments = snapshot.get("segments", []) or []
+        if len(segments) < 2:
+            raise ValueError("At least two timeline clips are required to add a transition.")
+
+        left_idx = int(from_clip_index)
+        right_idx = int(to_clip_index) if to_clip_index is not None else left_idx + 1
+        if left_idx < 1 or left_idx >= len(segments):
+            raise ValueError(
+                f"from_clip_index must be between 1 and {len(segments) - 1} (timeline has {len(segments)} clips)."
+            )
+        if right_idx != left_idx + 1:
+            raise ValueError(
+                f"Transition clips must be adjacent (expected to_clip_index={left_idx + 1}, got {right_idx})."
+            )
+
+        cleaned_style = (style or "crossfade").strip()
+        if cleaned_style not in VALID_TRANSITION_STYLES:
+            raise ValueError(
+                f"style must be one of {', '.join(VALID_TRANSITION_STYLES)}."
+            )
+        cleaned_easing = (easing or "cubic").strip()
+        if cleaned_easing not in VALID_EASINGS:
+            raise ValueError(f"easing must be one of {', '.join(VALID_EASINGS)}.")
+        dur = round(_clamp(duration_sec, 0.1, 5.0), 2)
+
+        left_seg = segments[left_idx - 1]
+        right_seg = segments[right_idx - 1]
+        left_id = str(left_seg["id"])
+        right_id = str(right_seg["id"])
+
+        eid = (effect_id or "").strip()
+        if not eid:
+            for existing in snapshot.get("effects", []) or []:
+                if existing.get("kind") != "transition":
+                    continue
+                ep = existing.get("parameters") or {}
+                if ep.get("fromSegmentId") == left_id and ep.get("toSegmentId") == right_id:
+                    eid = str(existing["id"])
+                    break
+        if not eid:
+            eid = _new_id("transition")
+
+        total_ticks = _normalized_ticks(snapshot.get("sourceDuration"))
+        anchor_start = max(0, min(_normalized_ticks(right_seg.get("sourceStart")), max(0, total_ticks - 1)))
+        anchor_dur = max(1, min(_sec_to_ticks(dur), max(1, total_ticks - anchor_start)))
+
+        command = {
+            "op": "effectUpsert",
+            "effectId": eid,
+            "effect": {
+                "id": eid,
+                "kind": "transition",
+                "sourceStart": _canonical_time(anchor_start),
+                "sourceDuration": _canonical_time(anchor_dur),
+                "parameters": {
+                    "origin": "manual",
+                    "style": cleaned_style,
+                    "duration": dur,
+                    "easing": cleaned_easing,
+                    "fromSegmentId": left_id,
+                    "toSegmentId": right_id,
+                },
+            },
+        }
+        return self._commit_command(
+            command,
+            f"Added '{cleaned_style}' transition ({dur:.2f}s) between clip #{left_idx} and clip #{right_idx}.",
+        )
+
+    def remove_transition(
+        self,
+        from_clip_index: int | None = None,
+        effect_id: str | None = None,
+    ) -> dict[str, Any]:
+        snapshot = self._load_project()
+        target_id = (effect_id or "").strip()
+        if not target_id:
+            segments = snapshot.get("segments", []) or []
+            if from_clip_index is not None:
+                left_idx = int(from_clip_index)
+                if left_idx < 1 or left_idx >= len(segments):
+                    raise ValueError(
+                        f"from_clip_index must be between 1 and {max(1, len(segments) - 1)}."
+                    )
+                left_id = str(segments[left_idx - 1]["id"])
+                right_id = str(segments[left_idx]["id"])
+                for existing in snapshot.get("effects", []) or []:
+                    if existing.get("kind") != "transition":
+                        continue
+                    ep = existing.get("parameters") or {}
+                    if ep.get("fromSegmentId") == left_id and ep.get("toSegmentId") == right_id:
+                        target_id = str(existing["id"])
+                        break
+            else:
+                for existing in snapshot.get("effects", []) or []:
+                    if existing.get("kind") == "transition":
+                        target_id = str(existing["id"])
+                        break
+        if not target_id:
+            raise ValueError("No matching transition effect was found to remove.")
+        return self._commit_command(
+            {"op": "effectDelete", "effectId": target_id},
+            f"Removed transition '{target_id}'.",
+        )
+
     def list_whisper_models(self) -> dict[str, Any]:
         """List available local Whisper speech-to-text models and their install status."""
         if self.callback_url:
@@ -1271,6 +1397,47 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "frametrail_add_transition",
+        "description": "Add or update a clip-to-clip transition effect between two adjacent timeline clips (1-based from_clip_index -> from_clip_index + 1). Supports crossfade, fadeBlack, fadeWhite, slideLeft, slideRight, wipeLeft, wipeRight, and zoomIn.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "from_clip_index": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 1,
+                    "description": "1-based index of the outgoing clip (e.g. 1 adds a transition between clip #1 and clip #2).",
+                },
+                "to_clip_index": {
+                    "type": "integer",
+                    "minimum": 2,
+                    "description": "Optional 1-based index of the incoming clip (must equal from_clip_index + 1).",
+                },
+                "style": {
+                    "type": "string",
+                    "enum": ["crossfade", "fadeBlack", "fadeWhite", "slideLeft", "slideRight", "wipeLeft", "wipeRight", "zoomIn"],
+                    "default": "crossfade",
+                },
+                "duration_sec": {"type": "number", "minimum": 0.1, "maximum": 5.0, "default": 0.6},
+                "easing": {"type": "string", "enum": ["cubic", "spring", "linear"], "default": "cubic"},
+                "effect_id": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "frametrail_remove_transition",
+        "description": "Remove a clip-to-clip transition by 1-based from_clip_index (seam between clip N and N+1) or explicit effect_id.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "from_clip_index": {"type": "integer", "minimum": 1},
+                "effect_id": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "frametrail_list_whisper_models",
         "description": "List FrameTrail's local offline Whisper speech-to-text models ('small-q5' ~181 MB, 'large-v3-turbo-q5_0' ~547 MB), whether each is installed, and whether user approval (Review mode) is required before downloading.",
         "inputSchema": {
@@ -1394,6 +1561,10 @@ def _dispatch_tool(
         return bridge.cut_range(**arguments)
     if name == "frametrail_update_canvas":
         return bridge.update_canvas(**arguments)
+    if name == "frametrail_add_transition":
+        return bridge.add_transition(**arguments)
+    if name == "frametrail_remove_transition":
+        return bridge.remove_transition(**arguments)
     if name == "frametrail_list_whisper_models":
         return bridge.list_whisper_models()
     if name == "frametrail_download_whisper_model":
@@ -1625,6 +1796,33 @@ def run_fastmcp_server(bridge: FrameTrailProjectBridge) -> bool:
     ) -> dict[str, Any]:
         """Update canvas aspect ratio, padding, corner radius, and mockup frameStyle."""
         return bridge.update_canvas(aspect_ratio, padding, corner_radius, frame_style)
+
+    @mcp.tool()
+    def frametrail_add_transition(
+        from_clip_index: int = 1,
+        to_clip_index: int | None = None,
+        style: str = "crossfade",
+        duration_sec: float = 0.6,
+        easing: str = "cubic",
+        effect_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Add or update a clip-to-clip transition between adjacent timeline clips."""
+        return bridge.add_transition(
+            from_clip_index=from_clip_index,
+            to_clip_index=to_clip_index,
+            style=style,
+            duration_sec=duration_sec,
+            easing=easing,
+            effect_id=effect_id,
+        )
+
+    @mcp.tool()
+    def frametrail_remove_transition(
+        from_clip_index: int | None = None,
+        effect_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove a clip-to-clip transition effect by clip seam or effect_id."""
+        return bridge.remove_transition(from_clip_index=from_clip_index, effect_id=effect_id)
 
     @mcp.tool()
     def frametrail_list_whisper_models() -> dict[str, Any]:

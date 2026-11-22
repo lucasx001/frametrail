@@ -34,6 +34,8 @@ class AgentState(TypedDict):
     project_snapshot: dict[str, Any]
     project_dir: str
     playhead_sec: float
+    provider: NotRequired[str]
+    model_name: NotRequired[str]
     api_key: NotRequired[str]
     base_url: NotRequired[str]
     proposed_commands: list[dict[str, Any]]
@@ -304,7 +306,8 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
             "1. Use tools to inspect or modify the timeline. Always keep times within [0, sourceDuration].\n"
             "2. If user mentions 'current time' or omits timestamps, use playhead_sec.\n"
             "3. For speech-to-subtitle requests, call generate_subtitles (pass 1-based clip_indices such as [2, 3] when the user names specific clips like '2nd and 3rd clip'), upsert_subtitle, update_subtitle_style, or delete_subtitles.\n"
-            "4. After tool execution succeeds, summarize your edits clearly and concisely."
+            "4. When the user asks about visual elements in the video or wants to zoom, spotlight/focus, or blur/mask a specific on-screen element (button, text, icon, sensitive region, etc.), call inspect_video_frames(start_sec=..., end_sec=..., question=...) first to inspect keyframes and obtain normalized bounding-box coordinates (x, y, width, height in [0, 1]); project_dir is auto-resolved when omitted.\n"
+            "5. After tool execution succeeds, summarize your edits clearly and concisely."
         )
 
         msgs = list(state.get("messages", []))
@@ -319,6 +322,8 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
             state.get("playhead_sec", 0.0),
             state.get("api_key", ""),
             state.get("base_url", ""),
+            state.get("provider", ""),
+            state.get("model_name", ""),
         )
         try:
             response = await llm_with_tools.ainvoke(state["messages"])
@@ -335,6 +340,8 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
             state.get("playhead_sec", 0.0),
             state.get("api_key", ""),
             state.get("base_url", ""),
+            state.get("provider", ""),
+            state.get("model_name", ""),
         )
         new_messages: list[ToolMessage] = []
         proposed = list(state.get("proposed_commands", []))

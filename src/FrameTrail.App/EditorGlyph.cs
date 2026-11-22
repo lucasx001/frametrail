@@ -50,6 +50,7 @@ public sealed class EditorGlyph : UserControl
             "SendUp" => "M9,14 L9,4 M5,8 L9,4 L13,8",
             "StopSquare" => "M5.5,5.5 L12.5,5.5 L12.5,12.5 L5.5,12.5 Z",
             "Subtitles" => "M3.5,3.5 L14.5,3.5 Q16.5,3.5 16.5,5.5 L16.5,12.5 Q16.5,14.5 14.5,14.5 L3.5,14.5 Q1.5,14.5 1.5,12.5 L1.5,5.5 Q1.5,3.5 3.5,3.5 M4.5,8.5 L8.5,8.5 M10.5,8.5 L13.5,8.5 M4.5,11.5 L7,11.5 M9,11.5 L13.5,11.5",
+            "Transition" => "M3,4 L9,9 L3,14 Z M15,4 L9,9 L15,14 Z",
             _ => "M3,3 L15,3 L15,15 L3,15 Z"
         };
         var path = (Microsoft.UI.Xaml.Shapes.Path)XamlReader.Load($"<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='{data}' StrokeThickness='1.45' StrokeStartLineCap='Round' StrokeEndLineCap='Round' StrokeLineJoin='Round' />");

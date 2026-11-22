@@ -106,7 +106,7 @@ public static class ProjectJson
         {
             if (effect is null) throw new ProjectFormatException("Effect cannot be null.");
             ValidateId(effect.Id); ValidateTime(effect.SourceStart); ValidateTime(effect.SourceDuration);
-            if (effect.Kind is not ("zoom" or "mask" or "sticker" or "focus" or "tilt" or "intro" or "subtitle") || effect.Parameters.ValueKind != JsonValueKind.Object)
+            if (effect.Kind is not ("zoom" or "mask" or "sticker" or "focus" or "tilt" or "intro" or "subtitle" or "transition") || effect.Parameters.ValueKind != JsonValueKind.Object)
                 throw new ProjectFormatException("Invalid effect envelope.");
             RejectDuplicateKeys(effect.Parameters);
             if (effect.Kind == "subtitle")

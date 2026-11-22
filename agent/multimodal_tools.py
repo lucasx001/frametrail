@@ -2244,97 +2244,434 @@ def _locate_ffmpeg() -> str | None:
     return shutil.which("ffmpeg")
 
 
-def _query_vision_llm(question: str, frames: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Optionally query OpenAI or Anthropic Vision model for UI bounding boxes as NormalizedRects."""
-    prompt = (
-        f"You are inspecting video frames from a screen recording.\n"
-        f"User question: {question}\n"
-        "Respond strictly with JSON containing:\n"
-        '{"answer": "<concise answer>", "regions": [{"label": "<name>", "timestampSec": <float>, "x": <0..1>, "y": <0..1>, "width": <0..1>, "height": <0..1>}]}\n'
-        "Ensure every NormalizedRect satisfies 0 <= x,y <= 1, width > 0, height > 0, x+width <= 1, y+height <= 1."
-    )
+def _resolve_chat_completions_url(base_url: str, default_base: str) -> str:
+    base = (base_url or default_base).strip().rstrip("/")
+    if not base:
+        base = default_base.rstrip("/")
+    if base.endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
 
-    openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if openai_key:
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        for fr in frames:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{fr['imageBase64']}", "detail": "low"},
-                }
-            )
-        payload = json.dumps(
-            {
-                "model": os.environ.get("FRAMETRAIL_VISION_MODEL", "gpt-4o-mini"),
-                "messages": [{"role": "user", "content": content}],
-                "response_format": {"type": "json_object"},
-                "max_tokens": 600,
-            }
-        ).encode("utf-8")
-        req = urllib.request.Request(
-            "https://api.openai.com/v1/chat/completions",
-            data=payload,
-            headers={"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
+
+def _resolve_anthropic_messages_url(base_url: str, default_base: str = "https://api.anthropic.com") -> str:
+    base = (base_url or default_base).strip().rstrip("/")
+    if not base:
+        base = default_base.rstrip("/")
+    if base.endswith("/v1/messages") or base.endswith("/messages"):
+        return base
+    if base.endswith("/v1"):
+        return f"{base}/messages"
+    return f"{base}/v1/messages"
+
+
+def _is_deepseek_vision_model(model_name: str) -> bool:
+    normalized = (model_name or "").strip().lower()
+    return bool(normalized) and any(token in normalized for token in ("flash", "vision", "vl"))
+
+
+def _get_active_project_context() -> dict[str, Any]:
+    try:
+        from agent.editor_tools import get_project_context
+
+        return get_project_context()
+    except Exception:
+        return {}
+
+
+def _sanitize_vision_regions(raw_regions: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_regions, list):
+        return []
+    sanitized: list[dict[str, Any]] = []
+    for item in raw_regions:
+        if not isinstance(item, dict):
+            continue
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            text = data["choices"][0]["message"]["content"]
-            return json.loads(text)
-        except Exception:
-            pass
-
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if anthropic_key:
-        content_blocks: list[dict[str, Any]] = []
-        for fr in frames:
-            content_blocks.append(
-                {
-                    "type": "image",
-                    "source": {"type": "base64", "media_type": "image/jpeg", "data": fr["imageBase64"]},
-                }
-            )
-        content_blocks.append({"type": "text", "text": prompt})
-        payload = json.dumps(
+            x = max(0.0, min(0.999, float(item.get("x", 0.0))))
+            y = max(0.0, min(0.999, float(item.get("y", 0.0))))
+            width = max(0.001, min(1.0 - x, float(item.get("width", 0.1))))
+            height = max(0.001, min(1.0 - y, float(item.get("height", 0.1))))
+            ts = max(0.0, float(item.get("timestampSec", 0.0)))
+        except (TypeError, ValueError):
+            continue
+        label = str(item.get("label") or item.get("name") or "region").strip() or "region"
+        sanitized.append(
             {
-                "model": os.environ.get("FRAMETRAIL_ANTHROPIC_VISION_MODEL", "claude-3-5-sonnet-latest"),
-                "max_tokens": 600,
-                "messages": [{"role": "user", "content": content_blocks}],
+                "label": label,
+                "timestampSec": round(ts, 4),
+                "x": round(x, 4),
+                "y": round(y, 4),
+                "width": round(width, 4),
+                "height": round(height, 4),
             }
-        ).encode("utf-8")
+        )
+    return sanitized
+
+
+def _parse_vision_json(text: str) -> dict[str, Any]:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return {"answer": "", "regions": []}
+
+    parsed: dict[str, Any] | None = None
+    candidates = [cleaned]
+    fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", cleaned, flags=re.IGNORECASE)
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    first_brace = cleaned.find("{")
+    last_brace = cleaned.rfind("}")
+    if first_brace != -1 and last_brace > first_brace:
+        candidates.append(cleaned[first_brace : last_brace + 1])
+
+    for candidate in candidates:
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                parsed = obj
+                break
+        except json.JSONDecodeError:
+            continue
+
+    if parsed is None:
+        return {"answer": cleaned, "regions": []}
+
+    answer = str(parsed.get("answer", "") or "").strip()
+    regions = _sanitize_vision_regions(parsed.get("regions"))
+    if not answer and not regions:
+        answer = cleaned
+    return {"answer": answer, "regions": regions}
+
+
+def _extract_chat_completion_text(data: dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(msg, dict):
+        return ""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+        return "".join(parts)
+    return ""
+
+
+def _resolve_vision_candidates(ctx: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Build prioritized Vision LLM candidates from active session BYOK credentials and env vars."""
+    active = ctx if isinstance(ctx, dict) else _get_active_project_context()
+    ctx_provider = str(active.get("provider", "") or "").strip().lower()
+    ctx_api_key = str(active.get("api_key", "") or "").strip()
+    ctx_base_url = str(active.get("base_url", "") or "").strip()
+    ctx_model = str(active.get("model_name", "") or "").strip()
+
+    candidates: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def add_candidate(provider: str, api_key: str, url: str, model: str) -> None:
+        key = (api_key or "").strip()
+        if not key or key.lower() == "missing-key":
+            return
+        dedupe_key = (provider, url, model, key)
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        candidates.append(
+            {
+                "provider": provider,
+                "api_key": key,
+                "url": url,
+                "model": model,
+            }
+        )
+
+    # 1. Active session provider gets first priority so BYOK DeepSeek / OpenAI / Anthropic works without env vars
+    if ctx_provider == "deepseek" and ctx_api_key:
+        ds_model = (
+            os.environ.get("FRAMETRAIL_DEEPSEEK_VISION_MODEL", "").strip()
+            or (ctx_model if _is_deepseek_vision_model(ctx_model) else "deepseek-flash")
+        )
+        add_candidate(
+            "deepseek",
+            ctx_api_key,
+            _resolve_chat_completions_url(ctx_base_url, "https://api.deepseek.com"),
+            ds_model,
+        )
+    elif ctx_provider == "openai" and ctx_api_key:
+        oa_model = os.environ.get("FRAMETRAIL_VISION_MODEL", "").strip() or ctx_model or "gpt-4o-mini"
+        add_candidate(
+            "openai",
+            ctx_api_key,
+            _resolve_chat_completions_url(ctx_base_url, "https://api.openai.com/v1"),
+            oa_model,
+        )
+    elif ctx_provider == "anthropic" and ctx_api_key:
+        an_model = (
+            os.environ.get("FRAMETRAIL_ANTHROPIC_VISION_MODEL", "").strip()
+            or ctx_model
+            or "claude-3-5-sonnet-latest"
+        )
+        add_candidate(
+            "anthropic",
+            ctx_api_key,
+            _resolve_anthropic_messages_url(ctx_base_url, "https://api.anthropic.com"),
+            an_model,
+        )
+
+    # 2. Environment-variable fallbacks
+    deepseek_env_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if deepseek_env_key:
+        add_candidate(
+            "deepseek",
+            deepseek_env_key,
+            _resolve_chat_completions_url(
+                os.environ.get("DEEPSEEK_BASE_URL", ""),
+                "https://api.deepseek.com",
+            ),
+            os.environ.get("FRAMETRAIL_DEEPSEEK_VISION_MODEL", "").strip() or "deepseek-flash",
+        )
+
+    openai_env_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if openai_env_key:
+        add_candidate(
+            "openai",
+            openai_env_key,
+            _resolve_chat_completions_url(
+                os.environ.get("OPENAI_BASE_URL", ""),
+                "https://api.openai.com/v1",
+            ),
+            os.environ.get("FRAMETRAIL_VISION_MODEL", "").strip() or "gpt-4o-mini",
+        )
+
+    anthropic_env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if anthropic_env_key:
+        add_candidate(
+            "anthropic",
+            anthropic_env_key,
+            _resolve_anthropic_messages_url(
+                os.environ.get("ANTHROPIC_BASE_URL", ""),
+                "https://api.anthropic.com",
+            ),
+            os.environ.get("FRAMETRAIL_ANTHROPIC_VISION_MODEL", "").strip() or "claude-3-5-sonnet-latest",
+        )
+
+    return candidates
+
+
+def _post_openai_compatible_vision(
+    *,
+    provider: str,
+    api_key: str,
+    url: str,
+    model: str,
+    prompt: str,
+    frames: list[dict[str, Any]],
+) -> dict[str, Any]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for idx, fr in enumerate(frames, start=1):
+        ts = float(fr.get("timestampSec", 0.0))
+        w = int(fr.get("width", 0) or 0)
+        h = int(fr.get("height", 0) or 0)
+        mime = str(fr.get("mimeType") or "image/jpeg")
+        content.append(
+            {
+                "type": "text",
+                "text": f"[Frame #{idx} at timestampSec={ts:.3f}s, resolution={w}x{h}]",
+            }
+        )
+        image_url_obj: dict[str, Any] = {"url": f"data:{mime};base64,{fr['imageBase64']}"}
+        # DeepSeek Vision (deepseek-flash) expects image_url.url without OpenAI's detail field
+        if provider == "openai":
+            image_url_obj["detail"] = "low"
+        content.append({"type": "image_url", "image_url": image_url_obj})
+
+    base_body: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+        "max_tokens": 1024,
+    }
+
+    def _send(use_json_format: bool) -> dict[str, Any]:
+        body = dict(base_body)
+        if use_json_format:
+            body["response_format"] = {"type": "json_object"}
+        payload = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
+            url,
             data=payload,
             headers={
-                "x-api-key": anthropic_key,
-                "anthropic-version": "2023-06-01",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            text = data["content"][0]["text"]
-            return json.loads(text)
-        except Exception:
-            pass
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode("utf-8"))
 
-    return None
+    try:
+        data = _send(use_json_format=True)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 400:
+            data = _send(use_json_format=False)
+        else:
+            raise
+
+    text = _extract_chat_completion_text(data)
+    parsed = _parse_vision_json(text)
+    parsed["visionProvider"] = provider
+    parsed["visionModel"] = model
+    return parsed
+
+
+def _post_anthropic_vision(
+    *,
+    api_key: str,
+    url: str,
+    model: str,
+    prompt: str,
+    frames: list[dict[str, Any]],
+) -> dict[str, Any]:
+    content_blocks: list[dict[str, Any]] = []
+    for idx, fr in enumerate(frames, start=1):
+        ts = float(fr.get("timestampSec", 0.0))
+        w = int(fr.get("width", 0) or 0)
+        h = int(fr.get("height", 0) or 0)
+        mime = str(fr.get("mimeType") or "image/jpeg")
+        content_blocks.append(
+            {
+                "type": "text",
+                "text": f"[Frame #{idx} at timestampSec={ts:.3f}s, resolution={w}x{h}]",
+            }
+        )
+        content_blocks.append(
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime, "data": fr["imageBase64"]},
+            }
+        )
+    content_blocks.append({"type": "text", "text": prompt})
+    payload = json.dumps(
+        {
+            "model": model,
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": content_blocks}],
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    text = data["content"][0]["text"]
+    parsed = _parse_vision_json(text)
+    parsed["visionProvider"] = "anthropic"
+    parsed["visionModel"] = model
+    return parsed
+
+
+def _query_vision_llm(
+    question: str,
+    frames: list[dict[str, Any]],
+    ctx: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Query DeepSeek (deepseek-flash), OpenAI, or Anthropic Vision model for visual understanding and NormalizedRect UI bounding boxes."""
+    prompt = (
+        f"You are inspecting video frames from a screen recording.\n"
+        f"User question: {question}\n"
+        "Respond strictly with a single JSON object containing:\n"
+        '{"answer": "<concise answer describing the relevant visual elements>", '
+        '"regions": [{"label": "<element name>", "timestampSec": <float>, "x": <0..1>, "y": <0..1>, "width": <0..1>, "height": <0..1>}]}\n'
+        "Use the timestampSec from the corresponding frame header. "
+        "Ensure every NormalizedRect satisfies 0 <= x,y <= 1, width > 0, height > 0, x+width <= 1, y+height <= 1."
+    )
+
+    candidates = _resolve_vision_candidates(ctx)
+    if not candidates:
+        return {
+            "answer": "",
+            "regions": [],
+            "visionProvider": "",
+            "visionModel": "",
+            "visionError": "No Vision LLM API key configured (DeepSeek, OpenAI, or Anthropic).",
+        }
+
+    last_error = ""
+    last_provider = ""
+    last_model = ""
+    for cand in candidates:
+        provider = cand["provider"]
+        model = cand["model"]
+        last_provider = provider
+        last_model = model
+        try:
+            if provider in ("deepseek", "openai"):
+                return _post_openai_compatible_vision(
+                    provider=provider,
+                    api_key=cand["api_key"],
+                    url=cand["url"],
+                    model=model,
+                    prompt=prompt,
+                    frames=frames,
+                )
+            if provider == "anthropic":
+                return _post_anthropic_vision(
+                    api_key=cand["api_key"],
+                    url=cand["url"],
+                    model=model,
+                    prompt=prompt,
+                    frames=frames,
+                )
+        except Exception as exc:
+            last_error = f"{provider}/{model}: {exc}"
+            continue
+
+    return {
+        "answer": "",
+        "regions": [],
+        "visionProvider": last_provider,
+        "visionModel": last_model,
+        "visionError": last_error or "Vision LLM request failed.",
+    }
 
 
 @tool
 def inspect_video_frames(
-    project_dir: str,
-    start_sec: float,
-    end_sec: float,
+    project_dir: str = "",
+    start_sec: float = -1.0,
+    end_sec: float = -1.0,
     max_frames: int = 4,
     question: str = "",
+    include_base64: bool = False,
 ) -> str:
-    """Extract base64 JPEG keyframes from screen video in [start_sec, end_sec] and optionally detect NormalizedRect UI regions via Vision LLM."""
-    root = Path(project_dir)
+    """Extract keyframes from screen video in [start_sec, end_sec] and analyze visual elements / NormalizedRect UI regions via a Vision LLM (supports DeepSeek deepseek-flash, OpenAI, and Anthropic).
+
+    project_dir is optional and automatically defaults to the active FrameTrail project directory.
+    If start_sec < 0, defaults to the current playhead_sec; if end_sec < 0, inspects a single frame at start_sec.
+    """
+    ctx = _get_active_project_context()
+    resolved_dir = (project_dir or "").strip()
+    ctx_dir = str(ctx.get("project_dir", "") or "").strip()
+    if (not resolved_dir or not Path(resolved_dir).is_dir()) and ctx_dir:
+        resolved_dir = ctx_dir
+    if not resolved_dir:
+        return json.dumps(
+            {"frames": [], "regions": [], "error": "project_dir is required and no active project directory is bound."},
+            ensure_ascii=False,
+        )
+
+    root = Path(resolved_dir)
     project_data = _load_project_json(root)
     screen_assets = _find_screen_assets(root, project_data)
     if not screen_assets:
@@ -2344,8 +2681,9 @@ def inspect_video_frames(
     if not ffmpeg_exe:
         return json.dumps({"frames": [], "regions": [], "error": "ffmpeg executable not found."}, ensure_ascii=False)
 
-    s_sec = max(0.0, float(start_sec))
-    e_sec = max(s_sec, float(end_sec))
+    default_ts = float(ctx.get("playhead_sec", 0.0) or 0.0)
+    s_sec = max(0.0, float(default_ts if start_sec < 0 else start_sec))
+    e_sec = max(s_sec, float(s_sec if end_sec < 0 else end_sec))
     count = max(1, min(12, int(max_frames)))
     if count == 1 or math.isclose(s_sec, e_sec):
         timestamps = [s_sec]
@@ -2364,9 +2702,14 @@ def inspect_video_frames(
             for asset in screen_assets:
                 a_start = asset["startTicks"]
                 a_dur = asset["durationTicks"]
-                if a_dur > 0 and a_start <= ts_ticks < a_start + a_dur:
+                if a_dur > 0 and a_start <= ts_ticks <= a_start + a_dur:
                     chosen = asset
-                    local_sec = max(0.0, (ts_ticks - a_start) / TICKS_PER_SECOND)
+                    raw_local = max(0.0, (ts_ticks - a_start) / TICKS_PER_SECOND)
+                    clip_dur_sec = a_dur / TICKS_PER_SECOND
+                    if ts_ticks >= a_start + a_dur and clip_dur_sec > 0.05:
+                        local_sec = max(0.0, clip_dur_sec - 0.05)
+                    else:
+                        local_sec = raw_local
                     break
 
             out_jpg = tmp / f"frame-{idx:03d}.jpg"
@@ -2400,27 +2743,43 @@ def inspect_video_frames(
                     "mimeType": mimetypes.guess_type(str(out_jpg))[0] or "image/jpeg",
                     "width": chosen["width"],
                     "height": chosen["height"],
+                    "byteSize": len(jpg_bytes),
                     "imageBase64": base64.b64encode(jpg_bytes).decode("ascii"),
                 }
             )
 
-    vision_result = _query_vision_llm(question, frames) if (question.strip() and frames) else None
+    effective_question = (
+        question.strip()
+        or "Describe the visible visual elements, text, and UI layout in these video frames, and locate notable UI regions as normalized bounding boxes."
+    )
+    vision_result = _query_vision_llm(effective_question, frames, ctx=ctx) if frames else None
     regions = vision_result.get("regions", []) if isinstance(vision_result, dict) else []
     answer = vision_result.get("answer", "") if isinstance(vision_result, dict) else ""
+    vision_provider = vision_result.get("visionProvider", "") if isinstance(vision_result, dict) else ""
+    vision_model = vision_result.get("visionModel", "") if isinstance(vision_result, dict) else ""
+    vision_error = vision_result.get("visionError", "") if isinstance(vision_result, dict) else ""
 
-    return json.dumps(
-        {
-            "startSec": round(s_sec, 4),
-            "endSec": round(e_sec, 4),
-            "frameCount": len(frames),
-            "frames": frames,
-            "answer": answer,
-            "regions": regions,
-            "errors": errors,
-        },
-        ensure_ascii=False,
-        indent=2,
+    output_frames = (
+        frames
+        if include_base64
+        else [{k: v for k, v in fr.items() if k != "imageBase64"} for fr in frames]
     )
+
+    payload: dict[str, Any] = {
+        "startSec": round(s_sec, 4),
+        "endSec": round(e_sec, 4),
+        "frameCount": len(frames),
+        "frames": output_frames,
+        "answer": answer,
+        "regions": regions,
+        "visionProvider": vision_provider,
+        "visionModel": vision_model,
+        "errors": errors,
+    }
+    if vision_error:
+        payload["visionError"] = vision_error
+
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def get_phase2_tools() -> list:

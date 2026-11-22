@@ -49,6 +49,8 @@ def set_project_context(
     playhead_sec: float = 0.0,
     api_key: str = "",
     base_url: str = "",
+    provider: str = "",
+    model_name: str = "",
 ) -> contextvars.Token:
     """Bind the active project snapshot, workspace path, and BYOK credentials for tool calls in this turn."""
     return _current_project_context.set(
@@ -58,8 +60,15 @@ def set_project_context(
             "playhead_sec": float(playhead_sec or 0.0),
             "api_key": (api_key or "").strip(),
             "base_url": (base_url or "").strip(),
+            "provider": (provider or "").strip().lower(),
+            "model_name": (model_name or "").strip(),
         }
     )
+
+
+def get_project_context() -> dict[str, Any]:
+    """Return the active turn's project and provider context dictionary."""
+    return dict(_current_project_context.get() or {})
 
 
 def reset_project_context(token: contextvars.Token) -> None:
@@ -426,6 +435,67 @@ def add_3d_tilt_effect(
 
 
 @tool
+def add_transition_effect(
+    from_clip_index: int = 1,
+    style: str = "crossfade",
+    duration_sec: float = 0.6,
+    easing: str = "cubic",
+) -> str:
+    """Add or update a clip-to-clip transition between adjacent clips (1-based from_clip_index -> from_clip_index + 1). Styles: crossfade, fadeBlack, fadeWhite, slideLeft, slideRight, wipeLeft, wipeRight, zoomIn."""
+    ctx = _current_project_context.get()
+    snapshot = ctx.get("snapshot", {})
+    segments = snapshot.get("segments", []) or []
+    if len(segments) < 2:
+        raise ValueError("At least two clips are required to add a transition.")
+    idx = int(from_clip_index)
+    if idx < 1 or idx >= len(segments):
+        raise ValueError(f"from_clip_index must be between 1 and {len(segments) - 1}.")
+
+    valid_styles = ("crossfade", "fadeBlack", "fadeWhite", "slideLeft", "slideRight", "wipeLeft", "wipeRight", "zoomIn")
+    cleaned_style = style.strip() if style and style.strip() in valid_styles else "crossfade"
+    cleaned_easing = easing.strip() if easing and easing.strip() in ("linear", "cubic", "spring") else "cubic"
+    dur = round(max(0.1, min(5.0, float(duration_sec))), 2)
+
+    left_seg = segments[idx - 1]
+    right_seg = segments[idx]
+    left_id = str(left_seg["id"])
+    right_id = str(right_seg["id"])
+    eid = ""
+    for existing in snapshot.get("effects", []) or []:
+        if existing.get("kind") == "transition":
+            ep = existing.get("parameters") or {}
+            if ep.get("fromSegmentId") == left_id and ep.get("toSegmentId") == right_id:
+                eid = str(existing["id"])
+                break
+    if not eid:
+        eid = f"transition-{uuid.uuid4().hex[:12]}"
+
+    total_ticks = _ticks(snapshot.get("sourceDuration", {}))
+    anchor_start = max(0, min(_ticks(right_seg.get("sourceStart", {})), max(0, total_ticks - 1)))
+    anchor_dur = max(1, min(round(dur * TICKS_PER_SECOND), max(1, total_ticks - anchor_start)))
+
+    cmd = {
+        "op": "effectUpsert",
+        "effectId": eid,
+        "effect": {
+            "id": eid,
+            "kind": "transition",
+            "sourceStart": {"ticks": anchor_start, "timescale": TICKS_PER_SECOND},
+            "sourceDuration": {"ticks": anchor_dur, "timescale": TICKS_PER_SECOND},
+            "parameters": {
+                "origin": "manual",
+                "style": cleaned_style,
+                "duration": dur,
+                "easing": cleaned_easing,
+                "fromSegmentId": left_id,
+                "toSegmentId": right_id,
+            },
+        },
+    }
+    return json.dumps(cmd, ensure_ascii=False)
+
+
+@tool
 def update_canvas_style(
     aspect_ratio: Optional[str] = None,
     width: Optional[int] = None,
@@ -704,6 +774,7 @@ def get_phase1_tools() -> list[Any]:
         add_zoom_effect,
         add_spotlight_or_blur,
         add_3d_tilt_effect,
+        add_transition_effect,
         update_canvas_style,
         apply_edit_batch,
         generate_subtitles,

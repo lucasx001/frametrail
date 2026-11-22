@@ -248,9 +248,17 @@ ID3D11Texture2D* Renderer::render(const Project& p,const FrameScene& scene,uint3
             end();drawing=false;
         } else {
             end();drawing=false;if(!visuals)visuals=std::make_unique<VisualGpu>(*this);
-            ensure_surface(screen_plane,w,h);begin(screen_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
-            layer(p,scene.screen,radius,true,cached_settings,true,scene.visual);stickers(scene,true);end();drawing=false;
-            visuals->project(screen_plane.Get(),composition.Get(),scene.visual.screen,scene.width,scene.height);
+            if (scene.transition.has_value()) {
+                ensure_surface(screen_plane,w,h);begin(screen_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
+                layer(p,scene.transition->outgoing_screen,radius,true,cached_settings,true,scene.visual);end();drawing=false;
+                ensure_surface(transition_plane,w,h);begin(transition_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
+                layer(p,scene.transition->incoming_screen,radius,true,cached_settings,true,scene.visual);end();drawing=false;
+                visuals->transition(screen_plane.Get(),transition_plane.Get(),composition.Get(),scene.transition->style,scene.transition->progress);
+            } else {
+                ensure_surface(screen_plane,w,h);begin(screen_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
+                layer(p,scene.screen,radius,true,cached_settings,true,scene.visual);stickers(scene,true);end();drawing=false;
+                visuals->project(screen_plane.Get(),composition.Get(),scene.visual.screen,scene.width,scene.height);
+            }
             if(scene.camera && scene.visual.camera.opacity>0) {
                 ensure_surface(camera_plane,w,h);begin(camera_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));layer(p,*scene.camera,radius,true,cached_settings,false,scene.visual);end();drawing=false;
                 visuals->project(camera_plane.Get(),composition.Get(),scene.visual.camera,scene.width,scene.height);

@@ -24,6 +24,8 @@ public sealed partial class EditorWindow
     private readonly ComboBox effectMode = VisualChoice(L.T("S38AAA0E9F139"), L.T("SAC7CE836857B"), L.T("SD34D1D9BA175"), L.T("S2C12D695A8EB")), effectEasing = VisualChoice(L.T("S5FB5B3244BDB"), L.T("SB3275D61C8F8"), L.T("SDF1A091F6DC1"), L.T("S078E4CAEDA5C"));
     private readonly ComboBox effectAttachment = VisualChoice(L.T("S24BF8AAD101C"), L.T("S54E1C4791059"), L.T("S4CB51E9E232E")), effectTarget = VisualChoice(L.T("SE0770CB96BEA"), L.T("S04D4ABA0AB5F"), L.T("SFAC308FBABB8"));
     private readonly ComboBox introStyle = VisualChoice(L.T("S4E0E5D9CF7B9"), L.T("SF72B83EABA1C"), L.T("SF853A70B1204"), L.T("SB762AEC769A3"), L.T("SBA77DBC46AEE")), cameraShape = VisualChoice(L.T("S2319A4DDA44C"), L.T("S22C4DB09D8DC"), L.T("S88B75A101595"), L.T("S81639A8A9BCE"));
+    private readonly ComboBox transitionStyle = VisualChoice(L.T("TransitionStyleLabel"), L.T("TransitionStyleCrossfade"), L.T("TransitionStyleFadeBlack"), L.T("TransitionStyleFadeWhite"), L.T("TransitionStyleSlideLeft"), L.T("TransitionStyleSlideRight"), L.T("TransitionStyleWipeLeft"), L.T("TransitionStyleWipeRight"), L.T("TransitionStyleZoomIn"));
+    private readonly EditorBarSlider transitionDuration = VisualBar(0.1, 3.0, 0.05, "s");
     private readonly NumberBox introDuration = VisualNumber(L.T("SD96399EC8B17"), 0, 5);
     private readonly EditorBarSlider cursorSmooth = VisualBar(0, 0.5, 0.01, "s");
     private readonly TextBox stickerText = new() { Header = L.T("S14B69BD6EEB0"), Text = L.T("SBF3B83E701D4"), PlaceholderText = L.T("SA582C47FD22C") };
@@ -40,7 +42,8 @@ public sealed partial class EditorWindow
         public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
     }
     private static readonly string[] introStyles = { "fade", "rise", "scale", "slide" };
-    private static string EffectName(string kind) => kind switch { "zoom" => L.T("SB762AEC769A3"), "tilt" => L.T("S17E14283A497"), "mask" => L.T("SAC7CE836857B"), "focus" => L.T("SED19BD5E2620"), "sticker" => L.T("S622DA0460277"), "intro" => L.T("SFD0D4B7258C2"), _ => kind };
+    private static readonly string[] transitionStyles = { "crossfade", "fadeBlack", "fadeWhite", "slideLeft", "slideRight", "wipeLeft", "wipeRight", "zoomIn" };
+    private static string EffectName(string kind) => kind switch { "zoom" => L.T("SB762AEC769A3"), "tilt" => L.T("S17E14283A497"), "mask" => L.T("SAC7CE836857B"), "focus" => L.T("SED19BD5E2620"), "sticker" => L.T("S622DA0460277"), "intro" => L.T("SFD0D4B7258C2"), "transition" => L.T("TransitionName"), _ => kind };
     private static NumberBox VisualNumber(string label, double min, double max) => new() { Header = label, Minimum = min, Maximum = max, Value = 0, SmallChange = 0.1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
     private static EditorBarSlider VisualBar(double min, double max, double step, string suffix = "") => new() { Minimum = min, Maximum = max, StepFrequency = step, Value = min, Suffix = suffix };
     private static ComboBox VisualChoice(string label, params string[] items)
@@ -62,7 +65,7 @@ public sealed partial class EditorWindow
         motionSettings.Children.Add(VisualLabel(L.T("S3D0C6B294146")));
         var add = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         add.ColumnDefinitions.Add(new()); add.ColumnDefinitions.Add(new());
-        var kinds = new[] { "zoom", "mask", "focus", "tilt", "sticker" };
+        var kinds = new[] { "zoom", "transition", "mask", "focus", "tilt", "sticker" };
         for (int i = 0; i < kinds.Length; i++) { if (i % 2 == 0) add.RowDefinitions.Add(new()); var kind = kinds[i]; var button = VisualButton(L.T("AddEffect", EffectName(kind)), () => AddVisualAsync(kind), "editor.effect.add." + kind); Grid.SetColumn(button, i % 2); Grid.SetRow(button, i / 2); add.Children.Add(button); }
         motionSettings.Children.Add(add); motionSettings.Children.Add(effectPicker); motionSettings.Children.Add(VisualTile(effectProperties));
         int fieldCount = 0;
@@ -76,22 +79,25 @@ public sealed partial class EditorWindow
             if (string.IsNullOrEmpty(AutomationProperties.GetAutomationId(control))) AutomationProperties.SetAutomationId(control, "editor.effect." + key);
             if (label.Length > 0) AutomationProperties.SetName(control, L.T("EffectField", label));
         }
-        effectScale.DefaultValue = 1; effectOpacity.DefaultValue = 100;
+        effectScale.DefaultValue = 1; effectOpacity.DefaultValue = 100; transitionDuration.DefaultValue = 0.6;
         effectAngleX.DefaultValue = 0; effectAngleY.DefaultValue = 0; stickerRotation.DefaultValue = 0;
         springFrequency.DefaultValue = MotionDefaults.SpringFrequency; springDamping.DefaultValue = MotionDefaults.SpringDamping;
         cursorSmooth.DefaultValue = 0;
-        Field("", effectStart, effectProperties); Field("", effectEnd, effectProperties); Field(L.T("SB762AEC769A3"), effectScale, effectProperties, "zoom");
+        Field("", effectStart, effectProperties, "zoom", "mask", "focus", "tilt", "sticker", "intro"); Field("", effectEnd, effectProperties, "zoom", "mask", "focus", "tilt", "sticker", "intro");
+        Field("", transitionStyle, effectProperties, "transition");
+        Field(L.T("TransitionDurationLabel"), transitionDuration, effectProperties, "transition");
+        Field(L.T("SB762AEC769A3"), effectScale, effectProperties, "zoom");
         Field("X", effectX, effectProperties, "zoom", "mask", "focus", "sticker"); Field("Y", effectY, effectProperties, "zoom", "mask", "focus", "sticker");
         Field(L.T("S3B730DA0AD1A"), effectWidth, effectProperties, "mask", "focus", "sticker"); Field(L.T("S968DD036CBB1"), effectHeight, effectProperties, "mask", "focus", "sticker");
         Field("", effectMode, effectProperties, "mask"); Field(L.T("SA2846644A638"), effectStrength, effectProperties, "mask", "focus"); Field(L.T("S04405E4A9FFD"), effectOpacity, effectProperties, "mask", "focus", "sticker");
         Field(L.T("SA4B0DE41E601"), effectAngleX, effectProperties, "tilt"); Field(L.T("SD82466A62832"), effectAngleY, effectProperties, "tilt");
         Field(L.T("S68EB90FA809E"), stickerRotation, effectProperties, "sticker");
         Field("", effectAttachment, effectProperties, "mask", "focus", "sticker");
-        var physicsDivider = SectionDivider(); dividers.Add(physicsDivider); effectProperties.Children.Add(physicsDivider); visualVisibility[physicsDivider] = ["zoom", "tilt", "intro"];
+        var physicsDivider = SectionDivider(); dividers.Add(physicsDivider); effectProperties.Children.Add(physicsDivider); visualVisibility[physicsDivider] = ["zoom", "tilt", "intro", "transition"];
         var physicsHeader = new TextBlock { Text = AppText.Language == "en" ? "Timing & Physics" : "时间与物理", Style = (Style)Root.Resources["SectionLabel"], Margin = new Thickness(4, 2, 0, 0) };
-        effectProperties.Children.Add(physicsHeader); visualVisibility[physicsHeader] = ["zoom", "tilt", "intro"];
-        var physicsGroup = new StackPanel { Spacing = 10 }; effectProperties.Children.Add(physicsGroup); visualVisibility[physicsGroup] = ["zoom", "tilt", "intro"];
-        Field("", effectEasing, physicsGroup, "zoom", "tilt", "intro");
+        effectProperties.Children.Add(physicsHeader); visualVisibility[physicsHeader] = ["zoom", "tilt", "intro", "transition"];
+        var physicsGroup = new StackPanel { Spacing = 10 }; effectProperties.Children.Add(physicsGroup); visualVisibility[physicsGroup] = ["zoom", "tilt", "intro", "transition"];
+        Field("", effectEasing, physicsGroup, "zoom", "tilt", "intro", "transition");
         Field(L.T("SC19C240FA18F"), springFrequency, physicsGroup, "zoom", "tilt", "intro"); Field(L.T("SDE95E14AC3BD"), springDamping, physicsGroup, "zoom", "tilt", "intro");
         Field("", effectEnter, physicsGroup, "zoom", "tilt", "intro"); Field("", effectExit, physicsGroup, "zoom", "tilt", "intro"); Field("", effectTarget, physicsGroup, "intro", "tilt");
         Field("", stickerText, effectProperties, "sticker"); Field("", visualAssetLabel, effectProperties, "sticker");
@@ -121,6 +127,9 @@ public sealed partial class EditorWindow
                 }
             });
         };
+        timeline.TransitionSeamClicked += async (fromId, toId) => {
+            await PerformAsync(() => AddOrSelectTransitionBetweenAsync(fromId, toId));
+        };
         openingSettings.Children.Add(VisualLabel(L.T("SD50922830D9E"))); introDuration.Value = 0.7;
         openingSettings.Children.Add(VisualTile(introStyle, introDuration, VisualButton(L.T("SE1B2D5A70D59"), () => ApplyOpeningAsync(false), "editor.intro.apply"), VisualButton(L.T("SBFA8C11031E5"), async () => { if (editor.Snapshot.Effects.Any(e => e.Id == "opening-screen")) await editor.DeleteEffectAsync("opening-screen"); }, "editor.intro.remove")));
         openingSettings.Children.Add(VisualTile(VisualButton(L.T("SE87613AD8A19"), () => ApplyOpeningAsync(true), "editor.camera.animation")));
@@ -143,9 +152,64 @@ public sealed partial class EditorWindow
     }
     private async Task AddVisualAsync(string kind)
     {
+        if (kind == "transition") {
+            var clips = editor.Timeline.Clips;
+            if (clips.Count < 2) {
+                ShowNotice(L.T("TransitionName"), L.T("TransitionNeedTwoClips"), InfoBarSeverity.Informational);
+                return;
+            }
+            int seamIdx = 0;
+            int selIdx = selected is not null ? clips.IndexOf(clips.FirstOrDefault(c => c.Id == selected)!) : -1;
+            if (selIdx >= 0 && selIdx + 1 < clips.Count) seamIdx = selIdx;
+            else if (selIdx == clips.Count - 1) seamIdx = clips.Count - 2;
+            else {
+                long bestDist = long.MaxValue;
+                for (int i = 0; i + 1 < clips.Count; i++) {
+                    long dist = Math.Abs(clips[i + 1].OutputStart - position);
+                    if (dist < bestDist) { bestDist = dist; seamIdx = i; }
+                }
+            }
+            await AddOrSelectTransitionBetweenAsync(clips[seamIdx].Id, clips[seamIdx + 1].Id);
+            return;
+        }
         long start = SourcePosition, duration = Math.Min(20_000_000, VisualResources.Ticks(editor.Snapshot.SourceDuration) - start);
         var value = new SourceEffect { Id = "effect-" + Guid.NewGuid().ToString("N"), Kind = kind, SourceStart = MediaTime.FromTicks(start), SourceDuration = MediaTime.FromTicks(Math.Max(1, duration)), Parameters = JsonSerializer.SerializeToElement(new { origin = "manual", text = kind == "sticker" ? L.T("SBF3B83E701D4") : "" }) };
         selectedEffect = value.Id; await editor.UpsertEffectAsync(value);
+    }
+    private async Task AddOrSelectTransitionBetweenAsync(string fromSegmentId, string toSegmentId)
+    {
+        await FlushVisualChangesAsync();
+        var existing = editor.Snapshot.Effects.FirstOrDefault(e =>
+            e.Kind == "transition" &&
+            StringValue(e.Parameters, "fromSegmentId", "") == fromSegmentId &&
+            StringValue(e.Parameters, "toSegmentId", "") == toSegmentId);
+        if (existing is not null) {
+            selectedEffect = existing.Id;
+            ShowInspector(2);
+            RefreshVisualInspector();
+            var resolved = editor.Timeline.Effects.FirstOrDefault(e => e.Id == existing.Id);
+            if (resolved is not null) await SeekAsync(resolved.OutputStart + resolved.OutputDuration / 2);
+            return;
+        }
+        var segs = editor.Snapshot.Segments;
+        int fromIndex = -1;
+        for (int i = 0; i + 1 < segs.Count; i++) {
+            if (segs[i].Id == fromSegmentId && segs[i + 1].Id == toSegmentId) { fromIndex = i; break; }
+        }
+        if (fromIndex < 0) return;
+        var cmd = AiAgentCommandBuilder.BuildTransitionCommand(editor.Snapshot, fromIndex + 1, "crossfade", 0.6, "cubic");
+        await editor.ExecuteAsync(cmd);
+        var created = editor.Snapshot.Effects.FirstOrDefault(e =>
+            e.Kind == "transition" &&
+            StringValue(e.Parameters, "fromSegmentId", "") == fromSegmentId &&
+            StringValue(e.Parameters, "toSegmentId", "") == toSegmentId);
+        selectedEffect = created?.Id;
+        ShowInspector(2);
+        RefreshVisualInspector();
+        if (created is not null) {
+            var resolved = editor.Timeline.Effects.FirstOrDefault(e => e.Id == created.Id);
+            if (resolved is not null) await SeekAsync(resolved.OutputStart + resolved.OutputDuration / 2);
+        }
     }
     private void RefreshVisualInspector()
     {
@@ -177,6 +241,8 @@ public sealed partial class EditorWindow
             effectScale.Value = NumberValue(p, "scale", 1.6); effectX.Value = NumberValue(p, effect.Kind == "zoom" ? "focusX" : "x", effect.Kind == "zoom" ? 0.5 : 0.25) * 100; effectY.Value = NumberValue(p, effect.Kind == "zoom" ? "focusY" : "y", effect.Kind == "zoom" ? 0.5 : 0.25) * 100;
             effectWidth.Value = NumberValue(p, "width", 0.5) * 100; effectHeight.Value = NumberValue(p, "height", 0.5) * 100; effectStrength.Value = NumberValue(p, "strength", 16); effectOpacity.Value = NumberValue(p, "opacity", 1) * 100;
             effectAngleX.Value = NumberValue(p, "angleX", 0); effectAngleY.Value = NumberValue(p, "angleY", 0); effectMode.SelectedIndex = Array.IndexOf(new[] { "solid", "pixelate", "blur" }, StringValue(p, "mode", "solid"));
+            transitionStyle.SelectedIndex = Math.Max(0, Array.IndexOf(transitionStyles, StringValue(p, "style", "crossfade")));
+            transitionDuration.Value = Math.Clamp(NumberValue(p, "duration", 0.6), 0.1, 3.0);
             effectEasing.SelectedIndex = Array.IndexOf(new[] { "cubic", "spring", "linear" }, StringValue(p, "easing", "cubic")); effectAttachment.SelectedIndex = StringValue(p, "attachment", "screen") == "canvas" ? 1 : 0; effectTarget.SelectedIndex = StringValue(p, "target", "screen") == "camera" ? 1 : 0;
             effectEnter.Value = NumberValue(p, "enter", effect.Kind is "zoom" or "tilt" or "intro" ? 0.7 : 0); effectExit.Value = NumberValue(p, "exit", effect.Kind is "zoom" or "tilt" ? 0.7 : 0);
             springFrequency.Value = NumberValue(p, "springFrequency", MotionDefaults.SpringFrequency); springDamping.Value = NumberValue(p, "damping", MotionDefaults.SpringDamping);
@@ -195,6 +261,11 @@ public sealed partial class EditorWindow
         void Set(string name, object value) => p[name] = JsonSerializer.SerializeToElement(value);
         Set("origin", "edited"); Set("enter", enter); Set("exit", exit); Set("easing", new[] { "cubic", "spring", "linear" }[Math.Max(0, effectEasing.SelectedIndex)]);
         Set("springFrequency", springFrequency.Value); Set("damping", springDamping.Value);
+        if (prior.Kind == "transition") {
+            Set("style", transitionStyles[Math.Clamp(transitionStyle.SelectedIndex, 0, transitionStyles.Length - 1)]);
+            Set("duration", Math.Round(Math.Clamp(transitionDuration.Value, 0.1, 5.0), 2));
+            return prior with { Parameters = JsonSerializer.SerializeToElement(p) };
+        }
         if (prior.Kind == "zoom") { Set("scale", effectScale.Value); Set("focusX", effectX.Value / 100); Set("focusY", effectY.Value / 100); p.Remove("focusPoints"); }
         if (prior.Kind is "mask" or "focus" or "sticker") { double x = effectX.Value / 100, y = effectY.Value / 100; Set("x", x); Set("y", y); Set("width", Math.Min(effectWidth.Value / 100, 1 - x)); Set("height", Math.Min(effectHeight.Value / 100, 1 - y)); Set("opacity", effectOpacity.Value / 100); Set("attachment", effectAttachment.SelectedIndex == 1 ? "canvas" : "screen"); }
         if (prior.Kind is "mask" or "focus") Set("strength", effectStrength.Value);
