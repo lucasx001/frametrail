@@ -10,6 +10,13 @@ export interface SlashCommandItem {
 
 export const SLASH_COMMANDS: SlashCommandItem[] = [
   {
+    command: '/polish',
+    descriptionZh: '一键优化配音（去停顿、去「嗯/啊/哦」语气词与口误重复）',
+    descriptionEn: 'Polish voiceover (cut pauses, um/uh fillers & stutters)',
+    templateZh: '一键优化配音表达，移除停顿、嗯啊哦语气词和口误重复',
+    templateEn: 'Polish voiceover by removing pauses, filler words, and stutters',
+  },
+  {
     command: '/silence',
     descriptionZh: '自动检测音轨并剪除 >1s 静音停顿',
     descriptionEn: 'Scan audio tracks and cut >1s silent pauses',

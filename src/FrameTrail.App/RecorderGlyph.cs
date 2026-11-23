@@ -32,6 +32,7 @@ public sealed class RecorderGlyph : UserControl
             "Pause" => ("M4,3 L7,3 L7,15 L4,15 Z M11,3 L14,3 L14,15 L11,15 Z", true),
             "Play" => ("M5,2.5 L15,9 L5,15.5 Z", true),
             "Folder" => ("M2,4 Q2,2.5 3.5,2.5 L7,2.5 L9,5 L15,5 Q17,5 17,7 L17,13 Q17,15 15,15 L3,15 Q1,15 1,13 L1,6 Q1,4 2,4 Z", false),
+            "Plus" => ("M9,3 L9,15 M3,9 L15,9", false),
             "Close" => ("M4,4 L14,14 M14,4 L4,14", false),
             "Arrow" => ("M3,9 L15,9 M10,4 L15,9 L10,14", false),
             "Check" => ("M3,9 L7,13 L15,5", false),

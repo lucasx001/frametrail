@@ -84,12 +84,20 @@ void Session::mix_pcm(int64_t first, int64_t frames, const Emit& emit, bool repo
     std::unordered_map<std::string, std::unique_ptr<AudioReader>> readers; const auto settings = Json::parse(project.editor_json);
     if (report_status) { stage = 1; progress(0, static_cast<uint64_t>(frames)); }
     int64_t done = 0;
-    for (const auto& clip : timeline.segments()) {
+    const auto& segments = timeline.segments();
+    constexpr double pi = 3.14159265358979323846;
+    for (size_t seg_idx = 0; seg_idx < segments.size(); ++seg_idx) {
+        const auto& clip = segments[seg_idx];
         check_cancel(); const auto clip_samples = ticks_samples(clip.source_duration), source_first = ticks_samples(clip.source_start);
         const auto clip_first = ticks_samples(clip.output_start);
         const auto begin = std::max(first, clip_first), end = std::min(first + frames, ticks_samples(clip.output_end()));
         if (end <= begin) continue;
         const auto output_count = end - begin;
+        const bool seam_in = seg_idx > 0 && clip.source_start != segments[seg_idx - 1].source_end();
+        const bool seam_out = seg_idx + 1 < segments.size() && clip.source_end() != segments[seg_idx + 1].source_start;
+        const int64_t clip_out_total = ticks_samples(clip.output_duration);
+        const int64_t fade_len = (seam_in || seam_out) ? std::min<int64_t>(288, clip_out_total / 4) : 0; // 6ms @ 48kHz
+        int64_t clip_out_cursor = begin - clip_first;
         Json clip_settings = Json::object(); if (settings.contains("clipAudio") && settings["clipAudio"].contains(clip.id)) clip_settings = settings["clipAudio"][clip.id];
         auto fetch = [&](int64_t first, int count) {
             check_cancel(); std::vector<float> mixed(static_cast<size_t>(count) * channels, 0);
@@ -108,7 +116,30 @@ void Session::mix_pcm(int64_t first, int64_t frames, const Emit& emit, bool repo
             return mixed;
         };
         wsola(fetch, static_cast<double>(clip.rate.numerator) / clip.rate.denominator, output_count, [&](const float* samples, size_t count) {
-            check_cancel(); emit(samples, count);
+            check_cancel();
+            const int64_t chunk_start = clip_out_cursor;
+            const int64_t chunk_end = chunk_start + static_cast<int64_t>(count);
+            const bool touches_in = seam_in && fade_len > 0 && chunk_start < fade_len;
+            const bool touches_out = seam_out && fade_len > 0 && chunk_end > clip_out_total - fade_len;
+            if (touches_in || touches_out) {
+                std::vector<float> faded(samples, samples + count * channels);
+                for (size_t i = 0; i < count; ++i) {
+                    const int64_t pos = chunk_start + static_cast<int64_t>(i);
+                    float gain = 1.0f;
+                    if (seam_in && pos < fade_len)
+                        gain *= static_cast<float>(0.5 * (1.0 - std::cos(pi * (static_cast<double>(pos) + 0.5) / static_cast<double>(fade_len))));
+                    if (seam_out && pos >= clip_out_total - fade_len) {
+                        const int64_t rem = clip_out_total - 1 - pos;
+                        gain *= static_cast<float>(0.5 * (1.0 - std::cos(pi * (static_cast<double>(rem) + 0.5) / static_cast<double>(fade_len))));
+                    }
+                    if (gain != 1.0f)
+                        for (int c = 0; c < channels; ++c) faded[i * channels + c] *= gain;
+                }
+                emit(faded.data(), count);
+            } else {
+                emit(samples, count);
+            }
+            clip_out_cursor = chunk_end;
             done += static_cast<int64_t>(count);
             if (report_status) progress(static_cast<uint64_t>(done), static_cast<uint64_t>(frames));
         }, begin - clip_first);

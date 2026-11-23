@@ -254,20 +254,21 @@ describe('FrameTrail AI Copilot UI', () => {
 
     const palette = screen.getByTestId('slash-command-palette');
     expect(palette).toBeInTheDocument();
+    expect(screen.getByText('/polish')).toBeInTheDocument();
     expect(screen.getByText('/silence')).toBeInTheDocument();
     expect(screen.getByText('/zoom')).toBeInTheDocument();
     expect(screen.getByText('/cut')).toBeInTheDocument();
 
-    // Navigate down twice (/silence -> /clicks -> /zoom) then up once (-> /clicks), then filter
+    // Navigate down twice (/polish -> /silence -> /clicks) then up once (-> /silence), then filter
     fireEvent.keyDown(textarea, { key: 'ArrowDown' });
     fireEvent.keyDown(textarea, { key: 'ArrowDown' });
-    expect(screen.getByText('/zoom').closest('[cmdk-item]')).toHaveAttribute(
+    expect(screen.getByText('/clicks').closest('[cmdk-item]')).toHaveAttribute(
       'data-selected',
       'true'
     );
 
     fireEvent.keyDown(textarea, { key: 'ArrowUp' });
-    expect(screen.getByText('/clicks').closest('[cmdk-item]')).toHaveAttribute(
+    expect(screen.getByText('/silence').closest('[cmdk-item]')).toHaveAttribute(
       'data-selected',
       'true'
     );
@@ -825,6 +826,55 @@ describe('FrameTrail AI Copilot UI', () => {
     expect(mock.getSentMessages()).toContainEqual({
       type: 'settings.updateConfig',
       payload: { modelName: 'deepseek-flash' },
+    });
+  });
+
+  it('triggers speech polish from empty-state card and expands/collapses >10 timeline cuts', async () => {
+    const mock = initEnglishHost(false);
+    const user = userEvent.setup();
+
+    const polishBtn = screen.getByText('Polish Voiceover');
+    await user.click(polishBtn);
+    expect(mock.getSentMessages()).toContainEqual({
+      type: 'chat.send',
+      payload: { prompt: 'Polish voiceover by removing pauses, filler words, and stutters' },
+    });
+
+    const items = Array.from({ length: 13 }, (_, idx) => ({
+      badge: '−',
+      label: idx % 2 === 0 ? 'Filler' : 'Pause',
+      detail: idx % 2 === 0 ? '「um」' : '1.2s',
+      seekSeconds: idx * 2.0 + 0.5,
+      timeLabel: `00:${String(idx * 2).padStart(2, '0')}.5–00:${String(idx * 2 + 1).padStart(2, '0')}.0`,
+    }));
+
+    act(() => {
+      mock.dispatchFromHost({
+        type: 'turn.started',
+        payload: { turnId: 'turn-polish', userPrompt: 'Polish voiceover' },
+      });
+      mock.dispatchFromHost({
+        type: 'turn.changes',
+        payload: {
+          turnId: 'turn-polish',
+          state: 'previewing',
+          items,
+        },
+      });
+    });
+
+    const toggle = screen.getByTestId('timeline-changes-toggle-more');
+    expect(toggle).toHaveTextContent('+ Show 3 more edit(s)');
+    expect(screen.queryByText('00:24.5–00:25.0')).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveTextContent('Show less');
+    expect(screen.getByText('00:24.5–00:25.0')).toBeInTheDocument();
+
+    await user.click(screen.getByText('00:24.5–00:25.0'));
+    expect(mock.getSentMessages()).toContainEqual({
+      type: 'timeline.seek',
+      payload: { seconds: 24.5 },
     });
   });
 });

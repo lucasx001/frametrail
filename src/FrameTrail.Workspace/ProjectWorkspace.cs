@@ -79,6 +79,242 @@ public sealed class ProjectWorkspace : IAsyncDisposable
         var result = Acquire(path, validator, mediaProbe); result.projectId = id; return result;
     }
 
+    public static bool IsSupportedImportVideoExtension(string? extension) =>
+        extension is not null &&
+        (extension.Equals(".mp4", StringComparison.OrdinalIgnoreCase) ||
+         extension.Equals(".mov", StringComparison.OrdinalIgnoreCase) ||
+         extension.Equals(".m4v", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Computes a unique <c>.frametrailproject</c> path under <paramref name="parentDirectory"/>.
+    /// Uses <paramref name="requestedName"/> if provided (validating filename safety), otherwise derives a clean
+    /// name from <paramref name="fallbackVideoPath"/> or falls back to a timestamp, deduplicating with <c>(2)</c>, <c>(3)</c>...
+    /// </summary>
+    public static string ResolveUniqueProjectPath(string parentDirectory, string? requestedName = null, string? fallbackVideoPath = null)
+    {
+        if (string.IsNullOrWhiteSpace(parentDirectory))
+            throw new ArgumentException("Parent directory is required.", nameof(parentDirectory));
+        string root = Path.GetFullPath(parentDirectory);
+
+        string baseName;
+        string trimmedRequest = (requestedName ?? "").Trim();
+        if (trimmedRequest.Length > 0)
+        {
+            if (trimmedRequest.EndsWith(".frametrailproject", StringComparison.OrdinalIgnoreCase))
+                trimmedRequest = trimmedRequest[..^".frametrailproject".Length].Trim();
+            if (trimmedRequest.Length == 0 ||
+                trimmedRequest.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                trimmedRequest is "." or ".." ||
+                trimmedRequest.EndsWith('.') ||
+                trimmedRequest.EndsWith(' ') ||
+                IsWindowsReservedDeviceName(trimmedRequest))
+            {
+                throw new InvalidOperationException(L.T("SCCCB2973C89F"));
+            }
+            baseName = trimmedRequest.Length > 80 ? trimmedRequest[..80].Trim() : trimmedRequest;
+        }
+        else
+        {
+            string derived = "";
+            if (!string.IsNullOrWhiteSpace(fallbackVideoPath))
+            {
+                string rawStem = Path.GetFileNameWithoutExtension(fallbackVideoPath).Trim();
+                var invalid = Path.GetInvalidFileNameChars();
+                var sb = new StringBuilder(rawStem.Length);
+                foreach (char c in rawStem)
+                    sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+                derived = sb.ToString().Trim().TrimEnd('.', ' ');
+                if (derived.Length > 80) derived = derived[..80].TrimEnd('.', ' ');
+                if (derived is "." or ".." || IsWindowsReservedDeviceName(derived)) derived = "";
+            }
+            baseName = derived.Length > 0 ? derived : DateTime.Now.ToString("yyyy-MM-dd-HHmmss");
+        }
+
+        string candidate = Path.Combine(root, baseName + ".frametrailproject");
+        for (int suffix = 2; Directory.Exists(candidate) || File.Exists(candidate); suffix++)
+            candidate = Path.Combine(root, $"{baseName} ({suffix}).frametrailproject");
+        return candidate;
+    }
+
+    private static bool IsWindowsReservedDeviceName(string name)
+    {
+        int dot = name.IndexOf('.');
+        string stem = (dot >= 0 ? name[..dot] : name).ToUpperInvariant();
+        if (stem is "CON" or "PRN" or "AUX" or "NUL") return true;
+        return stem.Length == 4 &&
+               (stem.StartsWith("COM", StringComparison.Ordinal) || stem.StartsWith("LPT", StringComparison.Ordinal)) &&
+               stem[3] >= '1' && stem[3] <= '9';
+    }
+
+    /// <summary>
+    /// Creates a brand-new, schema-valid <c>.frametrailproject</c> directly from one or more local MP4/MOV/M4V video clips
+    /// without requiring a screen recording. Rolls back and deletes the created directory completely on any failure.
+    /// </summary>
+    public static async Task<ProjectWorkspace> CreateFromVideoClipsAsync(
+        string projectPath,
+        IReadOnlyList<string> sourcePaths,
+        Func<VisualPresetLibrary>? presetLibrary = null,
+        Action<ProjectSnapshot>? validator = null,
+        Action<string, bool>? mediaProbe = null,
+        Func<string, (uint Width, uint Height, long Duration, bool HasAudio, uint SampleRate, uint Channels)>? clipProbe = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (sourcePaths is null || sourcePaths.Count == 0 || sourcePaths.Count > 100)
+            throw new ArgumentException("Source clip count must be between 1 and 100.", nameof(sourcePaths));
+
+        // Pre-validate all source files before creating any destination directory on disk.
+        var validatedSources = new List<(string FullPath, string Extension)>(sourcePaths.Count);
+        foreach (var rawSource in sourcePaths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(rawSource))
+                throw new IOException(L.T("SB0C847A65D31"));
+            string full = Path.GetFullPath(rawSource);
+            string ext = Path.GetExtension(full).ToLowerInvariant();
+            if (!IsSupportedImportVideoExtension(ext))
+                throw new IOException(L.T("SB0C847A65D31"));
+            CheckAncestors(full);
+            var info = new FileInfo(full);
+            if (!info.Exists)
+                throw new FileNotFoundException("Source video file not found.", full);
+            if (info.Length <= 0 || info.Length > 2L * 1024 * 1024 * 1024)
+                throw new IOException(L.T("S1B19EF3E70E4"));
+            validatedSources.Add((full, ext));
+        }
+
+        string normalizedRoot = NormalizeRoot(projectPath);
+        string parentDir = Path.GetDirectoryName(normalizedRoot)!;
+        Directory.CreateDirectory(parentDir);
+
+        string createdProjectId = Guid.NewGuid().ToString("N");
+        ProjectWorkspace? workspace = Create(normalizedRoot, createdProjectId, validator, mediaProbe);
+        try
+        {
+            var probeFn = clipProbe ?? MediaSession.ProbeClip;
+            var mediaAssets = new List<MediaAsset>(validatedSources.Count * 2);
+            var segments = new List<RecordingSegment>(validatedSources.Count);
+            long sourceTicks = 0;
+            uint firstWidth = 1920;
+            uint firstHeight = 1080;
+
+            for (int i = 0; i < validatedSources.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var (sourceFull, ext) = validatedSources[i];
+                string relative = "media/import-" + Guid.NewGuid().ToString("N") + ext;
+                string destination = workspace.Resolve(relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+
+                await using (var input = new FileStream(sourceFull, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous))
+                await using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
+                    await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+
+                var probed = await Task.Run(() => probeFn(destination), cancellationToken).ConfigureAwait(false);
+                if (probed.Width == 0 || probed.Height == 0 || probed.Duration <= 0)
+                    throw new IOException($"Invalid video clip metadata: {sourceFull}");
+
+                if (i == 0)
+                {
+                    firstWidth = Math.Clamp((probed.Width / 2u) * 2u, 2u, 7680u);
+                    firstHeight = Math.Clamp((probed.Height / 2u) * 2u, 2u, 7680u);
+                }
+
+                long clipDuration = probed.Duration;
+                mediaAssets.Add(new MediaAsset
+                {
+                    Id = "media-" + Guid.NewGuid().ToString("N"),
+                    Kind = MediaKind.Screen,
+                    Path = relative,
+                    Duration = MediaTime.FromTicks(clipDuration),
+                    StartOffset = MediaTime.FromTicks(sourceTicks),
+                    Width = probed.Width,
+                    Height = probed.Height
+                });
+
+                if (probed.HasAudio)
+                {
+                    mediaAssets.Add(new MediaAsset
+                    {
+                        Id = "media-" + Guid.NewGuid().ToString("N"),
+                        Kind = MediaKind.SystemAudio,
+                        Path = relative,
+                        Duration = MediaTime.FromTicks(clipDuration),
+                        StartOffset = MediaTime.FromTicks(sourceTicks),
+                        SampleRate = probed.SampleRate > 0 ? probed.SampleRate : 48000u,
+                        Channels = probed.Channels > 0 ? probed.Channels : 2u
+                    });
+                }
+
+                segments.Add(new RecordingSegment
+                {
+                    Id = "clip-" + Guid.NewGuid().ToString("N"),
+                    SourceStart = MediaTime.FromTicks(sourceTicks),
+                    SourceDuration = MediaTime.FromTicks(clipDuration),
+                    Rate = new Rational { Numerator = 1, Denominator = 1 }
+                });
+
+                sourceTicks = checked(sourceTicks + clipDuration);
+            }
+
+            var initialSnapshot = new ProjectSnapshot
+            {
+                SchemaVersion = 1,
+                ProjectId = createdProjectId,
+                Revision = 1,
+                SourceDuration = MediaTime.FromTicks(sourceTicks),
+                Media = mediaAssets.ToArray(),
+                Segments = segments.ToArray(),
+                Effects = Array.Empty<SourceEffect>(),
+                Markers = Array.Empty<RecordingMarker>(),
+                Canvas = new CanvasSettings
+                {
+                    Width = firstWidth,
+                    Height = firstHeight,
+                    Camera = new CameraLayout { Enabled = false }
+                },
+                Export = new ExportSettings
+                {
+                    Width = firstWidth,
+                    Height = firstHeight,
+                    Fps = new Rational { Numerator = 30, Denominator = 1 },
+                    VideoCodec = VideoCodecs.H264,
+                    AudioCodec = "aac",
+                    Container = "mp4"
+                }
+            };
+
+            if (presetLibrary is not null)
+            {
+                try
+                {
+                    var library = presetLibrary();
+                    var catalog = await library.ListAsync().ConfigureAwait(false);
+                    if (catalog.DefaultId is string defaultId)
+                        initialSnapshot = await library.ApplyAsync(defaultId, initialSnapshot, workspace.DirectoryPath).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Non-fatal: continue creating the project with clean defaults if user preset fails.
+                }
+            }
+
+            if (!await workspace.SaveAsync(initialSnapshot, workspace.SessionEpoch).ConfigureAwait(false))
+                throw new IOException("Unable to persist newly created video project.");
+
+            var ready = workspace;
+            workspace = null;
+            return ready;
+        }
+        finally
+        {
+            if (workspace is not null)
+            {
+                try { await workspace.DisposeAsync().ConfigureAwait(false); } catch { }
+                try { if (Directory.Exists(normalizedRoot)) Directory.Delete(normalizedRoot, recursive: true); } catch { }
+            }
+        }
+    }
+
     private static ProjectWorkspace Acquire(string path, Action<ProjectSnapshot>? validator, Action<string, bool>? mediaProbe)
     {
         CheckAncestors(path);

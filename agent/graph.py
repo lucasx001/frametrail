@@ -38,6 +38,7 @@ class AgentState(TypedDict):
     model_name: NotRequired[str]
     api_key: NotRequired[str]
     base_url: NotRequired[str]
+    callback_url: NotRequired[str]
     proposed_commands: list[dict[str, Any]]
     tool_calls: list[dict[str, Any]]
     validation_error: Optional[str]
@@ -212,6 +213,49 @@ def validate_commands_dry_run(snapshot: dict[str, Any], commands: list[dict[str,
                 return f"trim: unknown segmentId '{sid}'."
             if s_start < 0 or s_end <= s_start or s_end > total_ticks:
                 return f"trim: invalid range [{s_start}, {s_end}] for duration {total_ticks}."
+        elif op == "cutRanges":
+            cut_ranges = cmd.get("ranges")
+            if not isinstance(cut_ranges, list) or len(cut_ranges) == 0 or len(cut_ranges) > 2000:
+                return "cutRanges: 'ranges' must be a list of 1..2000 range objects."
+            min_keep = int(cmd.get("minKeepTicks", 1_000_000))
+            if min_keep < 100_000 or min_keep > 10_000_000:
+                return f"cutRanges: minKeepTicks ({min_keep}) outside allowed [100000, 10000000]."
+            parsed_cuts: list[tuple[int, int]] = []
+            for r in cut_ranges:
+                if not isinstance(r, dict):
+                    return "cutRanges: each range entry must be an object."
+                rs = int(r.get("start", -1))
+                re_val = int(r.get("end", -1))
+                if rs < 0 or re_val <= rs or (total_ticks > 0 and re_val > total_ticks):
+                    return f"cutRanges: invalid range [{rs}, {re_val}] for sourceDuration {total_ticks}."
+                parsed_cuts.append((rs, re_val))
+            parsed_cuts.sort()
+            # Ensure at least one segment survives
+            survives = False
+            for seg in snapshot.get("segments", []) or []:
+                seg_s = _ticks(seg.get("sourceStart", {}))
+                seg_e = seg_s + _ticks(seg.get("sourceDuration", {}))
+                cursor = seg_s
+                for cs, ce in parsed_cuts:
+                    if ce <= seg_s:
+                        continue
+                    if cs >= seg_e:
+                        break
+                    s = max(cs, seg_s)
+                    e = min(ce, seg_e)
+                    if s - seg_s < min_keep:
+                        s = seg_s
+                    if seg_e - e < min_keep:
+                        e = seg_e
+                    if s - cursor >= min_keep:
+                        survives = True
+                        break
+                    cursor = max(cursor, e)
+                if survives or seg_e - cursor >= min_keep:
+                    survives = True
+                    break
+            if snapshot.get("segments") and not survives:
+                return "cutRanges: cannot cut the entire timeline; at least one clip must remain."
         elif op == "effectUpsert":
             eff = cmd.get("effect", {})
             eid = cmd.get("effectId")
@@ -306,8 +350,9 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
             "1. Use tools to inspect or modify the timeline. Always keep times within [0, sourceDuration].\n"
             "2. If user mentions 'current time' or omits timestamps, use playhead_sec.\n"
             "3. For speech-to-subtitle requests, call generate_subtitles (pass 1-based clip_indices such as [2, 3] when the user names specific clips like '2nd and 3rd clip'), upsert_subtitle, update_subtitle_style, or delete_subtitles.\n"
-            "4. When the user asks about visual elements in the video or wants to zoom, spotlight/focus, or blur/mask a specific on-screen element (button, text, icon, sensitive region, etc.), call inspect_video_frames(start_sec=..., end_sec=..., question=...) first to inspect keyframes and obtain normalized bounding-box coordinates (x, y, width, height in [0, 1]); project_dir is auto-resolved when omitted.\n"
-            "5. After tool execution succeeds, summarize your edits clearly and concisely."
+            "4. When the user asks to optimize voiceover/speech fluency, remove pauses, filler words (语气词/语境词/嗯/啊/哦/呃/那个/um/uh), or stutters/repeats, call optimize_speech_flow(intensity='standard'|'gentle'|'tight', remove_pauses=..., remove_fillers=..., remove_repeats=...) DIRECTLY — it reads the project's audio tracks (recorded audio or embedded MP4/MOV audio) directly and does NOT require pre-generated subtitles. IMPORTANT: optimize_speech_flow ALREADY generates and stages the final atomic cutRanges edit command; once it returns a cutRanges command, do NOT call cut_time_ranges, cut_time_range, or any other cutting tool again — immediately summarize the detected pauses/fillers/repeats and finish your reply. Only call cut_time_ranges directly when removing custom transcript ranges not produced by optimize_speech_flow.\n"
+            "5. When the user asks about visual elements in the video or wants to zoom, spotlight/focus, or blur/mask a specific on-screen element (button, text, icon, sensitive region, etc.), call inspect_video_frames(start_sec=..., end_sec=..., question=...) first to inspect keyframes and obtain normalized bounding-box coordinates (x, y, width, height in [0, 1]); project_dir is auto-resolved when omitted.\n"
+            "6. After tool execution succeeds, summarize your edits clearly and concisely."
         )
 
         msgs = list(state.get("messages", []))
@@ -324,6 +369,7 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
             state.get("base_url", ""),
             state.get("provider", ""),
             state.get("model_name", ""),
+            state.get("callback_url", ""),
         )
         try:
             response = await llm_with_tools.ainvoke(state["messages"])
@@ -342,6 +388,7 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
             state.get("base_url", ""),
             state.get("provider", ""),
             state.get("model_name", ""),
+            state.get("callback_url", ""),
         )
         new_messages: list[ToolMessage] = []
         proposed = list(state.get("proposed_commands", []))
@@ -359,10 +406,21 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
                     recorded_calls.append({"tool_name": name, "summary": err, "succeeded": False})
                     continue
 
+                if name in ("cut_time_range", "cut_time_ranges") and any(
+                    isinstance(c, dict) and c.get("op") == "cutRanges" for c in proposed
+                ):
+                    msg = (
+                        "Already staged: an atomic cutRanges edit command is already queued for this turn "
+                        "(e.g. from optimize_speech_flow). Do NOT call cut_time_range or cut_time_ranges again; "
+                        "summarize the planned edits clearly and finish your response."
+                    )
+                    new_messages.append(ToolMessage(content=msg, tool_call_id=call_id))
+                    recorded_calls.append({"tool_name": name, "summary": "Skipped redundant cut (already staged)", "succeeded": True})
+                    continue
+
                 try:
                     raw = await tool_fn.ainvoke(args)
                     text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
-                    new_messages.append(ToolMessage(content=text, tool_call_id=call_id))
 
                     parsed = None
                     try:
@@ -372,14 +430,35 @@ def build_agent_graph(llm: BaseChatModel) -> Any:
 
                     if isinstance(parsed, dict) and "op" in parsed:
                         proposed.append(parsed)
+                        op_name = str(parsed.get("op", ""))
+                        if name == "optimize_speech_flow" and op_name == "cutRanges":
+                            ranges = parsed.get("ranges") or []
+                            tool_msg_text = json.dumps(
+                                {
+                                    "status": "STAGED_FOR_EXECUTION",
+                                    "op": "cutRanges",
+                                    "cutCount": len(ranges),
+                                    "note": (
+                                        "The atomic cutRanges edit command is ALREADY staged for execution. "
+                                        "Do NOT call cut_time_ranges, cut_time_range, or any other cutting tool. "
+                                        "Summarize the cuts below for the user and finish."
+                                    ),
+                                    "ranges": ranges,
+                                },
+                                ensure_ascii=False,
+                            )
+                            new_messages.append(ToolMessage(content=tool_msg_text, tool_call_id=call_id))
+                        else:
+                            new_messages.append(ToolMessage(content=text, tool_call_id=call_id))
                         recorded_calls.append(
                             {
                                 "tool_name": name,
-                                "summary": f"Generated {parsed.get('op')} command",
+                                "summary": f"Generated {op_name} command",
                                 "succeeded": True,
                             }
                         )
                     else:
+                        new_messages.append(ToolMessage(content=text, tool_call_id=call_id))
                         recorded_calls.append(
                             {
                                 "tool_name": name,

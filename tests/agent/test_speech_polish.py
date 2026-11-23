@@ -1,0 +1,234 @@
+"""Unit tests for FrameTrail AI speech expression polish (pauses + fillers + repeats + cutRanges)."""
+
+from __future__ import annotations
+
+import json
+import math
+import struct
+import sys
+import tempfile
+import unittest
+import wave
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from agent.editor_tools import cut_time_ranges, reset_project_context, set_project_context
+from agent.graph import validate_commands_dry_run
+from agent.mcp_server import FrameTrailProjectBridge
+from agent.multimodal_tools import (
+    TICKS_PER_SECOND,
+    _detect_speech_fillers_and_repeats,
+    analyze_speech_polish,
+)
+
+
+def _write_test_wav(path: Path, duration_sec: float, loud_spans: list[tuple[float, float]], sr: int = 16000) -> None:
+    total = int(round(duration_sec * sr))
+    samples = [0] * total
+    for s0, s1 in loud_spans:
+        i0 = max(0, int(round(s0 * sr)))
+        i1 = min(total, int(round(s1 * sr)))
+        for i in range(i0, i1):
+            samples[i] = int(12000 * math.sin(2.0 * math.pi * 440.0 * i / sr))
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+
+
+def _make_project(root: Path, duration_sec: float = 12.0) -> dict:
+    (root / "media").mkdir(parents=True, exist_ok=True)
+    dur_ticks = int(round(duration_sec * TICKS_PER_SECOND))
+    snapshot = {
+        "schemaVersion": 1,
+        "projectId": "test-polish",
+        "revision": 1,
+        "sourceDuration": {"ticks": dur_ticks, "timescale": TICKS_PER_SECOND},
+        "media": [
+            {
+                "id": "screen-1",
+                "kind": "screen",
+                "path": "media/screen-001.mp4",
+                "duration": {"ticks": dur_ticks, "timescale": TICKS_PER_SECOND},
+                "startOffset": {"ticks": 0, "timescale": TICKS_PER_SECOND},
+                "width": 1920,
+                "height": 1080,
+            },
+            {
+                "id": "mic-1",
+                "kind": "microphone",
+                "path": "media/mic-001.wav",
+                "duration": {"ticks": dur_ticks, "timescale": TICKS_PER_SECOND},
+                "startOffset": {"ticks": 0, "timescale": TICKS_PER_SECOND},
+                "sampleRate": 16000,
+                "channels": 1,
+            },
+        ],
+        "segments": [
+            {
+                "id": "clip-1",
+                "sourceStart": {"ticks": 0, "timescale": TICKS_PER_SECOND},
+                "sourceDuration": {"ticks": dur_ticks, "timescale": TICKS_PER_SECOND},
+                "rate": {"numerator": 1, "denominator": 1},
+            }
+        ],
+        "canvas": {
+            "width": 1920,
+            "height": 1080,
+            "padding": 0.05,
+            "background": {"type": "solid", "color": "#111114"},
+            "screen": {"x": 0.05, "y": 0.05, "width": 0.9, "height": 0.9},
+            "camera": {"enabled": False, "x": 0.7, "y": 0.7, "width": 0.25, "height": 0.25, "mirror": False},
+        },
+        "effects": [],
+        "markers": [],
+        "export": {
+            "width": 1920,
+            "height": 1080,
+            "fps": {"numerator": 30, "denominator": 1},
+            "videoCodec": "h264",
+            "audioCodec": "aac",
+            "container": "mp4",
+        },
+        "editor": {},
+    }
+    (root / "project.json").write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    return snapshot
+
+
+class SpeechPolishTests(unittest.TestCase):
+    def test_detect_speech_fillers_and_repeats_zh_and_en(self) -> None:
+        segments = [
+            {
+                "startSec": 0.0,
+                "endSec": 10.0,
+                "text": "嗯，大家好，那个，点击那个按钮，我 我 我们慢慢看，um ok",
+                "words": [
+                    {"text": "嗯，", "startSec": 0.2, "endSec": 0.55},
+                    {"text": "大家好，", "startSec": 0.65, "endSec": 1.2},
+                    {"text": "那", "startSec": 1.5, "endSec": 1.65},
+                    {"text": "个，", "startSec": 1.65, "endSec": 1.85},
+                    {"text": "点击", "startSec": 2.1, "endSec": 2.4},
+                    {"text": "那个", "startSec": 2.42, "endSec": 2.65},
+                    {"text": "按钮，", "startSec": 2.66, "endSec": 3.0},
+                    {"text": "我", "startSec": 3.3, "endSec": 3.45},
+                    {"text": "我", "startSec": 3.5, "endSec": 3.65},
+                    {"text": "我们", "startSec": 3.7, "endSec": 4.0},
+                    {"text": "慢", "startSec": 4.05, "endSec": 4.2},
+                    {"text": "慢", "startSec": 4.21, "endSec": 4.35},
+                    {"text": "看，", "startSec": 4.36, "endSec": 4.6},
+                    {"text": "um", "startSec": 5.0, "endSec": 5.3},
+                    {"text": "ok", "startSec": 5.4, "endSec": 5.7},
+                ],
+            }
+        ]
+        cuts = _detect_speech_fillers_and_repeats(segments, intensity="standard")
+        labels = [c["label"] for c in cuts]
+        self.assertIn("「嗯」", labels)
+        self.assertIn("「那个」", labels)
+        self.assertIn("「我」", labels)
+        self.assertIn("「um」", labels)
+        self.assertNotIn("「慢」", labels)
+        self.assertFalse(any(c["start"] >= 23_500_000 and c["end"] <= 27_500_000 for c in cuts))
+
+    def test_analyze_speech_polish_combines_wav_pauses_and_cached_fillers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = _make_project(root, duration_sec=10.0)
+            _write_test_wav(root / "media" / "mic-001.wav", 10.0, [(0.0, 2.0), (4.0, 10.0)])
+            cache_dir = root / "cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cached_asr = [
+                {
+                    "startSec": 4.0,
+                    "endSec": 9.5,
+                    "StartTicks": 40_000_000,
+                    "EndTicks": 95_000_000,
+                    "speaker": "mic",
+                    "text": "呃，我们开始演示",
+                    "words": [
+                        {"text": "呃，", "startSec": 4.2, "endSec": 4.6, "StartTicks": 42_000_000, "EndTicks": 46_000_000},
+                        {"text": "我们开始演示", "startSec": 4.8, "endSec": 6.5, "StartTicks": 48_000_000, "EndTicks": 65_000_000},
+                    ],
+                }
+            ]
+            (cache_dir / "ai-transcript.json").write_text(json.dumps(cached_asr, ensure_ascii=False), encoding="utf-8")
+
+            plan = analyze_speech_polish(str(root), intensity="standard", project_snapshot=snapshot)
+            self.assertEqual(plan["cutCount"], 2)
+            self.assertEqual(plan["pauseCount"], 1)
+            self.assertEqual(plan["fillerCount"], 1)
+            self.assertEqual(plan["command"]["op"], "cutRanges")
+            self.assertIsNone(validate_commands_dry_run(snapshot, [plan["command"]]))
+
+    def test_cut_time_ranges_tool_and_mcp_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            snapshot = _make_project(root, duration_sec=20.0)
+            tok = set_project_context(snapshot, project_dir=str(root))
+            try:
+                raw = cut_time_ranges.invoke(
+                    {
+                        "ranges": [
+                            {"start_sec": 2.0, "end_sec": 3.0, "reason": "pause", "label": "1.0s"},
+                            {"start_sec": 6.0, "end_sec": 6.5, "reason": "filler", "label": "「嗯」"},
+                        ]
+                    }
+                )
+                cmd = json.loads(raw)
+                self.assertEqual(cmd["op"], "cutRanges")
+                self.assertEqual(len(cmd["ranges"]), 2)
+                self.assertIsNone(validate_commands_dry_run(snapshot, [cmd]))
+            finally:
+                reset_project_context(tok)
+
+            bridge = FrameTrailProjectBridge(str(root))
+            res = bridge.cut_ranges(
+                ranges=[
+                    {"start_sec": 2.0, "end_sec": 3.0, "reason": "pause"},
+                    {"start_sec": 6.0, "end_sec": 6.5, "reason": "filler"},
+                ]
+            )
+            self.assertTrue(res["ok"])
+            updated = json.loads((root / "project.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(updated["segments"]), 3)
+            self.assertEqual(updated["segments"][0]["id"], "clip-1")
+
+    def test_collapse_commands_deduplicates_cut_ranges_and_drops_stale_splits(self) -> None:
+        from agent.server import _collapse_commands
+
+        c1 = {
+            "op": "cutRanges",
+            "ranges": [{"start": 850_000, "end": 2_550_000, "reason": "filler", "label": "「Uh」"}],
+            "minKeepTicks": 1_000_000,
+        }
+        c2 = {
+            "op": "cutRanges",
+            "ranges": [
+                {"start": 850_000, "end": 2_550_000, "reason": "filler", "label": "「Uh」"},
+                {"start": 5_000_000, "end": 6_000_000, "reason": "pause", "label": "1.0s"},
+            ],
+            "minKeepTicks": 1_000_000,
+        }
+        c3 = {
+            "op": "batch",
+            "commands": [
+                {"op": "split", "segmentId": "clip-1", "sourceTicks": 850_000, "newId": "clip-r"},
+                {"op": "trim", "segmentId": "clip-r", "sourceStart": 2_550_000, "sourceEnd": 10_000_000},
+            ],
+        }
+        collapsed = _collapse_commands([c1, c2, c3])
+        self.assertIsNotNone(collapsed)
+        assert collapsed is not None
+        self.assertEqual(collapsed["op"], "cutRanges")
+        self.assertEqual(len(collapsed["ranges"]), 2)
+        self.assertEqual(collapsed["ranges"][0]["start"], 850_000)
+        self.assertEqual(collapsed["ranges"][1]["start"], 5_000_000)
+
+
+if __name__ == "__main__":
+    unittest.main()

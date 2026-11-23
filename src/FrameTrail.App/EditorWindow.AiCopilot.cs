@@ -29,11 +29,12 @@ public sealed partial class EditorWindow
 
     private static readonly string[] KnownApiKeyProviders = ["openai", "anthropic", "deepseek"];
 
-    private readonly AiAgentBridge aiBridge = new();
+    private AiAgentBridge aiBridge = new();
     private readonly AiCredentialsStore aiCredentials = new();
     private readonly AiSubscriptionManager aiSubscriptionManager = new();
     private readonly AiPreviewTransactionCoordinator aiPreviewCoordinator = new();
     private readonly AiVoiceRecognizer aiVoiceRecognizer = new();
+    private AiSpeechPolishService? speechPolishService;
     private readonly List<AiChatMessage> aiChatHistory = new();
     private readonly Dictionary<string, IReadOnlyList<AiProposedChangeDto>> aiTurnChangeItems = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> pendingAiConfirmations = new(StringComparer.Ordinal);
@@ -60,6 +61,8 @@ public sealed partial class EditorWindow
 
     private void InitializeAiCopilot()
     {
+        speechPolishService = new AiSpeechPolishService(subtitleService);
+        aiBridge = new AiAgentBridge(speechPolishRunner: RunHostLocalSpeechPolishAsync);
         var settings = aiCredentials.Load();
         aiProvider = ParseProviderKey(settings.ActiveProvider);
         aiAutoApply = settings.AutoApplyEdits;
@@ -180,6 +183,9 @@ public sealed partial class EditorWindow
 
         if (string.Equals(action, "generate_subtitles", StringComparison.OrdinalIgnoreCase))
             return HandleExternalMcpGenerateSubtitlesAsync(parameters, ct);
+
+        if (string.Equals(action, "optimize_speech_flow", StringComparison.OrdinalIgnoreCase))
+            return HandleExternalMcpOptimizeSpeechFlowAsync(parameters, ct);
 
         return Task.FromResult(new AiLocalCallbackActionResult(
             Ok: false,
@@ -918,6 +924,411 @@ public sealed partial class EditorWindow
         catch (OperationCanceledException)
         {
             return new AiLocalCallbackActionResult(false, Error: "Subtitle transcription was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return new AiLocalCallbackActionResult(false, Error: ex.Message);
+        }
+        finally
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!closing)
+                    SetSubtitleBusy(false);
+            });
+        }
+    }
+
+    private async Task<SpeechPolishResult> RunHostLocalSpeechPolishAsync(
+        EditorSession session,
+        SpeechPolishOptions baseOptions,
+        Action<AiStreamEvent>? onEvent,
+        CancellationToken ct)
+    {
+        var service = speechPolishService ?? new AiSpeechPolishService(subtitleService);
+        var configTcs = new TaskCompletionSource<(string Engine, string ModelId, bool HasLocalModel)>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        if (DispatcherQueue.TryEnqueue(() =>
+        {
+            var (engine, modelId) = SelectedAsrEngine();
+            bool hasLocal = false;
+            if (string.Equals(engine, "whisper-local", StringComparison.OrdinalIgnoreCase))
+            {
+                if (subtitleService.ModelManager.IsModelInstalled(modelId))
+                {
+                    hasLocal = true;
+                }
+                else
+                {
+                    var installedAlt = subtitleService.ModelManager
+                        .GetCatalog()
+                        .FirstOrDefault(m => subtitleService.ModelManager.IsModelInstalled(m.Id));
+                    if (installedAlt is not null)
+                    {
+                        modelId = installedAlt.Id;
+                        hasLocal = true;
+                    }
+                }
+            }
+            configTcs.TrySetResult((engine, modelId, hasLocal));
+        }))
+        {
+            var (engine, modelId, hasLocal) = await configTcs.Task.ConfigureAwait(false);
+            bool skipUninstalledLocal = string.Equals(engine, "whisper-local", StringComparison.OrdinalIgnoreCase) && !hasLocal;
+            var resolved = baseOptions with
+            {
+                Engine = engine,
+                ModelId = modelId,
+                RemoveFillers = baseOptions.RemoveFillers && !skipUninstalledLocal,
+                RemoveRepeats = baseOptions.RemoveRepeats && !skipUninstalledLocal
+            };
+            var progress = new Progress<SubtitleTranscriptionProgress>(p =>
+                onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.Thinking, $"{p.Message} ({p.Percent:0}%)")));
+
+            var result = await service.AnalyzeAndBuildCommandAsync(
+                session.DirectoryPath, session.Snapshot, resolved, progress, ct).ConfigureAwait(false);
+
+            if (skipUninstalledLocal && baseOptions.RemoveFillers)
+            {
+                var desc = subtitleService.ModelManager.GetDescriptor(modelId);
+                return result with
+                {
+                    Warning = $"本地 Whisper 模型 '{desc.DisplayName}' 尚未下载，本轮仅执行波形静音停顿清理。"
+                };
+            }
+            return result;
+        }
+
+        return await service.AnalyzeAndBuildCommandAsync(
+            session.DirectoryPath, session.Snapshot, baseOptions, null, ct).ConfigureAwait(false);
+    }
+
+    private async Task<AiLocalCallbackActionResult> HandleExternalMcpOptimizeSpeechFlowAsync(
+        JsonElement parameters,
+        CancellationToken ct)
+    {
+        var prepareTcs = new TaskCompletionSource<(
+            bool Ok,
+            string? Error,
+            object? ErrorData,
+            ProjectSnapshot? Snapshot,
+            ResolvedTimeline? Timeline,
+            string? ProjectDir,
+            string Engine,
+            string ModelId,
+            bool AutoApply,
+            string TurnId,
+            bool NeedsModelDownload,
+            CancellationToken LinkedCt)>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        bool removePauses = !parameters.TryGetProperty("remove_pauses", out var rpEl) || rpEl.ValueKind != JsonValueKind.False;
+        bool removeFillers = !parameters.TryGetProperty("remove_fillers", out var rfEl) || rfEl.ValueKind != JsonValueKind.False;
+        bool removeRepeats = !parameters.TryGetProperty("remove_repeats", out var rrEl) || rrEl.ValueKind != JsonValueKind.False;
+        bool applyToHost = !parameters.TryGetProperty("apply", out var apEl) || apEl.ValueKind != JsonValueKind.False;
+        string intensityRaw = parameters.TryGetProperty("intensity", out var intEl) && intEl.ValueKind == JsonValueKind.String
+            ? intEl.GetString() ?? "standard"
+            : "standard";
+        var intensity = SpeechPolishOptions.ParseIntensity(intensityRaw);
+        bool needsAsr = removeFillers || (removeRepeats && intensity != SpeechPolishIntensity.Gentle);
+
+        bool enqueuedPrepare = DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (closing || editor.IsExporting)
+                {
+                    prepareTcs.TrySetResult((false, "Editor is currently busy or closing.", null, null, null, null, "", "", false, "", false, CancellationToken.None));
+                    return;
+                }
+                if (subtitleBusy)
+                {
+                    prepareTcs.TrySetResult((false, "Another speech or subtitle task is already running.", null, null, null, null, "", "", false, "", false, CancellationToken.None));
+                    return;
+                }
+
+                var (engine, modelId) = SelectedAsrEngine();
+                bool needsDownload = false;
+                if (needsAsr &&
+                    string.Equals(engine, "whisper-local", StringComparison.OrdinalIgnoreCase) &&
+                    !subtitleService.ModelManager.IsModelInstalled(modelId))
+                {
+                    var installedAlt = subtitleService.ModelManager
+                        .GetCatalog()
+                        .FirstOrDefault(m => subtitleService.ModelManager.IsModelInstalled(m.Id));
+                    if (installedAlt is not null)
+                    {
+                        modelId = installedAlt.Id;
+                    }
+                    else if (!aiAutoApply)
+                    {
+                        var desc = subtitleService.ModelManager.GetDescriptor(modelId);
+                        double sizeMb = Math.Round(desc.ExpectedBytes / (1024.0 * 1024.0), 1);
+                        prepareTcs.TrySetResult((
+                            false,
+                            $"Local Whisper speech-to-text model '{desc.Id}' ({desc.DisplayName}, {sizeMb:0} MB) is not installed yet. Call frametrail_download_whisper_model(model_id='{desc.Id}') (or '{WhisperModelManager.SmallModelId}' ~181 MB) to request user confirmation and download the model, then call frametrail_optimize_speech_flow again.",
+                            new
+                            {
+                                missingLocalModel = true,
+                                recommendedModelId = desc.Id,
+                                fastModelId = WhisperModelManager.SmallModelId,
+                                requiresApproval = true
+                            },
+                            null,
+                            null,
+                            null,
+                            engine,
+                            modelId,
+                            aiAutoApply,
+                            activeAiTurnId ?? "",
+                            true,
+                            CancellationToken.None));
+                        return;
+                    }
+                    else
+                    {
+                        needsDownload = true;
+                    }
+                }
+
+                subtitleAsrCts?.Dispose();
+                subtitleAsrCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    ct,
+                    aiTurnCts?.Token ?? CancellationToken.None);
+                SetSubtitleBusy(true, L.T("SubGenerating", 0), 0);
+
+                prepareTcs.TrySetResult((
+                    true,
+                    null,
+                    null,
+                    editor.Snapshot,
+                    editor.Timeline,
+                    editor.DirectoryPath,
+                    engine,
+                    modelId,
+                    aiAutoApply,
+                    activeAiTurnId ?? "",
+                    needsDownload,
+                    subtitleAsrCts.Token));
+            }
+            catch (Exception ex)
+            {
+                prepareTcs.TrySetResult((false, ex.Message, null, null, null, null, "", "", false, "", false, CancellationToken.None));
+            }
+        });
+
+        if (!enqueuedPrepare)
+            return new AiLocalCallbackActionResult(false, Error: "Editor dispatcher unavailable.");
+
+        var prep = await prepareTcs.Task.ConfigureAwait(false);
+        if (!prep.Ok || prep.Snapshot is null || prep.Timeline is null || string.IsNullOrWhiteSpace(prep.ProjectDir))
+            return new AiLocalCallbackActionResult(false, Error: prep.Error ?? "Unable to prepare speech polish.", Data: prep.ErrorData);
+
+        try
+        {
+            var snapshot = prep.Snapshot;
+            IReadOnlyList<string>? clipIds = null;
+            if (parameters.TryGetProperty("clip_indices", out var ciEl) && ciEl.ValueKind == JsonValueKind.Array)
+            {
+                var resolvedIds = new List<string>();
+                foreach (var item in ciEl.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt32(out int idx1))
+                        continue;
+                    if (idx1 >= 1 && idx1 <= snapshot.Segments.Count)
+                        resolvedIds.Add(snapshot.Segments[idx1 - 1].Id);
+                }
+                if (resolvedIds.Count > 0)
+                    clipIds = resolvedIds.Distinct(StringComparer.Ordinal).ToArray();
+            }
+
+            double? startSec = parameters.TryGetProperty("start_sec", out var sEl) && sEl.ValueKind == JsonValueKind.Number
+                ? sEl.GetDouble()
+                : null;
+            double? endSec = parameters.TryGetProperty("end_sec", out var eEl) && eEl.ValueKind == JsonValueKind.Number
+                ? eEl.GetDouble()
+                : null;
+            double? minPauseSec = parameters.TryGetProperty("min_pause_sec", out var mpEl) && mpEl.ValueKind == JsonValueKind.Number
+                ? mpEl.GetDouble()
+                : null;
+            double? pausePaddingSec = parameters.TryGetProperty("pause_padding_sec", out var ppEl) && ppEl.ValueKind == JsonValueKind.Number
+                ? ppEl.GetDouble()
+                : null;
+            double thresholdDb = parameters.TryGetProperty("threshold_db", out var thEl) && thEl.ValueKind == JsonValueKind.Number
+                ? thEl.GetDouble()
+                : -38.0;
+            string language = parameters.TryGetProperty("language", out var langEl) && langEl.ValueKind == JsonValueKind.String
+                ? (langEl.GetString() ?? "auto")
+                : "auto";
+            bool forceRefresh = parameters.TryGetProperty("force_refresh", out var frEl) && frEl.ValueKind == JsonValueKind.True;
+
+            var options = new SpeechPolishOptions(
+                Intensity: intensity,
+                RemovePauses: removePauses,
+                RemoveFillers: removeFillers,
+                RemoveRepeats: removeRepeats,
+                MinPauseSeconds: minPauseSec,
+                PausePaddingSeconds: pausePaddingSec,
+                SilenceThresholdDb: thresholdDb,
+                Language: language,
+                Engine: prep.Engine,
+                ModelId: prep.ModelId,
+                ClipIds: clipIds,
+                StartSeconds: startSec,
+                EndSeconds: endSec,
+                ForceRefresh: forceRefresh);
+
+            var progress = new Progress<SubtitleTranscriptionProgress>(p =>
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (closing) return;
+                    subProgressBar.IsIndeterminate = false;
+                    subProgressBar.Value = Math.Clamp(p.Percent, 0, 100);
+                    subProgressLabel.Text = p.Stage == "downloading"
+                        ? L.T("SubModelDownloading", p.Percent)
+                        : L.T("SubGenerating", p.Percent);
+                });
+            });
+
+            var service = speechPolishService ?? new AiSpeechPolishService(subtitleService);
+            var result = await Task.Run(
+                () => service.AnalyzeAndBuildCommandAsync(prep.ProjectDir, snapshot, options, progress, prep.LinkedCt),
+                prep.LinkedCt).ConfigureAwait(false);
+
+            var cutSummaries = result.Cuts.Select(c => new
+            {
+                startSec = c.StartSeconds,
+                endSec = c.EndSeconds,
+                durationSec = c.DurationSeconds,
+                reason = c.Reason,
+                label = c.Label
+            }).ToArray();
+
+            if (result.Command is null || result.Cuts.Count == 0)
+            {
+                return new AiLocalCallbackActionResult(
+                    Ok: true,
+                    CueCount: 0,
+                    EngineUsed: result.EngineUsed,
+                    Message: "No removable pauses, filler words, or stutters were detected.",
+                    Data: new
+                    {
+                        cutCount = 0,
+                        pauseCount = 0,
+                        fillerCount = 0,
+                        repeatCount = 0,
+                        totalRemovedSeconds = 0.0,
+                        usedAsr = result.UsedAsr,
+                        warning = result.Warning,
+                        cuts = cutSummaries
+                    });
+            }
+
+            if (!applyToHost)
+            {
+                return new AiLocalCallbackActionResult(
+                    Ok: true,
+                    CueCount: result.Cuts.Count,
+                    EngineUsed: result.EngineUsed,
+                    Message: $"Planned {result.Cuts.Count} speech cut(s) removing {result.TotalRemovedSeconds:0.1}s.",
+                    Data: new
+                    {
+                        command = result.Command,
+                        cutCount = result.Cuts.Count,
+                        pauseCount = result.PauseCount,
+                        fillerCount = result.FillerCount,
+                        repeatCount = result.RepeatCount,
+                        totalRemovedSeconds = result.TotalRemovedSeconds,
+                        usedAsr = result.UsedAsr,
+                        warning = result.Warning,
+                        cuts = cutSummaries
+                    });
+            }
+
+            var applyTcs = new TaskCompletionSource<AiLocalCallbackActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            bool enqueuedApply = DispatcherQueue.TryEnqueue(async () =>
+            {
+                try
+                {
+                    if (closing || editor.IsExporting)
+                    {
+                        applyTcs.TrySetResult(new AiLocalCallbackActionResult(false, Error: "Editor is currently busy or closing."));
+                        return;
+                    }
+
+                    var changes = AiAgentCommandBuilder.DescribeProposedChanges(result.Command, editor.Snapshot, editor.Timeline);
+                    var itemDtos = changes
+                        .Select(c => new AiProposedChangeDto(c.Badge, c.Label, c.Detail, c.SeekSeconds, c.TimeLabel))
+                        .ToArray();
+                    string turnId = !string.IsNullOrEmpty(prep.TurnId) ? prep.TurnId : ("mcp-" + Guid.NewGuid().ToString("N")[..8]);
+                    aiTurnChangeItems[turnId] = itemDtos;
+
+                    if (aiAutoApply)
+                    {
+                        await PerformAsync(() => editor.ExecuteAsync(result.Command));
+                        aiWebHost?.Post("turn.changes", new AiTurnChangesPayload(
+                            TurnId: turnId,
+                            State: "applied",
+                            Revision: editor.Snapshot.Revision,
+                            Items: itemDtos));
+                        UpdateAiContextPills();
+
+                        applyTcs.TrySetResult(new AiLocalCallbackActionResult(
+                            Ok: true,
+                            Revision: editor.Snapshot.Revision,
+                            CueCount: result.Cuts.Count,
+                            EngineUsed: result.EngineUsed,
+                            Message: $"Applied {result.Cuts.Count} speech polish cut(s) removing {result.TotalRemovedSeconds:0.1}s.",
+                            Data: new
+                            {
+                                stagedPreview = false,
+                                cutCount = result.Cuts.Count,
+                                pauseCount = result.PauseCount,
+                                fillerCount = result.FillerCount,
+                                repeatCount = result.RepeatCount,
+                                totalRemovedSeconds = result.TotalRemovedSeconds,
+                                usedAsr = result.UsedAsr,
+                                warning = result.Warning,
+                                cuts = cutSummaries
+                            }));
+                    }
+                    else
+                    {
+                        await StagePreviewAndPublishCardAsync(turnId, result.Command, itemDtos);
+                        applyTcs.TrySetResult(new AiLocalCallbackActionResult(
+                            Ok: true,
+                            CueCount: result.Cuts.Count,
+                            EngineUsed: result.EngineUsed,
+                            Message: $"Staged preview of {result.Cuts.Count} speech polish cut(s) removing {result.TotalRemovedSeconds:0.1}s for user review.",
+                            Data: new
+                            {
+                                stagedPreview = true,
+                                cutCount = result.Cuts.Count,
+                                pauseCount = result.PauseCount,
+                                fillerCount = result.FillerCount,
+                                repeatCount = result.RepeatCount,
+                                totalRemovedSeconds = result.TotalRemovedSeconds,
+                                usedAsr = result.UsedAsr,
+                                warning = result.Warning,
+                                cuts = cutSummaries
+                            }));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    applyTcs.TrySetResult(new AiLocalCallbackActionResult(false, Error: ex.Message));
+                }
+            });
+
+            if (!enqueuedApply)
+                return new AiLocalCallbackActionResult(false, Error: "Editor dispatcher unavailable.");
+
+            return await applyTcs.Task.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return new AiLocalCallbackActionResult(false, Error: "Speech polish optimization was cancelled.");
         }
         catch (Exception ex)
         {

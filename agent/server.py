@@ -148,14 +148,53 @@ def _build_messages(req: ChatRequest) -> list[BaseMessage]:
 def _collapse_commands(commands: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
     if not commands:
         return None
-    if len(commands) == 1:
-        return commands[0]
     flattened: list[dict[str, Any]] = []
     for cmd in commands:
         if cmd.get("op") == "batch" and isinstance(cmd.get("commands"), list):
-            flattened.extend(cmd["commands"])
-        else:
+            flattened.extend(c for c in cmd["commands"] if isinstance(c, dict))
+        elif isinstance(cmd, dict):
             flattened.append(cmd)
+
+    # Deduplicate / merge cutRanges and drop conflicting raw split/trim/delete cuts in the same turn.
+    cut_ranges_cmds = [c for c in flattened if c.get("op") == "cutRanges"]
+    if cut_ranges_cmds:
+        seen_spans: set[tuple[int, int]] = set()
+        merged_ranges: list[dict[str, Any]] = []
+        min_keep = cut_ranges_cmds[0].get("minKeepTicks", 1_000_000)
+        for cr in cut_ranges_cmds:
+            for r in cr.get("ranges") or []:
+                if not isinstance(r, dict):
+                    continue
+                span = (int(r.get("start", 0)), int(r.get("end", 0)))
+                if span[1] <= span[0] or span in seen_spans:
+                    continue
+                seen_spans.add(span)
+                merged_ranges.append(r)
+        merged_ranges.sort(key=lambda r: (int(r["start"]), int(r["end"])))
+        merged_cut_cmd = {
+            "op": "cutRanges",
+            "ranges": merged_ranges[:2000],
+            "minKeepTicks": min_keep,
+        }
+        rebuilt: list[dict[str, Any]] = []
+        inserted_cut = False
+        for c in flattened:
+            op = c.get("op")
+            if op == "cutRanges":
+                if not inserted_cut and merged_ranges:
+                    rebuilt.append(merged_cut_cmd)
+                    inserted_cut = True
+            elif op in ("split", "trim", "delete"):
+                # Superseded by atomic cutRanges in the same turn; running both on stale segment IDs fails.
+                continue
+            else:
+                rebuilt.append(c)
+        flattened = rebuilt
+
+    if not flattened:
+        return None
+    if len(flattened) == 1:
+        return flattened[0]
     return {"op": "batch", "commands": flattened[:100]}
 
 
@@ -249,6 +288,7 @@ async def _run_turn(req: ChatRequest) -> dict[str, Any]:
         "model_name": req.model_name,
         "api_key": req.api_key,
         "base_url": req.base_url,
+        "callback_url": req.callback_url,
         "proposed_commands": [],
         "tool_calls": [],
         "validation_error": None,
@@ -491,6 +531,7 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
                 "model_name": req.model_name,
                 "api_key": req.api_key,
                 "base_url": req.base_url,
+                "callback_url": req.callback_url,
                 "proposed_commands": [],
                 "tool_calls": [],
                 "validation_error": None,

@@ -204,6 +204,34 @@ public static class AiAgentCommandBuilder
         return new { op = "batch", commands = commands.ToArray() };
     }
 
+    public static object BuildCutRangesCommand(
+        IReadOnlyList<SpeechCutItem> cuts,
+        long minKeepTicks = SpeechPolishAnalyzer.DefaultMinKeepTicks)
+    {
+        ArgumentNullException.ThrowIfNull(cuts);
+        if (cuts.Count == 0)
+            throw new ArgumentException("At least one cut range is required.", nameof(cuts));
+        if (cuts.Count > SpeechPolishAnalyzer.MaxCutRanges)
+            throw new ArgumentOutOfRangeException(nameof(cuts), $"cutRanges supports at most {SpeechPolishAnalyzer.MaxCutRanges} ranges.");
+
+        var ranges = cuts
+            .Select(c => new
+            {
+                start = c.StartTicks,
+                end = c.EndTicks,
+                reason = c.Reason,
+                label = c.Label
+            })
+            .ToArray();
+
+        return new
+        {
+            op = "cutRanges",
+            ranges,
+            minKeepTicks = Math.Clamp(minKeepTicks, 100_000L, 10_000_000L)
+        };
+    }
+
     public static object BuildSpeedCommand(string segmentId, double rate)
     {
         if (string.IsNullOrWhiteSpace(segmentId))
@@ -728,6 +756,48 @@ public static class AiAgentCommandBuilder
                 output.Add(new AiProposedChangeItem("−", "Cut clip", delSeg, delStart, delTime));
                 break;
 
+            case "cutRanges":
+                if (cmd.TryGetProperty("ranges", out var cutRangesEl) && cutRangesEl.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var rangeEl in cutRangesEl.EnumerateArray())
+                    {
+                        if (rangeEl.ValueKind != JsonValueKind.Object) continue;
+                        if (!rangeEl.TryGetProperty("start", out var sEl) || !sEl.TryGetInt64(out var sTicks)) continue;
+                        if (!rangeEl.TryGetProperty("end", out var eEl) || !eEl.TryGetInt64(out var eTicks) || eTicks <= sTicks) continue;
+
+                        string reason = rangeEl.TryGetProperty("reason", out var rEl) && rEl.ValueKind == JsonValueKind.String
+                            ? rEl.GetString() ?? ""
+                            : "";
+                        string customLabel = rangeEl.TryGetProperty("label", out var lEl) && lEl.ValueKind == JsonValueKind.String
+                            ? lEl.GetString() ?? ""
+                            : "";
+
+                        string category = reason switch
+                        {
+                            "pause" => L.T("AiSpeechPolishLabelPause"),
+                            "filler" => L.T("AiSpeechPolishLabelFiller"),
+                            "repeat" => L.T("AiSpeechPolishLabelRepeat"),
+                            _ => "Cut"
+                        };
+                        double durSec = (eTicks - sTicks) / (double)TicksPerSecond;
+                        string detail = !string.IsNullOrWhiteSpace(customLabel) ? customLabel : $"{durSec:0.0}s";
+
+                        double? mappedStartSec = MapSourceTicksToOutputSeconds(timeline, sTicks);
+                        double? mappedEndSec = MapSourceTicksToOutputSeconds(timeline, eTicks);
+                        double displayStart = mappedStartSec ?? (sTicks / (double)TicksPerSecond);
+                        double displayEnd = mappedEndSec ?? (displayStart + durSec);
+                        if (displayEnd < displayStart) displayEnd = displayStart + durSec;
+
+                        output.Add(new AiProposedChangeItem(
+                            "−",
+                            category,
+                            detail,
+                            displayStart,
+                            $"{FormatTimestamp(displayStart)}–{FormatTimestamp(displayEnd)}"));
+                    }
+                }
+                break;
+
             case "split":
                 long cutTicks = cmd.TryGetProperty("sourceTicks", out var ct) && ct.TryGetInt64(out var ctVal) ? ctVal : 0;
                 double cutSec = cutTicks / (double)TicksPerSecond;
@@ -790,6 +860,21 @@ public static class AiAgentCommandBuilder
         int scale = el.TryGetProperty("timescale", out var s) && s.TryGetInt32(out var sv) && sv > 0 ? sv : (int)TicksPerSecond;
         return ticks / (double)scale;
     }
+
+    private static double? MapSourceTicksToOutputSeconds(ResolvedTimeline timeline, long sourceTicks)
+    {
+        foreach (var clip in timeline.Clips)
+        {
+            long segEnd = clip.SourceStart + clip.SourceDuration;
+            if (sourceTicks >= clip.SourceStart && sourceTicks <= segEnd)
+            {
+                long deltaSrc = sourceTicks - clip.SourceStart;
+                long deltaOut = (long)Math.Round((decimal)deltaSrc * Math.Max(1, clip.Denominator) / Math.Max(1, clip.Numerator), MidpointRounding.AwayFromZero);
+                return (clip.OutputStart + deltaOut) / (double)TicksPerSecond;
+            }
+        }
+        return null;
+    }
 }
 
 /// <summary>Bridges FrameTrail's EditorSession with the Python LangGraph sidecar and provides deterministic local NL fallback.</summary>
@@ -823,11 +908,15 @@ public sealed class AiAgentBridge
 
     private readonly HttpClient httpClient;
     private readonly bool ownsHttpClient;
+    private readonly Func<EditorSession, SpeechPolishOptions, Action<AiStreamEvent>?, CancellationToken, Task<SpeechPolishResult>>? speechPolishRunner;
 
-    public AiAgentBridge(HttpClient? httpClient = null)
+    public AiAgentBridge(
+        HttpClient? httpClient = null,
+        Func<EditorSession, SpeechPolishOptions, Action<AiStreamEvent>?, CancellationToken, Task<SpeechPolishResult>>? speechPolishRunner = null)
     {
         ownsHttpClient = httpClient is null;
         this.httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+        this.speechPolishRunner = speechPolishRunner;
     }
 
     public async Task<bool> IsSidecarHealthyAsync(string sidecarUrl, CancellationToken ct = default)
@@ -1170,7 +1259,7 @@ public sealed class AiAgentBridge
         return null;
     }
 
-    private static async Task<AiAgentTurnResult> RunLocalFallbackTurnAsync(
+    private async Task<AiAgentTurnResult> RunLocalFallbackTurnAsync(
         EditorSession session,
         string userPrompt,
         double? playheadSec,
@@ -1183,7 +1272,7 @@ public sealed class AiAgentBridge
         var timeline = session.Timeline;
         onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.Thinking, "Parsing editing intent locally against timeline context..."));
 
-        // Multimodal local intents (silence removal & click-driven auto zoom) powered by AiMultimodalService
+        // Multimodal local intents (speech polish, silence removal & click-driven auto zoom)
         var multimodalResult = await TryRunLocalMultimodalIntentAsync(session, userPrompt, onEvent, ct).ConfigureAwait(false);
         (string ToolName, string Summary, string ReplyText, object? Command)? parsed = multimodalResult ?? TryParseLocalIntent(snapshot, timeline, userPrompt, playheadSec);
 
@@ -1191,10 +1280,10 @@ public sealed class AiAgentBridge
         {
             string help = L.T("AiStatusOfflineFallback") + " — " +
                 "你可以这样描述需求：\n" +
-                "- `在 1s 到 3s 添加 1.8 倍放大特效`\n" +
+                "- `一键优化配音表达，去掉停顿和嗯啊哦语气词`\n" +
                 "- `自动清理静音停顿` / `在关键点击处添加放大`\n" +
-                "- `把画布改为 9:16 竖屏` / `把片段倍速设为 2x`\n" +
-                "- `在 @当前时间 添加聚焦虚化` 或 `剪掉 1s 到 2s`";
+                "- `在 1s 到 3s 添加 1.8 倍放大特效`\n" +
+                "- `把画布改为 9:16 竖屏` / `把片段倍速设为 2x`";
             onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.Token, help));
             onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.Done, help));
             return new AiAgentTurnResult(help, Array.Empty<AiToolCallRecord>(), null, null, sw.ElapsedMilliseconds);
@@ -1227,7 +1316,7 @@ public sealed class AiAgentBridge
             sw.ElapsedMilliseconds);
     }
 
-    private static async Task<(string ToolName, string Summary, string ReplyText, object? Command)?> TryRunLocalMultimodalIntentAsync(
+    private async Task<(string ToolName, string Summary, string ReplyText, object? Command)?> TryRunLocalMultimodalIntentAsync(
         EditorSession session,
         string prompt,
         Action<AiStreamEvent>? onEvent,
@@ -1236,56 +1325,101 @@ public sealed class AiAgentBridge
         string lower = prompt.ToLowerInvariant();
         var snapshot = session.Snapshot;
 
-        // A. Silence / pause removal via native WAV analyzer (AiMultimodalService)
-        if (ContainsAny(lower, "静音", "停顿", "气口", "silence", "pause"))
+        // 0. One-click speech expression polish (pauses + filler words + stutters/repeats)
+        if (IsSpeechPolishPrompt(lower))
         {
-            onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.ToolStart, "Scanning project WAV tracks for silent pauses", "detect_silence_and_pauses", true));
-            var multimodal = new AiMultimodalService();
-            var audioTracks = snapshot.Media
-                .Where(m => m.Kind is MediaKind.Microphone or MediaKind.SystemAudio or MediaKind.AndroidAudio)
-                .ToArray();
+            var options = ParseSpeechPolishOptionsFromPrompt(lower);
+            onEvent?.Invoke(new AiStreamEvent(
+                AiStreamEventKind.ToolStart,
+                $"Analyzing voiceover ({options.Intensity}) for pauses, filler words, and stutters",
+                "optimize_speech_flow",
+                true));
 
-            var allSilences = new List<SilentInterval>();
-            foreach (var track in audioTracks)
+            SpeechPolishResult result;
+            if (speechPolishRunner is not null)
             {
-                ct.ThrowIfCancellationRequested();
-                string fullPath = Path.Combine(session.DirectoryPath, track.Path.Replace('/', Path.DirectorySeparatorChar));
-                if (!File.Exists(fullPath) || !fullPath.EndsWith(".wav", StringComparison.OrdinalIgnoreCase)) continue;
-                try
-                {
-                    var offsetTicks = VisualResources.Ticks(track.StartOffset);
-                    foreach (var s in multimodal.DetectWavSilence(fullPath, minSilenceSeconds: 1.0, thresholdDb: -38.0))
-                    {
-                        allSilences.Add(s with
-                        {
-                            StartTicks = s.StartTicks + offsetTicks,
-                            EndTicks = s.EndTicks + offsetTicks,
-                            StartSeconds = (s.StartTicks + offsetTicks) / (double)AiAgentCommandBuilder.TicksPerSecond
-                        });
-                    }
-                }
-                catch
-                {
-                    // Skip unreadable tracks.
-                }
+                result = await speechPolishRunner(session, options, onEvent, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                var polishService = new AiSpeechPolishService();
+                var progress = new Progress<SubtitleTranscriptionProgress>(p =>
+                    onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.Thinking, $"{p.Message} ({p.Percent:0}%)")));
+                result = await polishService.AnalyzeAndBuildCommandAsync(
+                    session.DirectoryPath, snapshot, options, progress, ct).ConfigureAwait(false);
             }
 
-            if (allSilences.Count == 0)
+            if (result.Command is null || result.Cuts.Count == 0)
+            {
+                string emptyMsg = result.UsedAsr
+                    ? "已完成配音与波形分析，未检测到需要剪除的多余停顿、语气词或明显口误重复，你的配音已经很流畅了。"
+                    : "已完成音轨波形扫描，未检测到明显停顿。" +
+                      (string.IsNullOrWhiteSpace(result.Warning)
+                          ? ""
+                          : $"\n\n> 提示：尚未启用语音识别模型，未能检测“嗯/啊/哦”等语气词（{result.Warning}）。你可以在右侧「字幕」面板下载本地 Whisper 模型或在 AI 设置中配置 OpenAI/Groq Key。");
+                return ("optimize_speech_flow", "No cuts needed", emptyMsg, null);
+            }
+
+            var detailParts = new List<string>();
+            if (result.PauseCount > 0) detailParts.Add($"**{result.PauseCount}** 处停顿");
+            if (result.FillerCount > 0) detailParts.Add($"**{result.FillerCount}** 处语气词");
+            if (result.RepeatCount > 0) detailParts.Add($"**{result.RepeatCount}** 处卡顿重复");
+            string breakdown = detailParts.Count > 0 ? string.Join("、", detailParts) : $"**{result.Cuts.Count}** 处片段";
+            string intensityLabel = options.Intensity switch
+            {
+                SpeechPolishIntensity.Gentle => "轻度",
+                SpeechPolishIntensity.Tight => "紧凑",
+                _ => "标准"
+            };
+
+            string reply = $"已完成配音口播精剪分析（{intensityLabel}模式）：共识别 {breakdown}，预计精简 **{result.TotalRemovedSeconds:0.1}s**，并将在剪辑接缝自动应用 6ms 消爆音平滑过渡。你可以在下方「时间线变更」卡片中点击时间戳逐条试听后决定保留或还原。";
+            if (!result.UsedAsr && options.RemoveFillers)
+            {
+                reply += "\n\n> 提示：当前未检测到可用的本地/云端 Whisper 模型，本轮仅清理了音轨停顿；下载本地 Whisper 模型后即可同步识别并移除「嗯、啊、哦」等语气词与口误。";
+            }
+
+            return (
+                "optimize_speech_flow",
+                $"Cut {result.Cuts.Count} spot(s) (-{result.TotalRemovedSeconds:0.1}s)",
+                reply,
+                result.Command);
+        }
+
+        // A. Silence / pause removal (supports both recorded WAVs and imported MP4/MOV/M4V embedded audio)
+        if (ContainsAny(lower, "静音", "停顿", "气口", "silence", "pause"))
+        {
+            onEvent?.Invoke(new AiStreamEvent(AiStreamEventKind.ToolStart, "Scanning project audio tracks for silent pauses", "detect_silence_and_pauses", true));
+            var pauseOnlyOptions = new SpeechPolishOptions(
+                Intensity: SpeechPolishIntensity.Gentle,
+                RemovePauses: true,
+                RemoveFillers: false,
+                RemoveRepeats: false,
+                MinPauseSeconds: 1.0,
+                PausePaddingSeconds: 0.16,
+                SilenceThresholdDb: -38.0);
+
+            SpeechPolishResult pauseResult;
+            if (speechPolishRunner is not null)
+            {
+                pauseResult = await speechPolishRunner(session, pauseOnlyOptions, onEvent, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                var polishService = new AiSpeechPolishService();
+                pauseResult = await polishService.AnalyzeAndBuildCommandAsync(
+                    session.DirectoryPath, snapshot, pauseOnlyOptions, null, ct).ConfigureAwait(false);
+            }
+
+            if (pauseResult.Command is null || pauseResult.Cuts.Count == 0)
             {
                 return ("detect_silence_and_pauses", "No silence > 1.0s found", "已扫描工程音轨，未检测到超过 **1.0s** 的明显静音停顿片段。", null);
             }
 
-            var batch = multimodal.BuildRemoveSilenceBatchCommand(snapshot, allSilences);
-            if (batch is null)
-            {
-                return ("detect_silence_and_pauses", $"{allSilences.Count} span(s), nothing removable", $"检测到 **{allSilences.Count}** 段静音，但都在可保留片段边界之外（至少需保留一个有效片段）。", null);
-            }
-
             return (
                 "detect_silence_and_pauses",
-                $"Found {allSilences.Count} silent span(s)",
-                $"已在音轨中检测到 **{allSilences.Count}** 处超过 1.0s 的静音停顿，并生成了非破坏性裁剪方案。",
-                batch);
+                $"Found {pauseResult.Cuts.Count} silent span(s)",
+                $"已在音轨中检测到 **{pauseResult.Cuts.Count}** 处超过 1.0s 的静音停顿（预计精简 **{pauseResult.TotalRemovedSeconds:0.1}s**），并生成了非破坏性裁剪方案。",
+                pauseResult.Command);
         }
 
         // B. Pointer-click driven smart zoom via PointerEvents (events/*.jsonl)
@@ -1575,4 +1709,35 @@ public sealed class AiAgentBridge
 
     private static bool ContainsAny(string text, params string[] tokens) =>
         tokens.Any(token => text.Contains(token, StringComparison.OrdinalIgnoreCase));
+
+    public static bool IsSpeechPolishPrompt(string lower) =>
+        ContainsAny(
+            lower,
+            "/polish", "口播精剪", "口播优化", "口播", "优化配音", "配音表达", "配音优化", "表达更流畅", "更加流畅",
+            "语气词", "语境词", "口水词", "填充词", "口头禅", "口误", "嗯啊哦", "嗯、啊", "卡顿重复",
+            "polish speech", "polish voiceover", "filler word", "filler words", "remove fillers",
+            "speech flow", "stutter", "um and uh", "clean up speech");
+
+    public static SpeechPolishOptions ParseSpeechPolishOptionsFromPrompt(string lower)
+    {
+        var intensity = SpeechPolishIntensity.Standard;
+        if (ContainsAny(lower, "轻度", "保守", "轻微", "gentle", "light", "conservative"))
+            intensity = SpeechPolishIntensity.Gentle;
+        else if (ContainsAny(lower, "紧凑", "激进", "强力", "快节奏", "tight", "aggressive", "compact"))
+            intensity = SpeechPolishIntensity.Tight;
+
+        bool onlyFillers = ContainsAny(lower, "只去语气词", "仅去语气词", "只删语气词", "不要删停顿", "保留停顿", "only fillers", "keep pauses");
+        bool onlyRepeats = ContainsAny(lower, "只去口误", "只删重复", "only repeats", "only stutters");
+        bool noRepeats = ContainsAny(lower, "不去口误", "不删重复", "不要删重复", "no repeats", "keep repeats");
+
+        bool removePauses = !onlyFillers && !onlyRepeats;
+        bool removeFillers = !onlyRepeats;
+        bool removeRepeats = !onlyFillers && !noRepeats && intensity != SpeechPolishIntensity.Gentle;
+
+        return new SpeechPolishOptions(
+            Intensity: intensity,
+            RemovePauses: removePauses,
+            RemoveFillers: removeFillers,
+            RemoveRepeats: removeRepeats);
+    }
 }

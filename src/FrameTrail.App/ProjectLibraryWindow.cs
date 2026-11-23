@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Collections.ObjectModel;
+using FrameTrail.Workspace;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
@@ -8,6 +9,8 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 using Windows.System;
 
 namespace FrameTrail.App;
@@ -18,12 +21,18 @@ internal sealed partial class ProjectLibraryWindow : Window
     private readonly string[] folders;
     private readonly string? currentProject;
     private readonly Func<string, Task> open, delete;
+    private readonly Action? createNew;
+    private readonly Func<IReadOnlyList<string>, Task>? createFromVideos;
     private readonly Grid root = new() { Padding = new Thickness(28), RowSpacing = 18 };
     private readonly TextBox search = new() { PlaceholderText = L.T("S50EE445EF0FB"), MaxLength = 256 };
     private readonly ListView list = new() { SelectionMode = ListViewSelectionMode.Single, IsTabStop = true };
     private readonly TextBlock count = new(), empty = new() { TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
     private readonly InfoBar notice = new() { IsClosable = true };
+    private readonly Button newProjectButton = new() { Content = L.T("ProjectLibraryNewButton") };
     private readonly Button browse = new() { Content = L.T("SFD2C929E7801") }, refresh = new() { Content = L.T("SAEE887434131") };
+    private readonly Grid dropOverlay = new() { Visibility = Visibility.Collapsed, IsHitTestVisible = false, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(148, 0, 0, 0)), CornerRadius = new CornerRadius(14) };
+    private readonly Border dropOverlayCard = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(16), Padding = new Thickness(24, 18, 24, 18) };
+    private readonly TextBlock dropOverlayText = new() { Text = L.T("DropVideoCreateProjectPrompt"), FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly CancellationTokenSource cancellation = new();
     private readonly Microsoft.UI.Dispatching.DispatcherQueueTimer searchDelay;
     private readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,9 +42,17 @@ internal sealed partial class ProjectLibraryWindow : Window
     private ContentDialog? confirmation;
     internal Task Ready => ready.Task;
 
-    internal ProjectLibraryWindow(ProjectCatalog catalog, IEnumerable<string> folders, string? currentProject, Func<string, Task> open, Func<string, Task> delete)
+    internal ProjectLibraryWindow(
+        ProjectCatalog catalog,
+        IEnumerable<string> folders,
+        string? currentProject,
+        Func<string, Task> open,
+        Func<string, Task> delete,
+        Action? createNew = null,
+        Func<IReadOnlyList<string>, Task>? createFromVideos = null)
     {
         this.catalog = catalog; this.folders = folders.ToArray(); this.currentProject = currentProject; this.open = open; this.delete = delete;
+        this.createNew = createNew; this.createFromVideos = createFromVideos;
         Title = L.T("S9B33FBA75B36"); AppIcon.Apply(this); Content = root;
         root.RequestedTheme = EditorAppearance.Current;
         root.RowDefinitions.Add(new() { Height = GridLength.Auto });
@@ -46,12 +63,27 @@ internal sealed partial class ProjectLibraryWindow : Window
         var heading = new StackPanel { Spacing = 6 }; heading.Children.Add(Text(L.T("SC565A6AA55BD"), 26));
         heading.Children.Add(Text(L.T("S6724B5CA42E1"), 13, true)); root.Children.Add(heading);
         Grid.SetRow(search, 1); root.Children.Add(search);
-        var body = new Grid(); body.Children.Add(list); body.Children.Add(empty); Grid.SetRow(body, 2); root.Children.Add(body);
+        var body = new Grid(); body.Children.Add(list); body.Children.Add(empty);
+        var overlayContent = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Center };
+        overlayContent.Children.Add(new EditorGlyph { Kind = "Film", Width = 22, Height = 22, HorizontalAlignment = HorizontalAlignment.Center });
+        overlayContent.Children.Add(dropOverlayText);
+        dropOverlayCard.Child = overlayContent;
+        dropOverlay.Children.Add(dropOverlayCard);
+        body.Children.Add(dropOverlay);
+        Grid.SetRow(body, 2); root.Children.Add(body);
         Grid.SetRow(notice, 3); root.Children.Add(notice);
-        var footer = new Grid { ColumnSpacing = 10 }; footer.ColumnDefinitions.Add(new()); footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var footer = new Grid { ColumnSpacing = 10 };
+        footer.ColumnDefinitions.Add(new());
+        footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        footer.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         count.VerticalAlignment = VerticalAlignment.Center; footer.Children.Add(count);
+        newProjectButton.Style = (Style)Application.Current.Resources["EditorPrimaryButton"];
+        newProjectButton.Padding = new Thickness(14, 0, 14, 0);
+        newProjectButton.Visibility = createNew is not null ? Visibility.Visible : Visibility.Collapsed;
         foreach (var button in new[] { browse, refresh }) { button.Style = (Style)Application.Current.Resources["EditorButton"]; button.Padding = new Thickness(14, 0, 14, 0); }
-        Grid.SetColumn(browse, 1); Grid.SetColumn(refresh, 2); footer.Children.Add(browse); footer.Children.Add(refresh); Grid.SetRow(footer, 4); root.Children.Add(footer);
+        Grid.SetColumn(newProjectButton, 1); Grid.SetColumn(browse, 2); Grid.SetColumn(refresh, 3);
+        footer.Children.Add(newProjectButton); footer.Children.Add(browse); footer.Children.Add(refresh); Grid.SetRow(footer, 4); root.Children.Add(footer);
         AutomationProperties.SetAutomationId(search, "projects.search"); AutomationProperties.SetName(search, L.T("SDFB59EA2B7A2"));
         search.Resources["TextControlBorderBrushFocused"] = Brush("EditorAccent");
         AutomationProperties.SetAutomationId(list, "projects.list"); AutomationProperties.SetName(list, L.T("S909A4F288125"));
@@ -59,7 +91,16 @@ internal sealed partial class ProjectLibraryWindow : Window
         // The card owns its hover surface; the recycled ListViewItem must not draw a second one.
         foreach (string key in new[] { "ListViewItemBackgroundPointerOver", "ListViewItemBackgroundPressed", "ListViewItemBackgroundSelected", "ListViewItemBackgroundSelectedPointerOver", "ListViewItemBackgroundSelectedPressed" })
             list.Resources[key] = new SolidColorBrush(Colors.Transparent);
+        AutomationProperties.SetAutomationId(newProjectButton, "projects.new");
         AutomationProperties.SetAutomationId(browse, "projects.browse"); AutomationProperties.SetAutomationId(refresh, "projects.refresh");
+        if (createFromVideos is not null)
+        {
+            root.AllowDrop = true;
+            root.DragOver += Root_DragOver;
+            root.DragLeave += Root_DragLeave;
+            root.Drop += Root_Drop;
+        }
+        newProjectButton.Click += (_, _) => { if (working || confirming || createNew is null) return; allowClose = true; Close(); createNew(); };
         searchDelay=DispatcherQueue.CreateTimer();searchDelay.Interval=TimeSpan.FromMilliseconds(150);searchDelay.IsRepeating=false;
         searchDelay.Tick+=(_,_)=>RenderRows();
         search.TextChanged += (_, _) => {searchDelay.Stop();searchDelay.Start();};
@@ -84,6 +125,9 @@ internal sealed partial class ProjectLibraryWindow : Window
         void Theme(ElementTheme theme) {
             root.RequestedTheme = theme; root.Background = Brush("EditorStage"); count.Foreground = empty.Foreground = Brush("EditorSecondary");
             search.Resources["TextControlBorderBrushFocused"] = Brush("EditorAccent");
+            dropOverlayCard.Background = Brush("EditorPanel");
+            dropOverlayCard.BorderBrush = Brush("EditorAccent");
+            dropOverlayText.Foreground = Brush("EditorInk");
             ((TextBlock)heading.Children[0]).Foreground = Brush("EditorInk"); ((TextBlock)heading.Children[1]).Foreground = Brush("EditorSecondary"); RenderRows();
         }
         EditorAppearance.Changed += Theme;
@@ -107,9 +151,78 @@ internal sealed partial class ProjectLibraryWindow : Window
     private void SetBusy(bool value)
     {
         working = value;
-        search.IsEnabled = browse.IsEnabled = refresh.IsEnabled = !value;
+        search.IsEnabled = newProjectButton.IsEnabled = browse.IsEnabled = refresh.IsEnabled = !value;
         // Block actions without switching every card into its dimmed disabled visual state.
         list.IsHitTestVisible = list.IsTabStop = !value;
+    }
+
+    private void Root_DragOver(object sender, DragEventArgs e)
+    {
+        if (working || confirming || createFromVideos is null || !e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            dropOverlay.Visibility = Visibility.Collapsed;
+            return;
+        }
+        e.AcceptedOperation = DataPackageOperation.Copy;
+        if (e.DragUIOverride is not null)
+            e.DragUIOverride.Caption = L.T("DropVideoCreateProjectPrompt");
+        dropOverlay.Visibility = Visibility.Visible;
+        e.Handled = true;
+    }
+
+    private void Root_DragLeave(object sender, DragEventArgs e)
+    {
+        dropOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private async void Root_Drop(object sender, DragEventArgs e)
+    {
+        dropOverlay.Visibility = Visibility.Collapsed;
+        if (working || confirming || createFromVideos is null || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        e.Handled = true;
+
+        var deferral = e.GetDeferral();
+        string[] paths;
+        try
+        {
+            var items = await e.DataView.GetStorageItemsAsync();
+            paths = items
+                .OfType<StorageFile>()
+                .Select(f => f.Path)
+                .Where(p => !string.IsNullOrWhiteSpace(p) && ProjectWorkspace.IsSupportedImportVideoExtension(Path.GetExtension(p)))
+                .ToArray();
+        }
+        catch (Exception error)
+        {
+            ShowError(error);
+            return;
+        }
+        finally
+        {
+            deferral.Complete();
+        }
+
+        if (paths.Length == 0)
+        {
+            notice.Title = L.T("NewProjectCreateFailed");
+            notice.Message = L.T("NewProjectUnsupportedFiles");
+            notice.Severity = InfoBarSeverity.Warning;
+            notice.IsOpen = true;
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            await createFromVideos(paths);
+            allowClose = true;
+            Close();
+        }
+        catch (Exception error)
+        {
+            if (!closed) { SetBusy(false); ShowError(error); }
+        }
     }
     private void ShowError(Exception error) { notice.Title = L.T("S79BE13BDF0C5"); notice.Message = error.Message; notice.Severity = InfoBarSeverity.Error; notice.IsOpen = true; }
 

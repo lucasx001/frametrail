@@ -36,6 +36,7 @@ public sealed partial class EditorWindow : Window
     private readonly Func<string, Task>? openProject;
     private readonly Func<string, Task>? deleteProject;
     private readonly Action? browseProjects;
+    private readonly Action? newVideoProject;
     private bool switchingProjects;
     private bool projectTransition;
     private bool showingDeleteConfirmation;
@@ -43,7 +44,7 @@ public sealed partial class EditorWindow : Window
     internal Task<bool> Startup => startup.Task;
     internal bool HasClosed => allowClose;
 
-    internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null, Action? browseProjects = null)
+    internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null, Action? browseProjects = null, Action? newVideoProject = null)
     {
         editor = new EditorSession(workspace);
         editController = new EditorEditController(editor);
@@ -51,6 +52,7 @@ public sealed partial class EditorWindow : Window
         this.openProject = openProject;
         this.deleteProject = deleteProject;
         this.browseProjects = browseProjects;
+        this.newVideoProject = newVideoProject;
         var launchArguments = Environment.GetCommandLineArgs();
         int presetTestIndex = Array.IndexOf(launchArguments, "--preset-library");
         if (launchArguments.Contains("--inspect-ui") && presetTestIndex >= 0 && launchArguments.Length > presetTestIndex + 1)
@@ -146,6 +148,12 @@ public sealed partial class EditorWindow : Window
         if (switchingProjects || closing || working || showingExport || showingDeleteConfirmation || editor.IsExporting || flushingPictureInputs || openProject is null) return;
         Pause(); await FlushVisualChangesAsync(); await FlushPictureInputsAsync();
         browseProjects?.Invoke();
+    });
+    private async void NewProject_Click(object sender, RoutedEventArgs e) => await SafeAsync(async () =>
+    {
+        if (switchingProjects || closing || working || showingExport || showingDeleteConfirmation || editor.IsExporting || flushingPictureInputs || newVideoProject is null) return;
+        Pause(); await FlushVisualChangesAsync(); await FlushPictureInputsAsync();
+        newVideoProject.Invoke();
     });
     internal async Task SwitchSelectedProjectAsync(string path)
     {
@@ -271,6 +279,7 @@ public sealed partial class EditorWindow : Window
         ExportLabel.Text = editor.IsExporting ? L.T("S7EEFAAFF791F") : L.T("S76420433F22D");
         ProjectMenuButton.IsEnabled = !working && !closing && !switchingProjects && !showingExport && !showingDeleteConfirmation && !editor.IsExporting;
         ImportClipButton.IsEnabled = ImportClipsMenuItem.IsEnabled = CanImportClips;
+        NewProjectMenuItem.IsEnabled = newVideoProject is not null && ProjectMenuButton.IsEnabled;
         SwitchProjectMenuItem.IsEnabled = openProject is not null && ProjectMenuButton.IsEnabled;
         DeleteProjectButton.IsEnabled = DeleteProjectMenuItem.IsEnabled = deleteProject is not null && ProjectMenuButton.IsEnabled && !projectTransition;
         if (editor.SaveError is not null) ShowNotice(L.T("S555A663BC512"), editor.SaveError + L.T("SF697646FD2A3"), InfoBarSeverity.Error);

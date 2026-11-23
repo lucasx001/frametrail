@@ -51,8 +51,9 @@ def set_project_context(
     base_url: str = "",
     provider: str = "",
     model_name: str = "",
+    callback_url: str = "",
 ) -> contextvars.Token:
-    """Bind the active project snapshot, workspace path, and BYOK credentials for tool calls in this turn."""
+    """Bind the active project snapshot, workspace path, callback URL, and BYOK credentials for tool calls in this turn."""
     return _current_project_context.set(
         {
             "snapshot": snapshot or {},
@@ -62,6 +63,7 @@ def set_project_context(
             "base_url": (base_url or "").strip(),
             "provider": (provider or "").strip().lower(),
             "model_name": (model_name or "").strip(),
+            "callback_url": (callback_url or "").strip(),
         }
     )
 
@@ -289,6 +291,86 @@ def cut_time_range(start_sec: float, end_sec: float) -> str:
         raise ValueError("Cannot cut the entire timeline; at least one clip must remain.")
 
     return json.dumps({"op": "batch", "commands": commands}, ensure_ascii=False)
+
+
+@tool
+def cut_time_ranges(
+    ranges: list[dict[str, Any]],
+    time_space: str = "source",
+    min_keep_sec: float = 0.1,
+) -> str:
+    """Atomically cut multiple time ranges [{start_sec, end_sec, reason?, label?}, ...] from the timeline in a single op='cutRanges' command (supports up to 2000 ranges with single-step Undo)."""
+    if not isinstance(ranges, list) or len(ranges) == 0:
+        raise ValueError("ranges must be a non-empty list of {start_sec, end_sec} objects.")
+    if len(ranges) > 2000:
+        raise ValueError("cut_time_ranges supports at most 2000 ranges.")
+
+    ctx = _current_project_context.get()
+    snapshot = ctx.get("snapshot", {}) or {}
+    total_ticks = _ticks(snapshot.get("sourceDuration", {}))
+    clips = _resolve_clips(snapshot)
+    if total_ticks <= 0 or not clips:
+        raise ValueError("No clips available on timeline.")
+
+    space = (time_space or "source").strip().lower()
+    if space not in ("source", "output"):
+        raise ValueError("time_space must be 'source' or 'output'.")
+
+    resolved_ranges: list[dict[str, Any]] = []
+    for item in ranges:
+        if not isinstance(item, dict):
+            continue
+        raw_s = item.get("start_sec", item.get("startSec"))
+        raw_e = item.get("end_sec", item.get("endSec"))
+        if raw_s is None or raw_e is None:
+            continue
+        s_sec = float(raw_s)
+        e_sec = float(raw_e)
+        if e_sec <= s_sec or s_sec < 0:
+            raise ValueError(f"Invalid range [{s_sec}, {e_sec}]: require 0 <= start_sec < end_sec.")
+        reason = str(item.get("reason") or "").strip()
+        label = str(item.get("label") or "").strip()
+
+        if space == "source":
+            s_ticks = max(0, min(total_ticks, round(s_sec * TICKS_PER_SECOND)))
+            e_ticks = max(0, min(total_ticks, round(e_sec * TICKS_PER_SECOND)))
+            if e_ticks > s_ticks:
+                entry: dict[str, Any] = {"start": s_ticks, "end": e_ticks}
+                if reason:
+                    entry["reason"] = reason
+                if label:
+                    entry["label"] = label
+                resolved_ranges.append(entry)
+        else:
+            cut_out_s = max(0, round(s_sec * TICKS_PER_SECOND))
+            cut_out_e = round(e_sec * TICKS_PER_SECOND)
+            for clip in clips:
+                c0 = clip["outputStart"]
+                c1 = c0 + clip["outputDuration"]
+                ov0 = max(c0, cut_out_s)
+                ov1 = min(c1, cut_out_e)
+                if ov1 <= ov0:
+                    continue
+                s0 = clip["sourceStart"] + round((ov0 - c0) * clip["numerator"] / clip["denominator"])
+                s1 = clip["sourceStart"] + round((ov1 - c0) * clip["numerator"] / clip["denominator"])
+                s0 = max(clip["sourceStart"], min(clip["sourceStart"] + clip["sourceDuration"], s0))
+                s1 = max(clip["sourceStart"], min(clip["sourceStart"] + clip["sourceDuration"], s1))
+                if s1 > s0:
+                    entry = {"start": s0, "end": s1}
+                    if reason:
+                        entry["reason"] = reason
+                    if label:
+                        entry["label"] = label
+                    resolved_ranges.append(entry)
+
+    if not resolved_ranges:
+        raise ValueError("None of the specified ranges intersect the timeline.")
+
+    min_keep_ticks = max(100_000, min(10_000_000, round(float(min_keep_sec) * TICKS_PER_SECOND)))
+    return json.dumps(
+        {"op": "cutRanges", "ranges": resolved_ranges[:2000], "minKeepTicks": min_keep_ticks},
+        ensure_ascii=False,
+    )
 
 
 @tool
@@ -770,6 +852,7 @@ def get_phase1_tools() -> list[Any]:
         get_timeline_overview,
         search_pointer_clicks,
         cut_time_range,
+        cut_time_ranges,
         change_segment_speed,
         add_zoom_effect,
         add_spotlight_or_blur,

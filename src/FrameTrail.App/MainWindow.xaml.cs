@@ -15,7 +15,7 @@ namespace FrameTrail.App;
 
 public sealed partial class MainWindow : Window
 {
-    private const int SetupWidth = 462;
+    private const int SetupWidth = 502;
     private EngineSession? session;
     private RecordingCoordinator coordinator = new(presetLibrary: () => new VisualPresetLibrary());
     private ProjectWorkspace? opened;
@@ -106,7 +106,7 @@ public sealed partial class MainWindow : Window
                 if (cameraPreview is { } cp) { await cp.StopAsync(); cp.Close(); }
                 await coordinator.DisposeAsync();
                 if (opened is not null) await opened.DisposeAsync();
-                completion?.Close(); editorWindow?.Close(); UnregisterHotkeys();
+                completion?.Close(); newProjectWindow?.Close(); editorWindow?.Close(); UnregisterHotkeys();
                 if (previousProcedure != 0) SetWindowLongPtr(hwnd, -4, previousProcedure);
                 session?.Dispose(); allowClose = true; Close();
             }
@@ -628,6 +628,8 @@ public sealed partial class MainWindow : Window
         bool idle = coordinator.State is RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete;
         SetPanelEnabled(SetupPanel, idle && !busy);
         ApplyAutomaticZoom();
+        NewProjectButton.IsEnabled = idle && !busy;
+        OpenProjectButton.IsEnabled = idle && !busy;
         StartButton.IsEnabled = session is not null && (sources.Count > 0 || sourceMode == 3) && !busy;
         PauseButton.IsEnabled = !busy && coordinator.State is RecordingWorkspaceState.Recording or RecordingWorkspaceState.Paused;
         StopButton.IsEnabled = PauseButton.IsEnabled;
@@ -700,6 +702,7 @@ public sealed partial class MainWindow : Window
         completion.Activate(); AppWindow.Hide();
     }
     private void Open_Click(object sender, RoutedEventArgs e) => ShowProjectLibrary();
+    private void NewProject_Click(object sender, RoutedEventArgs e) { HideFlyouts(); ShowNewProjectWindow(); }
     private async Task OpenExistingProjectAsync(string path)
     {
         if (coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete)) throw new InvalidOperationException(L.T("S0CAF0D47B58B"));
@@ -799,12 +802,12 @@ public sealed partial class MainWindow : Window
     private EditorWindow CreateEditor(ProjectWorkspace workspace, string? validation = null)
     {
         RememberCatalogProject(workspace.DirectoryPath);
-        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync, ShowProjectLibrary);
+        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync, ShowProjectLibrary, ShowNewProjectWindow);
         window.Closed += async (_, _) => {
             if (!ReferenceEquals(editorWindow, window)) return;
             editorWindow = null;
             if (validation is not null) { if (opened is not null) await opened.DisposeAsync(); allowClose = true; closing = true; Close(); Application.Current.Exit(); }
-            else if (!closing) { await InitializeRecorderAsync(); if (projectLibraryWindow is null && editorWindow is null && !closing) { AppWindow.Show(); Activate(); } }
+            else if (!closing) { await InitializeRecorderAsync(); if (projectLibraryWindow is null && newProjectWindow is null && editorWindow is null && !closing) { AppWindow.Show(); Activate(); } }
         };
         return window;
     }

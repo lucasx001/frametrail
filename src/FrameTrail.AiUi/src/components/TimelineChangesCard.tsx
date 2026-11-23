@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { RotateCcw } from 'lucide-react';
 import type { TimelineChangesPayload } from '@/bridge/protocol';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +14,7 @@ interface TimelineChangesCardProps {
 export const TimelineChangesCard: React.FC<TimelineChangesCardProps> = ({ changes }) => {
   const { tr, state, seekTimeline, acceptChanges, rejectChanges, undoChanges } =
     useAiCopilotStore();
+  const [expanded, setExpanded] = useState(false);
 
   const statusText =
     changes.state === 'previewing'
@@ -29,7 +30,7 @@ export const TimelineChangesCard: React.FC<TimelineChangesCardProps> = ({ change
         ? 'border-transparent bg-[var(--success)]/15 text-[var(--success)]'
         : 'border-border bg-muted text-muted-foreground';
 
-  const visibleItems = changes.items.slice(0, 10);
+  const visibleItems = expanded ? changes.items : changes.items.slice(0, 10);
   const overflowCount = Math.max(0, changes.items.length - 10);
 
   return (
@@ -94,9 +95,14 @@ export const TimelineChangesCard: React.FC<TimelineChangesCardProps> = ({ change
         })}
 
         {overflowCount > 0 && (
-          <div className="text-[10px] text-muted-foreground">
-            {tr('AiMoreEdits', overflowCount)}
-          </div>
+          <button
+            type="button"
+            data-testid="timeline-changes-toggle-more"
+            onClick={() => setExpanded((prev) => !prev)}
+            className="mt-0.5 self-start text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {expanded ? tr('AiShowLessEdits') : tr('AiMoreEdits', overflowCount)}
+          </button>
         )}
       </div>
 

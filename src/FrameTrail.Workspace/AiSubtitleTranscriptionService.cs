@@ -47,6 +47,18 @@ public sealed record TranscribedSegment(
     string TrackKind = "microphone",
     IReadOnlyList<TranscribedWord>? Words = null);
 
+public sealed record AudioTrackEnergyEnvelope(
+    string TrackKind,
+    long SourceStartTicks,
+    double FrameSeconds,
+    double[] FrameDb);
+
+public sealed record RawSpeechTranscriptionResult(
+    IReadOnlyList<TranscribedSegment> Segments,
+    IReadOnlyList<AudioTrackEnergyEnvelope> Envelopes,
+    string EngineUsed,
+    IReadOnlyList<(long Start, long End)>? TargetRanges);
+
 /// <summary>
 /// Dual-engine ASR subtitle transcription service supporting offline Whisper.net (Vulkan GPU / CPU)
 /// and cloud BYOK OpenAI / Groq Whisper APIs with smart punctuation segmentation and word-level timing.
@@ -242,6 +254,241 @@ public sealed class AiSubtitleTranscriptionService
         {
             TryDeleteDirectory(tempRoot);
         }
+    }
+
+    /// <summary>
+    /// Extracts 10ms RMS dBFS energy envelopes from project audio/video tracks (supporting both recorded WAVs and imported MP4/MOV clips).
+    /// </summary>
+    public async Task<(IReadOnlyList<AudioTrackEnergyEnvelope> Envelopes, IReadOnlyList<(long Start, long End)>? TargetRanges)> ExtractAudioEnvelopesAsync(
+        string projectDirectory,
+        ProjectSnapshot snapshot,
+        string trackFilter = "all",
+        IReadOnlyList<string>? clipIds = null,
+        double? startSeconds = null,
+        double? endSeconds = null,
+        double frameSeconds = 0.01,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+            throw new ArgumentException("Project directory is required.", nameof(projectDirectory));
+        ArgumentNullException.ThrowIfNull(snapshot);
+
+        var targetRanges = ResolveTargetSourceRanges(snapshot, clipIds, startSeconds, endSeconds);
+        var audioSlices = ResolveAudioSlices(projectDirectory, snapshot, trackFilter, targetRanges);
+        if (audioSlices.Count == 0)
+            return (Array.Empty<AudioTrackEnergyEnvelope>(), targetRanges);
+
+        string tempRoot = Path.Combine(Path.GetTempPath(), "FrameTrail-Env-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            var envelopes = new List<AudioTrackEnergyEnvelope>();
+            for (int i = 0; i < audioSlices.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var slice = audioSlices[i];
+                string wavPath = Path.Combine(tempRoot, $"env-{i:000}.wav");
+                try
+                {
+                    await Task.Run(() => audioExtractor(slice.FullPath, wavPath, slice.LocalStartTicks, slice.DurationTicks), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Skip video-only or unreadable slices so voiced clips in the same project still analyze cleanly.
+                    continue;
+                }
+                if (File.Exists(wavPath) && new FileInfo(wavPath).Length > 44)
+                {
+                    double[] frameDb = ComputePcm16kEnergyEnvelopeDb(wavPath, frameSeconds);
+                    if (frameDb.Length > 0)
+                        envelopes.Add(new AudioTrackEnergyEnvelope(slice.TrackKind, slice.SourceStartTicks, frameSeconds, frameDb));
+                }
+            }
+            return (envelopes, targetRanges);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    /// <summary>
+    /// Runs word-level ASR transcription and computes 10ms PCM energy envelopes in a single extraction pass
+    /// for speech expression optimization (pause, filler word, and stutter removal).
+    /// </summary>
+    public async Task<RawSpeechTranscriptionResult> TranscribeRawWordsAsync(
+        string projectDirectory,
+        ProjectSnapshot snapshot,
+        SubtitleTranscriptionRequest request,
+        double envelopeFrameSeconds = 0.01,
+        IProgress<SubtitleTranscriptionProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(projectDirectory))
+            throw new ArgumentException("Project directory is required.", nameof(projectDirectory));
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ArgumentNullException.ThrowIfNull(request);
+
+        string normalizedEngine = NormalizeEngine(request.Engine);
+        progress?.Report(new SubtitleTranscriptionProgress("extracting", 5, "Preparing audio tracks..."));
+
+        var targetRanges = ResolveTargetSourceRanges(snapshot, request.ClipIds, request.StartSeconds, request.EndSeconds);
+        var audioSlices = ResolveAudioSlices(projectDirectory, snapshot, request.TrackFilter, targetRanges);
+        if (audioSlices.Count == 0)
+            return new RawSpeechTranscriptionResult(Array.Empty<TranscribedSegment>(), Array.Empty<AudioTrackEnergyEnvelope>(), "none", targetRanges);
+
+        string tempRoot = Path.Combine(Path.GetTempPath(), "FrameTrail-Speech-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        try
+        {
+            var extractedSlices = new List<(AudioSlice Slice, string WavPath)>();
+            var envelopes = new List<AudioTrackEnergyEnvelope>();
+            for (int i = 0; i < audioSlices.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var slice = audioSlices[i];
+                string wavPath = Path.Combine(tempRoot, $"slice-{i:000}.wav");
+                try
+                {
+                    await Task.Run(() => audioExtractor(slice.FullPath, wavPath, slice.LocalStartTicks, slice.DurationTicks), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Skip video-only or unreadable slices so voiced clips in the same project still transcribe cleanly.
+                    continue;
+                }
+                if (File.Exists(wavPath) && new FileInfo(wavPath).Length > 44)
+                {
+                    extractedSlices.Add((slice, wavPath));
+                    double[] frameDb = ComputePcm16kEnergyEnvelopeDb(wavPath, envelopeFrameSeconds);
+                    if (frameDb.Length > 0)
+                        envelopes.Add(new AudioTrackEnergyEnvelope(slice.TrackKind, slice.SourceStartTicks, envelopeFrameSeconds, frameDb));
+                }
+            }
+
+            if (extractedSlices.Count == 0)
+                return new RawSpeechTranscriptionResult(Array.Empty<TranscribedSegment>(), envelopes, "none", targetRanges);
+
+            var rawSegments = new List<TranscribedSegment>();
+            string engineUsed = normalizedEngine;
+
+            if (normalizedEngine == "whisper-local")
+            {
+                string modelId = string.IsNullOrWhiteSpace(request.ModelId)
+                    ? WhisperModelManager.LargeTurboModelId
+                    : request.ModelId.Trim();
+
+                var downloadProgress = new Progress<WhisperDownloadProgress>(p =>
+                {
+                    double scaled = 10.0 + p.Percent * 0.25;
+                    progress?.Report(new SubtitleTranscriptionProgress("downloading", scaled, $"Downloading {modelId} ({p.Percent:0}%)..."));
+                });
+
+                string modelPath = await modelManager.EnsureModelAsync(modelId, downloadProgress, cancellationToken)
+                    .ConfigureAwait(false);
+                engineUsed = $"whisper-local:{modelId}";
+
+                for (int i = 0; i < extractedSlices.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (slice, wavPath) = extractedSlices[i];
+                    if (IsEntirelySilent(wavPath))
+                        continue;
+
+                    double sliceBasePct = 35.0 + (55.0 * i / extractedSlices.Count);
+                    double sliceSpanPct = 55.0 / extractedSlices.Count;
+                    var sliceSegments = await TranscribeLocalWavAsync(
+                        wavPath,
+                        modelPath,
+                        request.Language,
+                        request.VocabularyPrompt,
+                        slice.TrackKind,
+                        slice.SourceStartTicks / (double)TicksPerSecond,
+                        pct => progress?.Report(new SubtitleTranscriptionProgress(
+                            "transcribing",
+                            sliceBasePct + sliceSpanPct * (pct / 100.0),
+                            $"Analyzing speech ({i + 1}/{extractedSlices.Count})...")),
+                        cancellationToken).ConfigureAwait(false);
+                    rawSegments.AddRange(sliceSegments);
+                }
+            }
+            else
+            {
+                var (apiKey, endpoint, cloudModel) = ResolveCloudConfig(normalizedEngine, request);
+                engineUsed = $"{normalizedEngine}:{cloudModel}";
+
+                for (int i = 0; i < extractedSlices.Count; i++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (slice, wavPath) = extractedSlices[i];
+                    if (IsEntirelySilent(wavPath))
+                        continue;
+
+                    double pct = 35.0 + (55.0 * i / extractedSlices.Count);
+                    progress?.Report(new SubtitleTranscriptionProgress(
+                        "transcribing",
+                        pct,
+                        $"Analyzing speech via {normalizedEngine} ({i + 1}/{extractedSlices.Count})..."));
+
+                    var sliceSegments = await TranscribeCloudWavAsync(
+                        wavPath,
+                        apiKey,
+                        endpoint,
+                        cloudModel,
+                        request.Language,
+                        request.VocabularyPrompt,
+                        slice.TrackKind,
+                        slice.SourceStartTicks / (double)TicksPerSecond,
+                        tempRoot,
+                        cancellationToken).ConfigureAwait(false);
+                    rawSegments.AddRange(sliceSegments);
+                }
+            }
+
+            rawSegments.Sort((a, b) => a.StartSeconds.CompareTo(b.StartSeconds));
+            return new RawSpeechTranscriptionResult(rawSegments, envelopes, engineUsed, targetRanges);
+        }
+        finally
+        {
+            TryDeleteDirectory(tempRoot);
+        }
+    }
+
+    /// <summary>Computes per-frame RMS dBFS values from a 16kHz 16-bit mono PCM WAV file.</summary>
+    public static double[] ComputePcm16kEnergyEnvelopeDb(string wavPath, double frameSeconds = 0.01)
+    {
+        if (!File.Exists(wavPath))
+            return Array.Empty<double>();
+        byte[] bytes = File.ReadAllBytes(wavPath);
+        const int headerSize = 44;
+        if (bytes.Length <= headerSize)
+            return Array.Empty<double>();
+
+        int totalSamples = (bytes.Length - headerSize) / 2;
+        int frameSamples = Math.Max(1, (int)Math.Round(TargetSampleRate * Math.Clamp(frameSeconds, 0.005, 0.1)));
+        int frameCount = (totalSamples + frameSamples - 1) / frameSamples;
+        var result = new double[frameCount];
+        const double inv = 1.0 / 32768.0;
+
+        for (int f = 0; f < frameCount; f++)
+        {
+            int startSample = f * frameSamples;
+            int endSample = Math.Min(totalSamples, startSample + frameSamples);
+            double sumSq = 0.0;
+            for (int s = startSample; s < endSample; s++)
+            {
+                short sample = BinaryPrimitives.ReadInt16LittleEndian(bytes.AsSpan(headerSize + s * 2, 2));
+                double norm = sample * inv;
+                sumSq += norm * norm;
+            }
+            int count = Math.Max(1, endSample - startSample);
+            double rms = Math.Sqrt(sumSq / count);
+            result[f] = rms <= 1e-6 ? -120.0 : Math.Max(-120.0, 20.0 * Math.Log10(rms));
+        }
+
+        return result;
     }
 
     /// <summary>

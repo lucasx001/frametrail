@@ -4,6 +4,8 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace frametrail::core {
 using Json = nlohmann::json;
@@ -268,6 +270,130 @@ void apply_command(Project& p, const Json& cmd) {
             auto settings = Json::parse(p.editor_json);
             settings["subtitleStyle"] = cmd["subtitleStyle"];
             p.editor_json = settings.dump();
+        }
+    } else if (op == "cutRanges") {
+        if (!cmd.contains("ranges") || !cmd["ranges"].is_array() || cmd["ranges"].empty() || cmd["ranges"].size() > 2000)
+            throw ValidationError("cutRanges.ranges", "expected array of 1..2000 cut ranges");
+        const auto total_duration = normalized_ticks(p.source_duration);
+        int64_t min_keep_ticks = 1'000'000;
+        if (cmd.contains("minKeepTicks") && !cmd["minKeepTicks"].is_null())
+            min_keep_ticks = parse_int_field(cmd, "minKeepTicks", 100'000, 10'000'000, "cutRanges.minKeepTicks");
+        std::string id_prefix = "cut";
+        if (cmd.contains("idPrefix") && !cmd["idPrefix"].is_null()) {
+            if (!cmd["idPrefix"].is_string() || cmd["idPrefix"].get_ref<const std::string&>().empty() || cmd["idPrefix"].get_ref<const std::string&>().size() > 32)
+                throw ValidationError("cutRanges.idPrefix", "expected non-empty string up to 32 bytes");
+            id_prefix = cmd["idPrefix"].get<std::string>();
+        }
+        std::vector<std::pair<int64_t, int64_t>> raw_cuts;
+        raw_cuts.reserve(cmd["ranges"].size());
+        for (const auto& entry : cmd["ranges"]) {
+            if (!entry.is_object()) throw ValidationError("cutRanges.ranges", "expected object");
+            const auto start = parse_int_field(entry, "start", 0, total_duration, "cutRanges.ranges.start");
+            const auto end = parse_int_field(entry, "end", 0, total_duration, "cutRanges.ranges.end");
+            if (end <= start) throw ValidationError("cutRanges.ranges", "end must be greater than start");
+            if (entry.contains("reason") && !entry["reason"].is_null() && !entry["reason"].is_string())
+                throw ValidationError("cutRanges.ranges.reason", "expected string");
+            if (entry.contains("label") && !entry["label"].is_null() && !entry["label"].is_string())
+                throw ValidationError("cutRanges.ranges.label", "expected string");
+            raw_cuts.emplace_back(start, end);
+        }
+        std::sort(raw_cuts.begin(), raw_cuts.end());
+        std::vector<std::pair<int64_t, int64_t>> merged_cuts;
+        for (const auto& cut : raw_cuts) {
+            if (!merged_cuts.empty() && cut.first <= merged_cuts.back().second)
+                merged_cuts.back().second = std::max(merged_cuts.back().second, cut.second);
+            else
+                merged_cuts.push_back(cut);
+        }
+
+        std::unordered_set<std::string> used_ids;
+        for (const auto& m : p.media) used_ids.insert(m.id);
+        for (const auto& s : p.segments) used_ids.insert(s.id);
+        for (const auto& e : p.effects) used_ids.insert(e.id);
+        for (const auto& mk : p.markers) used_ids.insert(mk.id);
+
+        auto settings = Json::parse(p.editor_json);
+        bool clip_audio_dirty = false;
+        const bool has_clip_audio = settings.contains("clipAudio") && settings["clipAudio"].is_object();
+        size_t id_counter = 1;
+        auto next_id = [&](const std::string& base) {
+            const std::string trimmed = base.size() > 80 ? base.substr(0, 80) : base;
+            std::string candidate;
+            do {
+                candidate = trimmed + "-" + id_prefix + "-" + std::to_string(id_counter++);
+            } while (!used_ids.insert(candidate).second);
+            return candidate;
+        };
+
+        std::vector<Segment> next_segments;
+        next_segments.reserve(p.segments.size() + merged_cuts.size());
+        std::unordered_map<std::string, std::string> rightmost_id;
+
+        for (const auto& seg : p.segments) {
+            const auto seg_start = normalized_ticks(seg.source_start);
+            const auto seg_dur = normalized_ticks(seg.source_duration);
+            const auto seg_end = seg_start + seg_dur;
+
+            std::vector<std::pair<int64_t, int64_t>> seg_cuts;
+            for (const auto& [cs, ce] : merged_cuts) {
+                if (ce <= seg_start) continue;
+                if (cs >= seg_end) break;
+                auto s = std::max(cs, seg_start);
+                auto e = std::min(ce, seg_end);
+                if (e <= s) continue;
+                if (s - seg_start < min_keep_ticks) s = seg_start;
+                if (seg_end - e < min_keep_ticks) e = seg_end;
+                if (!seg_cuts.empty() && s <= seg_cuts.back().second + min_keep_ticks)
+                    seg_cuts.back().second = std::max(seg_cuts.back().second, e);
+                else
+                    seg_cuts.emplace_back(s, e);
+            }
+
+            if (seg_cuts.empty()) {
+                next_segments.push_back(seg);
+                continue;
+            }
+
+            std::vector<std::pair<int64_t, int64_t>> kept;
+            int64_t cursor = seg_start;
+            for (const auto& [cs, ce] : seg_cuts) {
+                if (cs > cursor && cs - cursor >= min_keep_ticks) kept.emplace_back(cursor, cs);
+                cursor = std::max(cursor, ce);
+            }
+            if (seg_end > cursor && seg_end - cursor >= min_keep_ticks) kept.emplace_back(cursor, seg_end);
+
+            for (size_t i = 0; i < kept.size(); ++i) {
+                Segment piece = seg;
+                piece.source_start = canonical_time(kept[i].first);
+                piece.source_duration = canonical_time(kept[i].second - kept[i].first);
+                if (i > 0) {
+                    piece.id = next_id(seg.id);
+                    if (has_clip_audio && settings["clipAudio"].contains(seg.id)) {
+                        settings["clipAudio"][piece.id] = settings["clipAudio"][seg.id];
+                        clip_audio_dirty = true;
+                    }
+                }
+                next_segments.push_back(std::move(piece));
+            }
+            if (kept.size() > 1) rightmost_id[seg.id] = next_segments.back().id;
+        }
+
+        if (next_segments.empty())
+            throw ValidationError("cutRanges", "keep at least one clip");
+        p.segments = std::move(next_segments);
+        if (clip_audio_dirty) p.editor_json = settings.dump();
+        if (!rightmost_id.empty()) {
+            for (auto& eff : p.effects) {
+                if (eff.kind != "transition") continue;
+                auto params = Json::parse(eff.parameters_json);
+                if (params.contains("fromSegmentId") && params["fromSegmentId"].is_string()) {
+                    const auto old_id = params["fromSegmentId"].get<std::string>();
+                    if (const auto it = rightmost_id.find(old_id); it != rightmost_id.end()) {
+                        params["fromSegmentId"] = it->second;
+                        eff.parameters_json = params.dump();
+                    }
+                }
+            }
         }
     } else if (op == "batch") {
         if (!cmd.at("commands").is_array() || cmd["commands"].size() > 100) throw ValidationError("batch", "invalid command count");

@@ -332,6 +332,56 @@ void test_append_media(const Project& project) {
     check(std::none_of(merged_android.media.begin(), merged_android.media.end(), [](const Media& m) { return m.kind == MediaKind::android_audio; }), "androidAudio converted to systemAudio on desktop switch");
     check(parse_project(serialize_project(merged_android)).segments.size() == 4, "Android merged project roundtrips");
 }
+
+void test_cut_ranges(const Project& base_project) {
+    // Prepare a single-clip 300s project with clipAudio and a trailing clip + transition
+    auto single = base_project;
+    single.source_duration = canonical_time(300 * time_scale);
+    single.media = {single.media[0]};
+    single.media[0].start_offset = canonical_time(0);
+    single.media[0].duration = canonical_time(300 * time_scale);
+    single.segments = {
+        {"clip-main", canonical_time(0), canonical_time(280 * time_scale), {1, 1}},
+        {"clip-tail", canonical_time(280 * time_scale), canonical_time(20 * time_scale), {1, 1}}
+    };
+    auto editor_json = Json::parse(single.editor_json);
+    editor_json["clipAudio"] = {{"clip-main", {{"microphoneGain", 1.25}}}};
+    single.editor_json = editor_json.dump();
+    single.effects = {
+        {"tr-1", "transition", canonical_time(280 * time_scale), canonical_time(6 * time_scale / 10),
+         Json{{"origin", "manual"}, {"style", "crossfade"}, {"duration", 0.6}, {"easing", "cubic"},
+              {"fromSegmentId", "clip-main"}, {"toSegmentId", "clip-tail"}}.dump()}
+    };
+    validate_project(single);
+
+    // 1. Atomic cutRanges with 130 cuts (>100 batch cap) inside clip-main
+    Json ranges = Json::array();
+    for (int i = 0; i < 130; ++i) {
+        int64_t s = (i * 2 + 1) * time_scale;
+        int64_t e = s + 4 * time_scale / 10; // 0.4s cut every 2s
+        ranges.push_back({{"start", s}, {"end", e}, {"reason", i % 2 == 0 ? "pause" : "filler"}, {"label", "cut"}});
+    }
+    const auto cut = edit_project(single, Json{{"op", "cutRanges"}, {"ranges", ranges}}.dump());
+    check(cut.segments.size() == 132, "cutRanges splits 130 interior ranges into 131 pieces + tail");
+    check(cut.segments.front().id == "clip-main", "cutRanges keeps original id on first surviving piece");
+    check(cut.segments.back().id == "clip-tail", "cutRanges preserves untouched trailing clip");
+    const auto cut_editor = Json::parse(cut.editor_json);
+    check(cut_editor["clipAudio"].contains(cut.segments[130].id), "cutRanges copies clipAudio to split pieces");
+    const auto tr_params = Json::parse(cut.effects[0].parameters_json);
+    check(tr_params.at("fromSegmentId").get<std::string>() == cut.segments[130].id, "cutRanges updates transition fromSegmentId to rightmost split piece");
+    check(parse_project(serialize_project(cut)).segments.size() == 132, "cutRanges result roundtrips");
+
+    // 2. Reject invalid ranges and full-timeline deletion
+    rejects([&] {
+        (void)edit_project(single, Json{{"op", "cutRanges"}, {"ranges", Json::array()}}.dump());
+    }, "cutRanges rejects empty ranges");
+    rejects([&] {
+        (void)edit_project(single, Json{{"op", "cutRanges"}, {"ranges", Json::array({{{"start", 0}, {"end", 300 * time_scale}}})}}.dump());
+    }, "cutRanges rejects deleting entire timeline");
+    rejects([&] {
+        (void)edit_project(single, Json{{"op", "cutRanges"}, {"ranges", Json::array({{{"start", 10 * time_scale}, {"end", 5 * time_scale}}})}}.dump());
+    }, "cutRanges rejects end <= start");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -345,7 +395,7 @@ int main(int argc, char** argv) {
         const auto text = read(std::filesystem::path(FRAMETRAIL_FIXTURES) / "project-v1.json");
         test_protocol(text);
         const auto project = parse_project(text);
-        test_timeline(project); test_pointer(project); test_scene(project); test_append_media(project);
+        test_timeline(project); test_pointer(project); test_scene(project); test_append_media(project); test_cut_ranges(project);
         std::cout << "PASS: " << checks << " checks across protocol, timeline, pointer, scene\n";
         return 0;
     } catch (const std::exception& error) {

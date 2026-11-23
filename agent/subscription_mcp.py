@@ -302,7 +302,9 @@ class SubscriptionCliBridge:
                 "- frametrail_add_transition: add or update a clip-to-clip transition between adjacent clips (from_clip_index=1 for seam between clip #1 and #2; styles: crossfade, fadeBlack, fadeWhite, slideLeft, slideRight, wipeLeft, wipeRight, zoomIn; duration_sec=0.1..5.0)",
                 "- frametrail_remove_transition: remove a clip-to-clip transition by from_clip_index or effect_id",
                 "- frametrail_set_clip_speed: set clip speed (0.25x..4.0x)",
-                "- frametrail_cut_range: split/remove a time range",
+                "- frametrail_cut_range: split/remove a single time range",
+                "- frametrail_cut_ranges: atomically cut multiple time ranges in one command with 6ms seam de-click smoothing",
+                "- frametrail_optimize_speech_flow: one-click voiceover fluency optimizer — directly reads the project's audio tracks (recorded audio and embedded MP4/MOV video audio; does NOT require existing subtitles) to detect and atomically cut long pauses, Chinese/English filler words (嗯/啊/哦/呃/那个/um/uh), and stutters/repeats (intensity='gentle'|'standard'|'tight')",
                 "- frametrail_update_canvas: change aspect ratio, padding, corner radius, frame style",
                 "- frametrail_list_whisper_models: inspect local Whisper speech-to-text models ('small-q5', 'large-v3-turbo-q5_0') and whether any is installed",
                 "- frametrail_download_whisper_model: download a local Whisper model via FrameTrail (automatically asks the user for confirmation in Review mode before downloading)",
@@ -314,10 +316,11 @@ class SubscriptionCliBridge:
                 "1. Stay strictly inside the active FrameTrail project and the 'frametrail' MCP tools. "
                 "NEVER inspect, grep, read, or search FrameTrail application source code, binaries, project files, or directories outside the 'frametrail' MCP tools (do NOT call read_file/grep/shell to debug MCP errors).",
                 "2. For speech-to-subtitle requests (including specific clips like '第2段和第3段' -> clip_indices=[2, 3] or placing subtitles at the bottom -> position_y=0.88), verify the actual clip count from Timeline overview or frametrail_get_timeline FIRST. If the user references a clip index beyond the timeline's clip count (for example clip #3 when only 2 clips exist), do NOT pass out-of-range clip_indices and do NOT call read_file — clearly tell the user how many clips exist (with their time ranges) and ask whether to transcribe the available clip(s), or transcribe only the explicitly valid clip(s) if unambiguous.",
-                "3. When generating subtitles and no local Whisper model is installed yet (either detected via frametrail_list_whisper_models or reported by frametrail_generate_subtitles), do NOT merely tell the user to download it manually — call frametrail_download_whisper_model directly (defaulting to the selected/recommended model unless the user prefers 'small-q5'). FrameTrail automatically enforces the user's Review confirmation permission before downloading. If the download succeeds, immediately continue by calling frametrail_generate_subtitles; if the user declines the download, stop and acknowledge cleanly without retrying.",
-                "4. If any frametrail_* MCP tool returns an unrecoverable error, or if the user requests a capability that FrameTrail's MCP tools genuinely do NOT support, "
+                "3. For voiceover/speech fluency optimization (removing pauses, filler words like 嗯/啊/哦/呃/那个/um/uh, or stutters/repeats), call frametrail_optimize_speech_flow DIRECTLY — it transcribes the project's audio tracks on its own and does NOT depend on pre-generated subtitles (do NOT generate subtitles first, and do NOT assume there is no audio track just because effects/subtitles are empty).",
+                "4. When running frametrail_generate_subtitles or frametrail_optimize_speech_flow and no local Whisper model is installed yet (either detected via frametrail_list_whisper_models or reported by the tool), do NOT merely tell the user to download it manually — call frametrail_download_whisper_model directly (defaulting to the selected/recommended model unless the user prefers 'small-q5'). FrameTrail automatically enforces the user's Review confirmation permission before downloading. If the download succeeds, immediately continue by calling the original tool again; if the user declines the download, stop and acknowledge cleanly without retrying.",
+                "5. If any frametrail_* MCP tool returns an unrecoverable error, or if the user requests a capability that FrameTrail's MCP tools genuinely do NOT support, "
                 "do NOT run exploratory read_file/shell/search commands looking for workarounds. Immediately stop and give a clear, concise reply in the user's language explaining the exact error or limitation.",
-                "5. Keep tool calls minimal and reply concisely in the user's language.",
+                "6. Keep tool calls minimal and reply concisely in the user's language.",
             ]
         )
 

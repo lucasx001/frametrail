@@ -447,6 +447,110 @@ class FrameTrailProjectBridge:
                 raise ValueError(f"Segment '{seg_id}' not found.")
             snapshot["segments"] = remaining
 
+        elif op == "cutRanges":
+            raw_ranges = command.get("ranges")
+            if not isinstance(raw_ranges, list) or len(raw_ranges) == 0 or len(raw_ranges) > 2000:
+                raise ValueError("cutRanges requires 'ranges' list with 1..2000 entries.")
+            total_ticks = _normalized_ticks(snapshot.get("sourceDuration"))
+            min_keep = int(command.get("minKeepTicks", 1_000_000))
+            if min_keep < 100_000 or min_keep > 10_000_000:
+                raise ValueError("cutRanges minKeepTicks must be in [100000, 10000000].")
+            id_prefix = str(command.get("idPrefix") or "cut")[:32]
+
+            cuts_raw: list[tuple[int, int]] = []
+            for entry in raw_ranges:
+                if not isinstance(entry, dict):
+                    raise ValueError("cutRanges range must be an object.")
+                s = int(entry["start"])
+                e = int(entry["end"])
+                if s < 0 or e <= s or (total_ticks > 0 and e > total_ticks):
+                    raise ValueError(f"cutRanges invalid range [{s}, {e}].")
+                cuts_raw.append((s, e))
+            cuts_raw.sort()
+            merged_cuts: list[tuple[int, int]] = []
+            for cs, ce in cuts_raw:
+                if merged_cuts and cs <= merged_cuts[-1][1]:
+                    merged_cuts[-1] = (merged_cuts[-1][0], max(merged_cuts[-1][1], ce))
+                else:
+                    merged_cuts.append((cs, ce))
+
+            used_ids: set[str] = set()
+            for bucket in ("media", "segments", "effects", "markers"):
+                for item in snapshot.get(bucket, []) or []:
+                    if isinstance(item, dict) and item.get("id"):
+                        used_ids.add(str(item["id"]))
+            counter = 1
+
+            def _alloc_id(base: str) -> str:
+                nonlocal counter
+                trimmed = base[:80]
+                while True:
+                    cand = f"{trimmed}-{id_prefix}-{counter}"
+                    counter += 1
+                    if cand not in used_ids:
+                        used_ids.add(cand)
+                        return cand
+
+            editor = snapshot.get("editor")
+            clip_audio = editor.get("clipAudio") if isinstance(editor, dict) and isinstance(editor.get("clipAudio"), dict) else None
+            next_segments: list[dict[str, Any]] = []
+            rightmost_id: dict[str, str] = {}
+
+            for seg in snapshot.get("segments", []) or []:
+                seg_id = str(seg["id"])
+                seg_s = _normalized_ticks(seg.get("sourceStart"))
+                seg_e = seg_s + _normalized_ticks(seg.get("sourceDuration"))
+                seg_cuts: list[tuple[int, int]] = []
+                for cs, ce in merged_cuts:
+                    if ce <= seg_s:
+                        continue
+                    if cs >= seg_e:
+                        break
+                    s = seg_s if cs - seg_s < min_keep else max(cs, seg_s)
+                    e = seg_e if seg_e - ce < min_keep else min(ce, seg_e)
+                    if e <= s:
+                        continue
+                    if seg_cuts and s <= seg_cuts[-1][1] + min_keep:
+                        seg_cuts[-1] = (seg_cuts[-1][0], max(seg_cuts[-1][1], e))
+                    else:
+                        seg_cuts.append((s, e))
+
+                if not seg_cuts:
+                    next_segments.append(seg)
+                    continue
+
+                kept: list[tuple[int, int]] = []
+                cur = seg_s
+                for cs, ce in seg_cuts:
+                    if cs - cur >= min_keep:
+                        kept.append((cur, cs))
+                    cur = max(cur, ce)
+                if seg_e - cur >= min_keep:
+                    kept.append((cur, seg_e))
+
+                for idx, (ks, ke) in enumerate(kept):
+                    piece = dict(seg)
+                    piece["sourceStart"] = _canonical_time(ks)
+                    piece["sourceDuration"] = _canonical_time(ke - ks)
+                    if idx > 0:
+                        new_sid = _alloc_id(seg_id)
+                        piece["id"] = new_sid
+                        if clip_audio is not None and seg_id in clip_audio:
+                            clip_audio[new_sid] = dict(clip_audio[seg_id])
+                    next_segments.append(piece)
+                if len(kept) > 1:
+                    rightmost_id[seg_id] = str(next_segments[-1]["id"])
+
+            if not next_segments:
+                raise ValueError("cutRanges cannot delete all clips; at least one clip must remain.")
+            snapshot["segments"] = next_segments
+            if rightmost_id:
+                for eff in snapshot.get("effects", []) or []:
+                    if eff.get("kind") == "transition" and isinstance(eff.get("parameters"), dict):
+                        old_from = eff["parameters"].get("fromSegmentId")
+                        if old_from in rightmost_id:
+                            eff["parameters"]["fromSegmentId"] = rightmost_id[old_from]
+
         elif op == "settings":
             for key in ("canvas", "export", "editor", "effects"):
                 if key in command and command[key] is not None:
@@ -510,6 +614,21 @@ class FrameTrailProjectBridge:
                     "label": mk.get("label", ""),
                 }
             )
+        audio_tracks = []
+        for media in snapshot.get("media", []) or []:
+            kind = str(media.get("kind", ""))
+            if kind in ("microphone", "systemAudio", "androidAudio"):
+                start_ticks = _normalized_ticks(media.get("startOffset"))
+                dur_ticks = _normalized_ticks(media.get("duration"))
+                audio_tracks.append(
+                    {
+                        "id": media.get("id"),
+                        "kind": kind,
+                        "path": media.get("path"),
+                        "startSec": _ticks_to_sec(start_ticks),
+                        "endSec": _ticks_to_sec(start_ticks + dur_ticks),
+                    }
+                )
         output_duration_sec = segments[-1]["outputEndSec"] if segments else 0.0
         return {
             "projectId": snapshot.get("projectId", ""),
@@ -518,6 +637,8 @@ class FrameTrailProjectBridge:
                 _normalized_ticks(snapshot.get("sourceDuration"))
             ),
             "outputDurationSec": output_duration_sec,
+            "hasAudio": len(audio_tracks) > 0,
+            "audioTracks": audio_tracks,
             "segments": segments,
             "effects": effects,
             "canvas": snapshot.get("canvas", {}),
@@ -1280,6 +1401,161 @@ class FrameTrailProjectBridge:
         command = {"op": "subtitlesReplace", "subtitles": []}
         return self._commit_command(command, "Cleared all subtitles from timeline.")
 
+    def cut_ranges(
+        self,
+        ranges: list[dict[str, Any]],
+        time_space: str = "source",
+        min_keep_sec: float = 0.1,
+    ) -> dict[str, Any]:
+        if not isinstance(ranges, list) or len(ranges) == 0:
+            raise ValueError("ranges must be a non-empty list of {start_sec, end_sec} objects.")
+        if len(ranges) > 2000:
+            raise ValueError("cut_ranges supports at most 2000 ranges.")
+        snapshot = self._load_project()
+        resolved = self._resolve_segments(snapshot)
+        total_ticks = _normalized_ticks(snapshot.get("sourceDuration"))
+        if not resolved or total_ticks <= 0:
+            raise ValueError("Project has no segments.")
+
+        space = (time_space or "source").strip().lower()
+        if space not in ("source", "output"):
+            raise ValueError("time_space must be 'source' or 'output'.")
+
+        out_ranges: list[dict[str, Any]] = []
+        for item in ranges:
+            if not isinstance(item, dict):
+                continue
+            s_sec = float(item.get("start_sec", item.get("startSec", -1)))
+            e_sec = float(item.get("end_sec", item.get("endSec", -1)))
+            if s_sec < 0 or e_sec <= s_sec:
+                raise ValueError(f"Invalid cut range [{s_sec}, {e_sec}].")
+            reason = str(item.get("reason") or "").strip()
+            label = str(item.get("label") or "").strip()
+            if space == "source":
+                s_t = max(0, min(total_ticks, _sec_to_ticks(s_sec)))
+                e_t = max(0, min(total_ticks, _sec_to_ticks(e_sec)))
+                if e_t > s_t:
+                    entry: dict[str, Any] = {"start": s_t, "end": e_t}
+                    if reason:
+                        entry["reason"] = reason
+                    if label:
+                        entry["label"] = label
+                    out_ranges.append(entry)
+            else:
+                co0 = _sec_to_ticks(s_sec)
+                co1 = _sec_to_ticks(e_sec)
+                for seg in resolved:
+                    o0 = seg["outputStartTicks"]
+                    o1 = o0 + seg["outputDurationTicks"]
+                    ov0 = max(o0, co0)
+                    ov1 = min(o1, co1)
+                    if ov1 <= ov0:
+                        continue
+                    num, den = seg["numerator"], seg["denominator"]
+                    s0 = max(seg["sourceStartTicks"], seg["sourceStartTicks"] + int(round((ov0 - o0) * num / den)))
+                    s1 = min(seg["sourceStartTicks"] + seg["sourceDurationTicks"], seg["sourceStartTicks"] + int(round((ov1 - o0) * num / den)))
+                    if s1 > s0:
+                        entry = {"start": s0, "end": s1}
+                        if reason:
+                            entry["reason"] = reason
+                        if label:
+                            entry["label"] = label
+                        out_ranges.append(entry)
+
+        if not out_ranges:
+            raise ValueError("None of the specified ranges intersect the timeline.")
+
+        min_keep_ticks = max(100_000, min(10_000_000, _sec_to_ticks(min_keep_sec)))
+        command = {"op": "cutRanges", "ranges": out_ranges[:2000], "minKeepTicks": min_keep_ticks}
+        return self._commit_command(command, f"Atomically cut {len(out_ranges)} range(s) ({space} time).")
+
+    def optimize_speech_flow(
+        self,
+        intensity: str = "standard",
+        remove_pauses: bool = True,
+        remove_fillers: bool = True,
+        remove_repeats: bool = True,
+        min_pause_sec: float | None = None,
+        pause_padding_sec: float | None = None,
+        threshold_db: float = -38.0,
+        clip_indices: list[int] | None = None,
+        start_sec: float | None = None,
+        end_sec: float | None = None,
+        language: str = "auto",
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        if self.callback_url:
+            action_params: dict[str, Any] = {
+                "intensity": intensity,
+                "remove_pauses": bool(remove_pauses),
+                "remove_fillers": bool(remove_fillers),
+                "remove_repeats": bool(remove_repeats),
+                "threshold_db": float(threshold_db),
+                "language": language,
+                "force_refresh": bool(force_refresh),
+                "apply": True,
+            }
+            if min_pause_sec is not None:
+                action_params["min_pause_sec"] = float(min_pause_sec)
+            if pause_padding_sec is not None:
+                action_params["pause_padding_sec"] = float(pause_padding_sec)
+            if clip_indices:
+                action_params["clip_indices"] = [int(i) for i in clip_indices]
+            if start_sec is not None:
+                action_params["start_sec"] = float(start_sec)
+            if end_sec is not None:
+                action_params["end_sec"] = float(end_sec)
+
+            cb = self._post_action_callback("optimize_speech_flow", action_params, timeout=600.0)
+            if cb and cb.get("supported"):
+                if cb.get("ok"):
+                    payload = cb.get("response") or {}
+                    return {
+                        "ok": True,
+                        "appliedVia": "host_callback",
+                        "revision": payload.get("revision"),
+                        "engineUsed": payload.get("engineUsed"),
+                        "message": payload.get("message"),
+                        **(payload.get("data") or {}),
+                    }
+                raise ValueError(str(cb.get("error") or "FrameTrail host speech optimization failed."))
+
+        from agent.multimodal_tools import analyze_speech_polish
+
+        snapshot = self._load_project()
+        plan = analyze_speech_polish(
+            project_dir=str(self.project_dir),
+            intensity=intensity,
+            remove_pauses=remove_pauses,
+            remove_fillers=remove_fillers,
+            remove_repeats=remove_repeats,
+            min_pause_sec=min_pause_sec,
+            pause_padding_sec=pause_padding_sec,
+            threshold_db=threshold_db,
+            clip_indices=clip_indices,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            language=language,
+            force_refresh=force_refresh,
+            api_key=os.environ.get("OPENAI_API_KEY", ""),
+            base_url=os.environ.get("OPENAI_BASE_URL", ""),
+            project_snapshot=snapshot,
+        )
+        cmd = plan.get("command")
+        if cmd is None:
+            return {
+                "ok": True,
+                "cutCount": 0,
+                "message": "No removable pauses, filler words, or stutters were detected.",
+                **{k: v for k, v in plan.items() if k != "command"},
+            }
+        res = self._commit_command(
+            cmd,
+            f"Polished speech flow: cut {plan['cutCount']} spot(s) (-{plan['totalRemovedSeconds']}s).",
+        )
+        res.update({k: v for k, v in plan.items() if k != "command"})
+        return res
+
 
 # --- Tool metadata schema for JSON-RPC stdio MCP server ---
 
@@ -1541,6 +1817,56 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "frametrail_optimize_speech_flow",
+        "description": "One-click voiceover fluency optimization: detects and atomically cuts long pauses, Chinese/English filler words (嗯/啊/哦/呃/那个/um/uh), and stutters/repeats using op='cutRanges' with 6ms seam de-click smoothing. Supports gentle/standard/tight intensity.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "intensity": {"type": "string", "enum": ["gentle", "standard", "tight"], "default": "standard"},
+                "remove_pauses": {"type": "boolean", "default": True},
+                "remove_fillers": {"type": "boolean", "default": True},
+                "remove_repeats": {"type": "boolean", "default": True},
+                "min_pause_sec": {"type": "number", "minimum": 0.15, "maximum": 10.0},
+                "pause_padding_sec": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+                "threshold_db": {"type": "number", "minimum": -80.0, "maximum": -10.0, "default": -38.0},
+                "clip_indices": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+                "start_sec": {"type": "number", "minimum": 0.0},
+                "end_sec": {"type": "number", "exclusiveMinimum": 0.0},
+                "language": {"type": "string", "default": "auto"},
+                "force_refresh": {"type": "boolean", "default": False},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "frametrail_cut_ranges",
+        "description": "Atomically cut multiple time ranges [{start_sec, end_sec, reason?, label?}, ...] from the timeline in a single op='cutRanges' command (up to 2000 ranges, single Undo step).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ranges": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 2000,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_sec": {"type": "number", "minimum": 0.0},
+                            "end_sec": {"type": "number", "exclusiveMinimum": 0.0},
+                            "reason": {"type": "string"},
+                            "label": {"type": "string"},
+                        },
+                        "required": ["start_sec", "end_sec"],
+                    },
+                },
+                "time_space": {"type": "string", "enum": ["source", "output"], "default": "source"},
+                "min_keep_sec": {"type": "number", "minimum": 0.01, "maximum": 1.0, "default": 0.1},
+            },
+            "required": ["ranges"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -1577,6 +1903,10 @@ def _dispatch_tool(
         return bridge.update_subtitle_style(**arguments)
     if name == "frametrail_delete_subtitles":
         return bridge.delete_subtitles(**arguments)
+    if name == "frametrail_optimize_speech_flow":
+        return bridge.optimize_speech_flow(**arguments)
+    if name == "frametrail_cut_ranges":
+        return bridge.cut_ranges(**arguments)
     raise KeyError(f"Unknown tool: {name}")
 
 
@@ -1919,6 +2249,46 @@ def run_fastmcp_server(bridge: FrameTrailProjectBridge) -> bool:
             start_sec=start_sec,
             end_sec=end_sec,
         )
+
+    @mcp.tool()
+    def frametrail_optimize_speech_flow(
+        intensity: str = "standard",
+        remove_pauses: bool = True,
+        remove_fillers: bool = True,
+        remove_repeats: bool = True,
+        min_pause_sec: float | None = None,
+        pause_padding_sec: float | None = None,
+        threshold_db: float = -38.0,
+        clip_indices: list[int] | None = None,
+        start_sec: float | None = None,
+        end_sec: float | None = None,
+        language: str = "auto",
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """One-click voiceover fluency optimization: remove pauses, filler words, and stutters/repeats."""
+        return bridge.optimize_speech_flow(
+            intensity=intensity,
+            remove_pauses=remove_pauses,
+            remove_fillers=remove_fillers,
+            remove_repeats=remove_repeats,
+            min_pause_sec=min_pause_sec,
+            pause_padding_sec=pause_padding_sec,
+            threshold_db=threshold_db,
+            clip_indices=clip_indices,
+            start_sec=start_sec,
+            end_sec=end_sec,
+            language=language,
+            force_refresh=force_refresh,
+        )
+
+    @mcp.tool()
+    def frametrail_cut_ranges(
+        ranges: list[dict[str, Any]],
+        time_space: str = "source",
+        min_keep_sec: float = 0.1,
+    ) -> dict[str, Any]:
+        """Atomically cut multiple time ranges in a single op='cutRanges' command."""
+        return bridge.cut_ranges(ranges=ranges, time_space=time_space, min_keep_sec=min_keep_sec)
 
     mcp.run(transport="stdio")
     return True

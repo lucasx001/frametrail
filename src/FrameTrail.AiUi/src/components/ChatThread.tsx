@@ -48,10 +48,13 @@ export const ChatThread: React.FC = () => {
 
     return [
       {
-        id: 'silence',
-        title: tr('AiSuggestSilenceTitle'),
-        desc: tr('AiSuggestSilenceDesc'),
-        prompt: locale === 'en' ? 'Automatically remove silent pauses' : '自动清理静音停顿',
+        id: 'polish',
+        title: tr('AiSuggestSpeechPolishTitle'),
+        desc: tr('AiSuggestSpeechPolishDesc'),
+        prompt:
+          locale === 'en'
+            ? 'Polish voiceover by removing pauses, filler words, and stutters'
+            : '一键优化配音表达，移除停顿、嗯啊哦语气词和口误重复',
       },
       {
         id: 'clicks',
