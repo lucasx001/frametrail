@@ -95,6 +95,32 @@ public sealed record ExportSettings
     [JsonRequired] public string AudioCodec { get; init; } = "aac";
     [JsonRequired] public string Container { get; init; } = "mp4";
     public bool BurnSubtitles { get; init; } = true;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Quality { get; init; }
+
+    public static (uint Width, uint Height) CalculateDimensions(uint canvasWidth, uint canvasHeight, uint targetShortEdge)
+    {
+        uint safeWidth = Math.Max(2u, canvasWidth);
+        uint safeHeight = Math.Max(2u, canvasHeight);
+        if (safeWidth >= safeHeight)
+        {
+            uint height = Even(targetShortEdge);
+            uint width = Even(targetShortEdge * ((double)safeWidth / safeHeight));
+            return (width, height);
+        }
+        else
+        {
+            uint width = Even(targetShortEdge);
+            uint height = Even(targetShortEdge * ((double)safeHeight / safeWidth));
+            return (width, height);
+        }
+    }
+
+    private static uint Even(double value)
+    {
+        if (!double.IsFinite(value)) return 2u;
+        long rounded = (long)Math.Round(value / 2.0) * 2L;
+        return (uint)Math.Clamp(rounded, 2L, 7680L);
+    }
 }
 
 public sealed record PrimarySource
@@ -156,6 +182,13 @@ public sealed record EditorSettings
     public string FrameTitle { get; init; } = "";
     public string FrameBrowserAddress { get; init; } = "";
     public string CameraShape { get; init; } = "rounded";
+    public double MotionBlur { get; init; }
+    public bool KeystrokeHud { get; init; } = true;
+    public bool MicNoiseReduction { get; init; }
+    public bool AudioNormalize { get; init; }
+    public bool AudioDucking { get; init; } = true;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? BgmPath { get; init; }
+    public double BgmGain { get; init; } = 0.35;
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public BackdropSettings? Backdrop { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public SubtitleStyleSettings? SubtitleStyle { get; init; }
 }

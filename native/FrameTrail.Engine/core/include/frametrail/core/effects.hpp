@@ -31,10 +31,13 @@ struct VisualEffect {
     bool custom_fade{};
     std::string from_segment_id, to_segment_id;
     double transition_duration{0.6};
+    std::string shape{"pill"};
+    std::string color{"#38BDF8"};
 };
 struct PlaneMotion {
     double scale{1}, focus_x{0.5}, focus_y{0.5}, angle_x{}, angle_y{}, opacity{1}, reveal{1}, offset_x{}, offset_y{};
     bool fixed_anchor{};
+    double motion_blur_x{}, motion_blur_y{}, motion_blur_scale{};
 };
 struct VisualScene {
     PlaneMotion screen, camera;

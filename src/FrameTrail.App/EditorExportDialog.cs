@@ -15,7 +15,8 @@ internal sealed record EditorExportOptions(
     string VideoCodec,
     bool BurnSubtitles,
     bool ExportSidecarSubtitles,
-    SubtitleExportFormat SubtitleFormat);
+    SubtitleExportFormat SubtitleFormat,
+    string Quality = "standard");
 
 // DogSC ExportSheet: 820 DIP, specification column and a separate media summary, flat 18 DIP tiles.
 internal sealed class EditorExportDialog : ContentDialog
@@ -25,13 +26,18 @@ internal sealed class EditorExportDialog : ContentDialog
     private readonly ProgressBar progress = new() { Minimum = 0, Maximum = 100, Visibility = Visibility.Collapsed, Height = 4 };
     private readonly StackPanel specifications = new() { Spacing = 10 };
     private readonly StackPanel subtitleOnlySpecs = new() { Spacing = 10, Visibility = Visibility.Collapsed };
+    private readonly StackPanel gifSpecs = new() { Spacing = 10 };
     private readonly Border specificationsTile;
     private readonly Border subtitleOnlyTile;
+    private readonly Border gifTile;
     private readonly Grid choices = new() { ColumnSpacing = 4 };
     private readonly TextBlock formatSummary = Text("MP4"), sizeSummary = Text("1920 × 1080"), fpsSummary = Text("30 fps");
     private readonly ComboBox resolution = new() { Style = LookupStyle("EditorCombo"), SelectedIndex = 0 }, fps = new() { Style = LookupStyle("EditorCombo"), SelectedIndex = 0 };
     private readonly ComboBox codec = new() { Style = LookupStyle("EditorCombo"), HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox quality = new() { Style = LookupStyle("EditorCombo"), HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox gifResolution = new() { Style = LookupStyle("EditorCombo"), SelectedIndex = 1 }, gifFps = new() { Style = LookupStyle("EditorCombo"), SelectedIndex = 1 };
     private readonly CheckBox burnSubtitlesCheck = new() { Content = L.T("SubExportBurnIn"), IsChecked = true };
+    private readonly CheckBox gifBurnSubtitlesCheck = new() { Content = L.T("SubExportBurnIn"), IsChecked = true };
     private readonly CheckBox sidecarSubtitlesCheck = new() { Content = L.T("SubExportSidecar"), IsChecked = false };
     private readonly ComboBox sidecarFormatCombo = new() { Style = LookupStyle("EditorCombo"), HorizontalAlignment = HorizontalAlignment.Stretch, Visibility = Visibility.Collapsed };
     private readonly ComboBox subtitleOnlyFormatCombo = new() { Style = LookupStyle("EditorCombo"), HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -48,15 +54,16 @@ internal sealed class EditorExportDialog : ContentDialog
         IReadOnlyList<VideoCodecCapabilities>? codecs = null, string videoCodec = VideoCodecs.H264)
         : this(name, duration, width, height, thumbnail,
             (opts, prog, ct) => export(opts.Kind, opts.ResolutionIndex, opts.FpsIndex, opts.VideoCodec, prog, ct),
-            codecs, videoCodec, hasSubtitles: false, initialBurnSubtitles: true)
+            codecs, videoCodec, hasSubtitles: false, initialBurnSubtitles: true, initialQuality: "standard")
     {
     }
 
     internal EditorExportDialog(string name, long duration, uint width, uint height, ImageSource? thumbnail, Func<EditorExportOptions, IProgress<MediaStatus>, CancellationToken, Task<string?>> export,
-        IReadOnlyList<VideoCodecCapabilities>? codecs = null, string videoCodec = VideoCodecs.H264, bool hasSubtitles = false, bool initialBurnSubtitles = true)
+        IReadOnlyList<VideoCodecCapabilities>? codecs = null, string videoCodec = VideoCodecs.H264, bool hasSubtitles = false, bool initialBurnSubtitles = true, string initialQuality = "standard")
     {
         this.export = export; canvasWidth = width; canvasHeight = height; this.hasSubtitles = hasSubtitles;
         burnSubtitlesCheck.IsChecked = initialBurnSubtitles;
+        gifBurnSubtitlesCheck.IsChecked = initialBurnSubtitles;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, L.T("SB0F3182BF2B3"));
         CornerRadius = new CornerRadius(20);
         SizeChanged += (_, _) => FitDialogWidth();
@@ -74,7 +81,7 @@ internal sealed class EditorExportDialog : ContentDialog
         left.Children.Add(Caption(L.T("S39932F24FE11")));
         var file = new StackPanel { Spacing = 8 }; file.Children.Add(Text(name)); file.Children.Add(Text(L.T("S8B4784673270"), true)); left.Children.Add(Tile(file));
         left.Children.Add(Caption(L.T("S2584921CF7CD")));
-        var labels = new[] { L.T("S35855958FD1F"), L.T("S4EEF33B40874"), L.T("S3DAEC22B8481"), L.T("SubExportOnlyTab") };
+        var labels = new[] { L.T("S35855958FD1F"), L.T("S4EEF33B40874"), L.T("S3DAEC22B8481"), L.T("SubExportOnlyTab"), L.T("ExportGifTab") };
         for (int i = 0; i < labels.Length; i++) {
             int index = i;
             choices.ColumnDefinitions.Add(new ColumnDefinition());
@@ -88,6 +95,20 @@ internal sealed class EditorExportDialog : ContentDialog
         left.Children.Add(new Border { Style = LookupStyle("EditorTile"), Padding = new Thickness(3), Child = choices });
         foreach (string value in new[] { "1080p", "1440p", "4K" }) resolution.Items.Add(value);
         fps.Items.Add("30 fps"); fps.Items.Add("60 fps");
+        foreach (var (tag, key) in new[] { ("low", "ExportQualityLow"), ("standard", "ExportQualityStandard"), ("high", "ExportQualityHigh"), ("ultra", "ExportQualityUltra") })
+            quality.Items.Add(new ComboBoxItem { Content = L.T(key), Tag = tag });
+        int initialQualityIndex = 1;
+        for (int i = 0; i < quality.Items.Count; i++) {
+            if (quality.Items[i] is ComboBoxItem item && string.Equals((string?)item.Tag, initialQuality, StringComparison.Ordinal)) {
+                initialQualityIndex = i;
+                break;
+            }
+        }
+        quality.SelectedIndex = initialQualityIndex;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(quality, L.T("ExportQualityLabel"));
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(quality, "export.quality");
+        foreach (string value in new[] { "480p", "720p", "1080p" }) gifResolution.Items.Add(value);
+        foreach (string value in new[] { "10 fps", "15 fps", "24 fps" }) gifFps.Items.Add(value);
         foreach (string fmt in new[] { "SubRip (.srt)", "WebVTT (.vtt)", "Plain Text (.txt)" }) {
             sidecarFormatCombo.Items.Add(fmt);
             subtitleOnlyFormatCombo.Items.Add(fmt);
@@ -98,8 +119,11 @@ internal sealed class EditorExportDialog : ContentDialog
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(codec, L.T("SB33C0D16A94B"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(codec, "export.videoCodec");
         specifications.Children.Add(Text(L.T("S780DA4F96096"), true)); specifications.Children.Add(codec);
+        specifications.Children.Add(Text(L.T("ExportQualityLabel"), true)); specifications.Children.Add(quality);
         specifications.Children.Add(Text(L.T("SB92421822C21"), true)); specifications.Children.Add(resolution); specifications.Children.Add(Text(L.T("SF9404BF335BC"), true)); specifications.Children.Add(fps);
         if (hasSubtitles) {
+            burnSubtitlesCheck.Click += (_, _) => gifBurnSubtitlesCheck.IsChecked = burnSubtitlesCheck.IsChecked;
+            gifBurnSubtitlesCheck.Click += (_, _) => burnSubtitlesCheck.IsChecked = gifBurnSubtitlesCheck.IsChecked;
             sidecarSubtitlesCheck.Click += (_, _) => sidecarFormatCombo.Visibility = sidecarSubtitlesCheck.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
             specifications.Children.Add(burnSubtitlesCheck);
             specifications.Children.Add(sidecarSubtitlesCheck);
@@ -115,6 +139,13 @@ internal sealed class EditorExportDialog : ContentDialog
         subtitleOnlyTile = Tile(subtitleOnlySpecs);
         subtitleOnlyTile.Visibility = Visibility.Collapsed;
         left.Children.Add(subtitleOnlyTile);
+
+        gifSpecs.Children.Add(Text(L.T("SB92421822C21"), true)); gifSpecs.Children.Add(gifResolution);
+        gifSpecs.Children.Add(Text(L.T("SF9404BF335BC"), true)); gifSpecs.Children.Add(gifFps);
+        if (hasSubtitles) gifSpecs.Children.Add(gifBurnSubtitlesCheck);
+        gifTile = Tile(gifSpecs);
+        gifTile.Visibility = Visibility.Collapsed;
+        left.Children.Add(gifTile);
         columns.Children.Add(left);
         var summary = new StackPanel { Spacing = 12 };
         summary.Children.Add(new Border { CornerRadius = new CornerRadius(10), Height = 164, Background = new SolidColorBrush(Colors.Black), Child = new Image { Source = thumbnail, Stretch = Stretch.Uniform } });
@@ -124,7 +155,7 @@ internal sealed class EditorExportDialog : ContentDialog
         var footer = new Grid { ColumnSpacing = 12 };
         footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(cancelButton, 1); Grid.SetColumn(exportButton, 2); footer.Children.Add(cancelButton); footer.Children.Add(exportButton); body.Children.Add(footer); Content = body;
-        resolution.SelectionChanged += (_, _) => UpdateSummary(); fps.SelectionChanged += (_, _) => UpdateSummary(); codec.SelectionChanged += (_, _) => UpdateSummary(); subtitleOnlyFormatCombo.SelectionChanged += (_, _) => UpdateSummary(); SelectKind(0);
+        resolution.SelectionChanged += (_, _) => UpdateSummary(); fps.SelectionChanged += (_, _) => UpdateSummary(); codec.SelectionChanged += (_, _) => UpdateSummary(); quality.SelectionChanged += (_, _) => UpdateSummary(); gifResolution.SelectionChanged += (_, _) => UpdateSummary(); gifFps.SelectionChanged += (_, _) => UpdateSummary(); subtitleOnlyFormatCombo.SelectionChanged += (_, _) => UpdateSummary(); SelectKind(0);
         Opened += (_, _) => { scroll.MaxHeight = Math.Max(180, Math.Min(430, XamlRoot.Size.Height - 280)); progress.Foreground = RecorderTheme.Brush(this, "EditorAccent"); SelectKind(kind); };
         ActualThemeChanged += (_, _) => { progress.Foreground = RecorderTheme.Brush(this, "EditorAccent"); SelectKind(kind); };
         exportButton.Click += Start;
@@ -154,6 +185,7 @@ internal sealed class EditorExportDialog : ContentDialog
             2 => SubtitleExportFormat.Txt,
             _ => SubtitleExportFormat.Srt
         };
+    private string SelectedQuality() => (quality.SelectedItem as ComboBoxItem)?.Tag as string ?? "standard";
     private void SelectKind(int value)
     {
         kind = value;
@@ -167,6 +199,7 @@ internal sealed class EditorExportDialog : ContentDialog
         specificationsTile.Visibility = value == 0 ? Visibility.Visible : Visibility.Collapsed;
         subtitleOnlyTile.Visibility = value == 3 ? Visibility.Visible : Visibility.Collapsed;
         subtitleOnlySpecs.Visibility = value == 3 ? Visibility.Visible : Visibility.Collapsed;
+        gifTile.Visibility = value == 4 ? Visibility.Visible : Visibility.Collapsed;
         UpdateSummary();
     }
     private void UpdateSummary()
@@ -176,6 +209,7 @@ internal sealed class EditorExportDialog : ContentDialog
             1 => "M4A · AAC",
             2 => L.T("SCB624EBE08FA"),
             3 => SelectedSubtitleFormat(true) switch { SubtitleExportFormat.Vtt => "WEBVTT (.vtt)", SubtitleExportFormat.Txt => "TXT (.txt)", _ => "SRT (.srt)" },
+            4 => "GIF",
             _ => "MP4 · " + VideoCodecs.DisplayName(VideoCodecSelector.Selected(codec)) + " · AAC"
         };
         exportButton.IsEnabled = kind switch
@@ -184,26 +218,38 @@ internal sealed class EditorExportDialog : ContentDialog
             3 => hasSubtitles,
             _ => true
         };
-        uint h = (uint)new[] { 1080, 1440, 2160 }[Math.Max(0, resolution.SelectedIndex)];
-        sizeSummary.Text = kind == 0 ? $"{Math.Round(h * (double)canvasWidth / canvasHeight / 2) * 2:0} × {h}" : "—";
-        fpsSummary.Text = kind == 0 ? fps.SelectedItem?.ToString() ?? "30 fps" : "—";
+        if (kind == 0) {
+            uint targetShortEdge = (uint)new[] { 1080, 1440, 2160 }[Math.Clamp(resolution.SelectedIndex, 0, 2)];
+            var (w, h) = ExportSettings.CalculateDimensions(canvasWidth, canvasHeight, targetShortEdge);
+            sizeSummary.Text = $"{w} × {h}";
+            fpsSummary.Text = fps.SelectedItem?.ToString() ?? "30 fps";
+        } else if (kind == 4) {
+            uint targetShortEdge = (uint)new[] { 480, 720, 1080 }[Math.Clamp(gifResolution.SelectedIndex, 0, 2)];
+            var (w, h) = ExportSettings.CalculateDimensions(canvasWidth, canvasHeight, targetShortEdge);
+            sizeSummary.Text = $"{w} × {h}";
+            fpsSummary.Text = gifFps.SelectedItem?.ToString() ?? "15 fps";
+        } else {
+            sizeSummary.Text = "—";
+            fpsSummary.Text = "—";
+        }
     }
     private async void Start(object sender, RoutedEventArgs args)
     {
         if (complete) { Hide(); return; }
         if (busy || (kind == 0 && codec.SelectedItem is null) || (kind == 3 && !hasSubtitles)) return; busy = true;
-        exportButton.IsEnabled = false; cancelButton.Content = L.T("S7EEFAAFF791F"); choices.IsHitTestVisible = specificationsTile.IsHitTestVisible = subtitleOnlyTile.IsHitTestVisible = false;
+        exportButton.IsEnabled = false; cancelButton.Content = L.T("S7EEFAAFF791F"); choices.IsHitTestVisible = specificationsTile.IsHitTestVisible = subtitleOnlyTile.IsHitTestVisible = gifTile.IsHitTestVisible = false;
         cancellation.Dispose(); cancellation = new(); progress.Visibility = Visibility.Visible; progress.IsIndeterminate = true; status.Text = L.T("SFC51B55D05FC");
         var exportWatch = System.Diagnostics.Stopwatch.StartNew();
         try {
             var opts = new EditorExportOptions(
                 Kind: kind,
-                ResolutionIndex: resolution.SelectedIndex,
-                FpsIndex: fps.SelectedIndex,
+                ResolutionIndex: kind == 4 ? gifResolution.SelectedIndex : resolution.SelectedIndex,
+                FpsIndex: kind == 4 ? gifFps.SelectedIndex : fps.SelectedIndex,
                 VideoCodec: VideoCodecSelector.Selected(codec),
-                BurnSubtitles: !hasSubtitles || burnSubtitlesCheck.IsChecked == true,
+                BurnSubtitles: !hasSubtitles || (kind == 4 ? gifBurnSubtitlesCheck.IsChecked == true : burnSubtitlesCheck.IsChecked == true),
                 ExportSidecarSubtitles: hasSubtitles && kind == 0 && sidecarSubtitlesCheck.IsChecked == true,
-                SubtitleFormat: SelectedSubtitleFormat(kind == 3));
+                SubtitleFormat: SelectedSubtitleFormat(kind == 3),
+                Quality: SelectedQuality());
             var path = await export(opts, new Progress<MediaStatus>(s => {
                 progress.IsIndeterminate = s.Total == 0; if (s.Total > 0) progress.Value = s.Completed * 100.0 / s.Total;
                 string stageText = s.Stage switch { 1 => L.T("SAD47E6D075ED"), 2 => L.T("SE66883FFD17E"), 3 => L.T("SB72E9FB4DA0B"), 4 => L.T("SF28461BB49C8"), _ => L.T("SC581D2AC36FC") };
@@ -213,7 +259,7 @@ internal sealed class EditorExportDialog : ContentDialog
             else { status.Text = L.T("SD712F5B82DED"); progress.Visibility = Visibility.Collapsed; }
         } catch (OperationCanceledException) { status.Text = L.T("SE8A19ECD170F"); progress.Visibility = Visibility.Collapsed; }
         catch (Exception error) { status.Text = L.T("SE4EE3C313CD0") + error.Message; progress.Visibility = Visibility.Collapsed; }
-        finally { busy = false; choices.IsHitTestVisible = specificationsTile.IsHitTestVisible = subtitleOnlyTile.IsHitTestVisible = !complete; exportButton.IsEnabled = complete || (kind == 0 ? codec.SelectedItem is not null : kind != 3 || hasSubtitles); if (!complete) cancelButton.Content = L.T("S2CD0F3BE8738"); }
+        finally { busy = false; choices.IsHitTestVisible = specificationsTile.IsHitTestVisible = subtitleOnlyTile.IsHitTestVisible = gifTile.IsHitTestVisible = !complete; exportButton.IsEnabled = complete || (kind == 0 ? codec.SelectedItem is not null : kind != 3 || hasSubtitles); if (!complete) cancelButton.Content = L.T("S2CD0F3BE8738"); }
     }
     private static string FormatDuration(TimeSpan duration) => duration.TotalHours >= 1 ? duration.ToString(@"h\:mm\:ss") : duration.ToString(@"mm\:ss");
     private static string FormatProgressSuffix(MediaStatus s, TimeSpan elapsed)

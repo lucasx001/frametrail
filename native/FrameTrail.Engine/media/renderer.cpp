@@ -9,6 +9,43 @@
 #include <cmath>
 
 namespace frametrail::media {
+namespace {
+// Evict the least-recently-used entry before inserting into a bounded cache.
+template <typename CacheMap, typename LruMap>
+void evict_lru_entry(CacheMap& cache, LruMap& lru, size_t max_entries) {
+    while (cache.size() >= max_entries && !lru.empty()) {
+        auto victim = std::min_element(lru.begin(), lru.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+        cache.erase(victim->first);
+        lru.erase(victim);
+    }
+    if (cache.size() >= max_entries) cache.clear();
+}
+ComPtr<IDWriteTextLayout> create_text_layout(
+    IDWriteFactory* text_factory,
+    const std::wstring& text,
+    const wchar_t* font_family,
+    DWRITE_FONT_WEIGHT weight,
+    float font_size,
+    float max_width,
+    float max_height,
+    DWRITE_TEXT_ALIGNMENT align,
+    DWRITE_PARAGRAPH_ALIGNMENT valign,
+    DWRITE_TEXT_METRICS& metrics) {
+    ComPtr<IDWriteTextFormat> format;
+    FT_MEDIA_CHECK(text_factory->CreateTextFormat(
+        font_family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        std::max(8.0f, font_size), L"zh-CN", &format));
+    FT_MEDIA_CHECK(format->SetTextAlignment(align));
+    FT_MEDIA_CHECK(format->SetParagraphAlignment(valign));
+    ComPtr<IDWriteTextLayout> layout;
+    FT_MEDIA_CHECK(text_factory->CreateTextLayout(
+        text.c_str(), static_cast<UINT32>(text.size()), format.Get(),
+        std::max(1.0f, max_width), std::max(1.0f, max_height), &layout));
+    FT_MEDIA_CHECK(layout->GetMetrics(&metrics));
+    return layout;
+}
+}
 Renderer::Renderer(const std::filesystem::path& path) : root(path) {
     FT_MEDIA_CHECK(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(text_factory.GetAddressOf())));
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
@@ -42,7 +79,11 @@ ComPtr<ID2D1Bitmap1> Renderer::bitmap(ID3D11Texture2D* texture, bool target, boo
     return result;
 }
 ComPtr<ID2D1Bitmap1> Renderer::image(const std::filesystem::path& path) {
-    auto key = path.wstring(); if (images.contains(key)) return images.at(key);
+    auto key = path.wstring();
+    if (images.contains(key)) {
+        image_lru[key] = ++cache_clock;
+        return images.at(key);
+    }
     ComPtr<IWICImagingFactory> wic; FT_MEDIA_CHECK(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic)));
     ComPtr<IWICBitmapDecoder> decoder; FT_MEDIA_CHECK(wic->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder));
     ComPtr<IWICBitmapFrameDecode> frame; FT_MEDIA_CHECK(decoder->GetFrame(0, &frame));
@@ -56,15 +97,19 @@ ComPtr<ID2D1Bitmap1> Renderer::image(const std::filesystem::path& path) {
     }
     ComPtr<IWICFormatConverter> converter; FT_MEDIA_CHECK(wic->CreateFormatConverter(&converter)); FT_MEDIA_CHECK(converter->Initialize(source.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom));
     ComPtr<ID2D1Bitmap1> result; FT_MEDIA_CHECK(d2->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &result));
-    if (images.size() >= 4) images.clear(); images[key] = result; return result;
+    evict_lru_entry(images, image_lru, 16);
+    images[key] = result;
+    image_lru[key] = ++cache_clock;
+    return result;
 }
 void Renderer::layer(const Project& p, const MediaFrame& frame, float radius, bool shadow, const Json& settings, bool screen, const VisualScene& visual) {
     const auto asset = std::find_if(p.media.begin(), p.media.end(), [&](auto& m) { return m.id == frame.media_id; });
     if (asset == p.media.end()) throw ValidationError("scene", "missing media ID");
     if (!readers.contains(asset->id)) {
-        if (readers.size() >= 4) readers.clear();
+        evict_lru_entry(readers, reader_lru, 8);
         readers[asset->id] = std::make_unique<VideoReader>(safe_path(root, asset->path), manager.Get());
     }
+    reader_lru[asset->id] = ++cache_clock;
     auto& reader = *readers.at(asset->id); auto texture = reader.frame(frame.local_ticks, device.Get(), context.Get());
     if (reader.cpu) fallbacks = 1;
     Rect crop{};
@@ -101,7 +146,9 @@ void Renderer::layer(const Project& p, const MediaFrame& frame, float radius, bo
     if (screen && settings.contains("crop")) { auto c = settings["crop"]; src = D2D1::RectF(c["x"].get<float>() * asset->width, c["y"].get<float>() * asset->height, (c["x"].get<float>() + c["width"].get<float>()) * asset->width, (c["y"].get<float>() + c["height"].get<float>()) * asset->height); }
     if(!screen && visual.camera_shape=="circle") {float side=float(std::min(asset->width,asset->height));src=D2D1::RectF((asset->width-side)/2,(asset->height-side)/2,(asset->width+side)/2,(asset->height+side)/2);}
     d2->DrawBitmap(source.Get(), rect, 1, D2D1_INTERPOLATION_MODE_LINEAR, src); d2->SetTransform(original);
-    if (screen && settings.value("cursorScale", 1.0) > 0) {
+    const bool show_cursor = settings.value("cursorScale", 1.0) > 0;
+    const bool show_keystroke_hud = settings.value("keystrokeHud", true);
+    if (screen && (show_cursor || show_keystroke_hud)) {
         const auto source_ticks = frame.local_ticks + normalized_ticks(asset->start_offset);
         const auto offset = static_cast<int64_t>(std::llround(settings.value("cursorTimeOffset", 0.0) * time_scale));
         if (const auto window = pointer_window(p, source_ticks, offset)) {
@@ -110,65 +157,159 @@ void Renderer::layer(const Project& p, const MediaFrame& frame, float radius, bo
             std::erase_if(pointers, [&](const auto& entry) {
                 return std::none_of(window->media.begin(), window->media.end(), [&](auto media) { return media->id == entry.first; });
             });
+            std::erase_if(pointer_keys, [&](const auto& entry) {
+                return std::none_of(window->media.begin(), window->media.end(), [&](auto media) { return media->id == entry.first; });
+            });
             auto load = [&](const Media& media) -> const PointerTrack& {
                 if (pointers.contains(media.id)) return pointers.at(media.id);
                 size_t retained_samples = 0;
                 for (const auto& entry : pointers) retained_samples += entry.second.points.size();
-                PointerTrack track; std::ifstream input(safe_path(root, media.path)); std::string line;
+                PointerTrack track;
+                std::vector<KeyEvent> keys;
+                std::ifstream input(safe_path(root, media.path)); std::string line;
                 if (!input) throw ValidationError("pointer", "pointer file unavailable");
                 while (std::getline(input, line)) {
                     if (line.size() > 32768 || track.points.size() + retained_samples >= maximum_cached_pointer_samples)
                         throw ValidationError("pointer", "pointer cache limit exceeded");
                     auto event = Json::parse(line);
-                    if (event.value("type", "") == "shape") track.shapes[event.at("id").get<uint32_t>()] = {event.at("file").get<std::string>(), event.value("hotspotX", 0.0f), event.value("hotspotY", 0.0f)};
-                    if (event.value("type", "") == "pointer") {
+                    const auto type = event.value("type", std::string{});
+                    if (type == "shape") track.shapes[event.at("id").get<uint32_t>()] = {event.at("file").get<std::string>(), event.value("hotspotX", 0.0f), event.value("hotspotY", 0.0f)};
+                    else if (type == "pointer") {
                         auto t = normalized_ticks({event.at("ticks").get<int64_t>(), event.at("timescale").get<int32_t>()});
                         float x = event.at("x").get<float>(), y = event.at("y").get<float>();
                         if (!std::isfinite(x) || !std::isfinite(y) || x < 0 || x > 1 || y < 0 || y > 1) throw ValidationError("pointer", "invalid coordinates");
                         track.points.push_back({t, x, y, event.value("shape", 0u), event.value("visible", false) && event.value("inside", false), event.value("kind", 0u)});
+                    } else if (type == "key") {
+                        auto t = normalized_ticks({event.at("ticks").get<int64_t>(), event.at("timescale").get<int32_t>()});
+                        auto label = event.value("label", std::string{});
+                        if (!label.empty() && label.size() <= 128 && keys.size() < 65536)
+                            keys.push_back({t, std::move(label)});
                     }
                 }
                 std::stable_sort(track.points.begin(), track.points.end(), [](auto& a, auto& b) { return a.ticks < b.ticks; });
+                std::stable_sort(keys.begin(), keys.end(), [](auto& a, auto& b) { return a.ticks < b.ticks; });
+                pointer_keys.emplace(media.id, std::move(keys));
                 return pointers.emplace(media.id, std::move(track)).first->second;
             };
-            const auto sampled = sample_pointer_window(*window, load, settings.value("cursorSmoothing", 0.08),
-                settings.value("cursorHideWhenIdle", false), settings.value("cursorIdleDelay", 1.2));
-            if (sampled) {
-                const auto& track = *sampled->latest.track;
-                const auto& m = *sampled->latest.media;
-                const auto cursor_ticks = window->ticks;
-                const float x = rect.left + (float(sampled->x) * asset->width - src.left) / (src.right - src.left) * (rect.right - rect.left);
-                const float y = rect.top + (float(sampled->y) * asset->height - src.top) / (src.bottom - src.top) * (rect.bottom - rect.top);
-                auto found = track.shapes.find(sampled->latest.point.shape); const auto scale = static_cast<float>(settings.value("cursorScale", 1.0)) * (rect.right - rect.left) / (src.right - src.left);
-                const auto opacity = static_cast<float>(sampled->opacity);
-                const auto click_style=settings.value("cursorClickStyle",std::string("none"));
-                if(click_style!="none")for(auto click=sampled->clicks.rbegin();click!=sampled->clicks.rend();++click) {
-                    auto progress=static_cast<float>(cursor_click_progress(cursor_ticks,click->ticks));
-                    float cx=rect.left+(click->x*asset->width-src.left)/(src.right-src.left)*(rect.right-rect.left);
-                    float cy=rect.top+(click->y*asset->height-src.top)/(src.bottom-src.top)*(rect.bottom-rect.top);
-                    auto color=settings.value("cursorClickColor",Json{{"r",0.35},{"g",0.68},{"b",1.0},{"a",1.0}});
-                    brush->SetColor(D2D1::ColorF(color["r"].get<float>(),color["g"].get<float>(),color["b"].get<float>(),color.value("a",1.0f)));
-                    brush->SetOpacity(static_cast<float>(settings.value("cursorClickOpacity",0.8))*(1-progress));
-                    float click_radius=(click_style=="ripple"?8+22*progress:18)*scale*static_cast<float>(settings.value("cursorClickScale",1.0));
-                    auto ellipse=D2D1::Ellipse(D2D1::Point2F(cx,cy),click_radius,click_radius);
-                    if(click_style=="ripple")d2->DrawEllipse(ellipse,brush.Get(),std::max(1.0f,2*scale));else d2->FillEllipse(ellipse,brush.Get());
+            const auto cursor_ticks = window->ticks;
+            if (show_cursor) {
+                const double smoothing = settings.value("cursorSmoothing", 0.08);
+                const bool hide_idle = settings.value("cursorHideWhenIdle", false);
+                const double idle_delay = settings.value("cursorIdleDelay", 1.2);
+                const auto sampled = sample_pointer_window(*window, load, smoothing, hide_idle, idle_delay);
+                if (sampled) {
+                    const auto& track = *sampled->latest.track;
+                    const auto& m = *sampled->latest.media;
+                    const float x = rect.left + (float(sampled->x) * asset->width - src.left) / (src.right - src.left) * (rect.right - rect.left);
+                    const float y = rect.top + (float(sampled->y) * asset->height - src.top) / (src.bottom - src.top) * (rect.bottom - rect.top);
+                    auto found = track.shapes.find(sampled->latest.point.shape); const auto scale = static_cast<float>(settings.value("cursorScale", 1.0)) * (rect.right - rect.left) / (src.right - src.left);
+                    const auto opacity = static_cast<float>(sampled->opacity);
+                    const auto click_style=settings.value("cursorClickStyle",std::string("none"));
+                    if(click_style!="none")for(auto click=sampled->clicks.rbegin();click!=sampled->clicks.rend();++click) {
+                        auto progress=static_cast<float>(cursor_click_progress(cursor_ticks,click->ticks));
+                        float cx=rect.left+(click->x*asset->width-src.left)/(src.right-src.left)*(rect.right-rect.left);
+                        float cy=rect.top+(click->y*asset->height-src.top)/(src.bottom-src.top)*(rect.bottom-rect.top);
+                        auto color=settings.value("cursorClickColor",Json{{"r",0.35},{"g",0.68},{"b",1.0},{"a",1.0}});
+                        brush->SetColor(D2D1::ColorF(color["r"].get<float>(),color["g"].get<float>(),color["b"].get<float>(),color.value("a",1.0f)));
+                        brush->SetOpacity(static_cast<float>(settings.value("cursorClickOpacity",0.8))*(1-progress));
+                        float click_radius=(click_style=="ripple"?8+22*progress:18)*scale*static_cast<float>(settings.value("cursorClickScale",1.0));
+                        auto ellipse=D2D1::Ellipse(D2D1::Point2F(cx,cy),click_radius,click_radius);
+                        if(click_style=="ripple")d2->DrawEllipse(ellipse,brush.Get(),std::max(1.0f,2*scale));else d2->FillEllipse(ellipse,brush.Get());
+                    }
+                    auto style=settings.value("cursorStyle",std::string("recorded"));
+                    auto draw_cursor = [&](float cx, float cy, float alpha_val) {
+                        if (alpha_val <= 0.002f) return;
+                        if(style=="dot" || style=="crosshair") {
+                            brush->SetOpacity(alpha_val); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                            if(style=="dot") {auto circle=D2D1::Ellipse(D2D1::Point2F(cx,cy),5*scale,5*scale);d2->FillEllipse(circle,brush.Get());brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));d2->DrawEllipse(circle,brush.Get(),scale);}
+                            else {d2->DrawLine(D2D1::Point2F(cx-9*scale,cy),D2D1::Point2F(cx+9*scale,cy),brush.Get(),3*scale);d2->DrawLine(D2D1::Point2F(cx,cy-9*scale),D2D1::Point2F(cx,cy+9*scale),brush.Get(),3*scale);brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));d2->DrawLine(D2D1::Point2F(cx-9*scale,cy),D2D1::Point2F(cx+9*scale,cy),brush.Get(),scale);d2->DrawLine(D2D1::Point2F(cx,cy-9*scale),D2D1::Point2F(cx,cy+9*scale),brush.Get(),scale);}
+                        } else if (style=="recorded" && found != track.shapes.end()) {
+                            auto rel = winrt::to_string((std::filesystem::path(winrt::to_hstring(m.path).c_str()).parent_path() / std::filesystem::path(winrt::to_hstring(found->second.file).c_str())).generic_wstring());
+                            auto icon = image(safe_path(root, rel)); auto size = icon->GetSize(); auto shape = found->second;
+                            auto dest = D2D1::RectF(cx - shape.x * scale, cy - shape.y * scale, cx + (size.width - shape.x) * scale, cy + (size.height - shape.y) * scale);
+                            d2->DrawBitmap(icon.Get(), dest, alpha_val);
+                        } else {
+                            // Explicit default pointer when capture could not persist a shape.
+                            ComPtr<ID2D1PathGeometry> arrow; FT_MEDIA_CHECK(factory->CreatePathGeometry(&arrow)); ComPtr<ID2D1GeometrySink> sink; FT_MEDIA_CHECK(arrow->Open(&sink));
+                            sink->BeginFigure(D2D1::Point2F(cx, cy), D2D1_FIGURE_BEGIN_FILLED);
+                            sink->AddLine(D2D1::Point2F(cx + 2 * scale, cy + 20 * scale)); sink->AddLine(D2D1::Point2F(cx + 7 * scale, cy + 15 * scale)); sink->AddLine(D2D1::Point2F(cx + 14 * scale, cy + 15 * scale)); sink->EndFigure(D2D1_FIGURE_END_CLOSED); FT_MEDIA_CHECK(sink->Close());
+                            brush->SetOpacity(alpha_val); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); d2->FillGeometry(arrow.Get(), brush.Get()); brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black)); d2->DrawGeometry(arrow.Get(), brush.Get(), scale);
+                        }
+                    };
+                    if (const double mb = std::clamp(settings.value("motionBlur", 0.0), 0.0, 1.0); mb > 0.01) {
+                        if (const auto prev_window = pointer_window(p, (std::max<int64_t>)(0, source_ticks - time_scale / 60), offset)) {
+                            if (const auto prev_sampled = sample_pointer_window(*prev_window, load, smoothing, hide_idle, idle_delay)) {
+                                const double dx = sampled->x - prev_sampled->x;
+                                const double dy = sampled->y - prev_sampled->y;
+                                if (std::hypot(dx, dy) > 0.008) {
+                                    constexpr std::array<std::pair<double, float>, 2> ghosts{{{0.70, 0.16f}, {0.35, 0.28f}}};
+                                    for (const auto [frac, ghost_alpha] : ghosts) {
+                                        const float gx = rect.left + (float(sampled->x - dx * frac * mb) * asset->width - src.left) / (src.right - src.left) * (rect.right - rect.left);
+                                        const float gy = rect.top + (float(sampled->y - dy * frac * mb) * asset->height - src.top) / (src.bottom - src.top) * (rect.bottom - rect.top);
+                                        draw_cursor(gx, gy, opacity * ghost_alpha * static_cast<float>(mb));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    draw_cursor(x, y, opacity);
                 }
-                auto style=settings.value("cursorStyle",std::string("recorded"));
-                if(style=="dot" || style=="crosshair") {
-                    brush->SetOpacity(opacity); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-                    if(style=="dot") {auto circle=D2D1::Ellipse(D2D1::Point2F(x,y),5*scale,5*scale);d2->FillEllipse(circle,brush.Get());brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));d2->DrawEllipse(circle,brush.Get(),scale);}
-                    else {d2->DrawLine(D2D1::Point2F(x-9*scale,y),D2D1::Point2F(x+9*scale,y),brush.Get(),3*scale);d2->DrawLine(D2D1::Point2F(x,y-9*scale),D2D1::Point2F(x,y+9*scale),brush.Get(),3*scale);brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));d2->DrawLine(D2D1::Point2F(x-9*scale,y),D2D1::Point2F(x+9*scale,y),brush.Get(),scale);d2->DrawLine(D2D1::Point2F(x,y-9*scale),D2D1::Point2F(x,y+9*scale),brush.Get(),scale);}
-                } else if (style=="recorded" && found != track.shapes.end()) {
-                    auto rel = winrt::to_string((std::filesystem::path(winrt::to_hstring(m.path).c_str()).parent_path() / std::filesystem::path(winrt::to_hstring(found->second.file).c_str())).generic_wstring());
-                    auto icon = image(safe_path(root, rel)); auto size = icon->GetSize(); auto shape = found->second;
-                    auto dest = D2D1::RectF(x - shape.x * scale, y - shape.y * scale, x + (size.width - shape.x) * scale, y + (size.height - shape.y) * scale);
-                    d2->DrawBitmap(icon.Get(), dest, opacity);
-                } else {
-                    // Explicit default pointer when capture could not persist a shape.
-                    ComPtr<ID2D1PathGeometry> arrow; FT_MEDIA_CHECK(factory->CreatePathGeometry(&arrow)); ComPtr<ID2D1GeometrySink> sink; FT_MEDIA_CHECK(arrow->Open(&sink));
-                    sink->BeginFigure(D2D1::Point2F(x, y), D2D1_FIGURE_BEGIN_FILLED);
-                    sink->AddLine(D2D1::Point2F(x + 2 * scale, y + 20 * scale)); sink->AddLine(D2D1::Point2F(x + 7 * scale, y + 15 * scale)); sink->AddLine(D2D1::Point2F(x + 14 * scale, y + 15 * scale)); sink->EndFigure(D2D1_FIGURE_END_CLOSED); FT_MEDIA_CHECK(sink->Close());
-                    brush->SetOpacity(opacity); brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); d2->FillGeometry(arrow.Get(), brush.Get()); brush->SetColor(D2D1::ColorF(D2D1::ColorF::Black)); d2->DrawGeometry(arrow.Get(), brush.Get(), scale);
+            }
+            if (show_keystroke_hud) {
+                for (const auto* media : window->media) (void)load(*media);
+                const int64_t hud_window_ticks = 14'000'000;
+                const int64_t min_key_ticks = std::max(window->begin, cursor_ticks - hud_window_ticks);
+                int64_t best_ticks = -1;
+                std::string best_label;
+                for (const auto* media : window->media) {
+                    const auto found_keys = pointer_keys.find(media->id);
+                    if (found_keys == pointer_keys.end()) continue;
+                    const auto m_start = normalized_ticks(media->start_offset);
+                    const auto m_dur = normalized_ticks(media->duration);
+                    for (auto it = found_keys->second.rbegin(); it != found_keys->second.rend(); ++it) {
+                        if (it->ticks < 0 || it->ticks >= m_dur) continue;
+                        const int64_t abs_ticks = m_start + it->ticks;
+                        if (abs_ticks > cursor_ticks) continue;
+                        if (abs_ticks < min_key_ticks) break;
+                        if (abs_ticks > best_ticks) {
+                            best_ticks = abs_ticks;
+                            best_label = it->label;
+                        }
+                        break;
+                    }
+                }
+                if (best_ticks >= 0 && !best_label.empty()) {
+                    const double age_sec = static_cast<double>(cursor_ticks - best_ticks) / static_cast<double>(time_scale);
+                    float hud_alpha = 1.0f;
+                    if (age_sec < 0.12) hud_alpha = static_cast<float>(age_sec / 0.12);
+                    else if (age_sec > 1.4 - 0.28) hud_alpha = static_cast<float>((1.4 - age_sec) / 0.28);
+                    hud_alpha = std::clamp(hud_alpha, 0.0f, 1.0f);
+                    if (hud_alpha > 0.005f) {
+                        const float rect_w = rect.right - rect.left;
+                        const float rect_h = rect.bottom - rect.top;
+                        const float font_size = std::clamp(rect_h * 0.032f, 13.0f, 34.0f);
+                        const auto wlabel = winrt::to_hstring(best_label);
+                        DWRITE_TEXT_METRICS metrics{};
+                        auto layout = create_text_layout(
+                            text_factory.Get(), std::wstring(wlabel.c_str()), L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                            font_size, std::max(80.0f, rect_w * 0.72f), font_size * 2.0f,
+                            DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, metrics);
+                        const float pad_x = font_size * 0.85f;
+                        const float pad_y = font_size * 0.40f;
+                        const float cap_w = metrics.width + pad_x * 2.0f;
+                        const float cap_h = metrics.height + pad_y * 2.0f;
+                        const float cx = (rect.left + rect.right) * 0.5f;
+                        const float bottom = rect.bottom - std::max(20.0f, rect_h * 0.055f);
+                        const auto cap_rect = D2D1::RectF(cx - cap_w * 0.5f, bottom - cap_h, cx + cap_w * 0.5f, bottom);
+                        const float cap_radius = std::min(14.0f, cap_h * 0.35f);
+                        brush->SetOpacity(1.0f);
+                        brush->SetColor(D2D1::ColorF(0.06f, 0.07f, 0.10f, 0.88f * hud_alpha));
+                        d2->FillRoundedRectangle(D2D1::RoundedRect(cap_rect, cap_radius, cap_radius), brush.Get());
+                        brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.22f * hud_alpha));
+                        d2->DrawRoundedRectangle(D2D1::RoundedRect(cap_rect, cap_radius, cap_radius), brush.Get(), std::max(1.0f, font_size * 0.075f));
+                        brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, hud_alpha));
+                        d2->DrawTextLayout(D2D1::Point2F(cap_rect.left + pad_x - metrics.left, cap_rect.top + pad_y - metrics.top), layout.Get(), brush.Get());
+                    }
                 }
             }
         }
@@ -200,16 +341,140 @@ void Renderer::background(const Project&,const FrameScene& scene) {
     auto crop=D2D1::RectF((size.width-scene.width/scale)/2,(size.height-scene.height/scale)/2,(size.width+scene.width/scale)/2,(size.height+scene.height/scale)/2);d2->DrawBitmap(source.Get(),rect,1,D2D1_INTERPOLATION_MODE_LINEAR,crop);
 }
 void Renderer::stickers(const FrameScene& scene,bool attached) {
+    const float min_dim = static_cast<float>(std::min(scene.width, scene.height));
     for(auto&e:scene.visual.stickers) {
         if((e.attachment=="screen")!=attached)continue;
         auto base=attached?scene.screen.output_rect:Rect{0,0,double(scene.width),double(scene.height)};
         auto rect=D2D1::RectF(float(base.x+e.rect.x*base.width),float(base.y+e.rect.y*base.height),float(base.x+(e.rect.x+e.rect.width)*base.width),float(base.y+(e.rect.y+e.rect.height)*base.height));
         D2D1_MATRIX_3X2_F original;d2->GetTransform(&original);d2->SetTransform(D2D1::Matrix3x2F::Rotation(float(e.rotation),D2D1::Point2F((rect.left+rect.right)/2,(rect.top+rect.bottom)/2))*original);
         if(!e.path.empty()) {auto picture=image(safe_path(root,e.path));d2->DrawBitmap(picture.Get(),rect,float(e.opacity));}
-        else if(!e.text.empty()) {
-            ComPtr<ID2D1SolidColorBrush> brush;FT_MEDIA_CHECK(d2->CreateSolidColorBrush(D2D1::ColorF(0.06f,0.07f,0.09f,float(e.opacity)*0.85f),&brush));d2->FillRoundedRectangle(D2D1::RoundedRect(rect,12,12),brush.Get());
-            brush->SetColor(D2D1::ColorF(1,1,1,float(e.opacity)));ComPtr<IDWriteTextFormat> format;FT_MEDIA_CHECK(text_factory->CreateTextFormat(L"Segoe UI",nullptr,DWRITE_FONT_WEIGHT_SEMI_BOLD,DWRITE_FONT_STYLE_NORMAL,DWRITE_FONT_STRETCH_NORMAL,std::max(8.f,(rect.bottom-rect.top)*0.42f),L"zh-CN",&format));format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            auto text=winrt::to_hstring(e.text);d2->DrawText(text.c_str(),text.size(),format.Get(),rect,brush.Get());
+        else {
+            const float w = rect.right - rect.left;
+            const float h = rect.bottom - rect.top;
+            const float alpha = static_cast<float>(e.opacity);
+            const auto accent = parse_hex_color(e.color, alpha);
+            ComPtr<ID2D1SolidColorBrush> brush;
+            FT_MEDIA_CHECK(d2->CreateSolidColorBrush(accent, &brush));
+
+            auto draw_centered_text = [&](D2D1_RECT_F box, float font_size, const wchar_t* font_family, DWRITE_FONT_WEIGHT weight, D2D1_COLOR_F color) {
+                if (e.text.empty()) return;
+                ComPtr<IDWriteTextFormat> format;
+                FT_MEDIA_CHECK(text_factory->CreateTextFormat(font_family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, std::max(8.0f, font_size), L"zh-CN", &format));
+                format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                brush->SetColor(color);
+                auto text = winrt::to_hstring(e.text);
+                d2->DrawText(text.c_str(), text.size(), format.Get(), box, brush.Get());
+            };
+
+            auto draw_tag_pill = [&](float anchor_x, float anchor_y, float font_size) {
+                if (e.text.empty()) return;
+                const auto wtext = winrt::to_hstring(e.text);
+                DWRITE_TEXT_METRICS metrics{};
+                auto layout = create_text_layout(
+                    text_factory.Get(), std::wstring(wtext.c_str()), L"Alibaba PuHuiTi 3.0", DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                    font_size, std::max(80.0f, min_dim * 0.45f), font_size * 2.0f,
+                    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_NEAR, metrics);
+                const float pad_x = font_size * 0.6f;
+                const float pad_y = font_size * 0.3f;
+                const float pw = metrics.width + pad_x * 2.0f;
+                const float ph = metrics.height + pad_y * 2.0f;
+                const auto pill_rect = D2D1::RectF(anchor_x, anchor_y, anchor_x + pw, anchor_y + ph);
+                const float pr = std::min(10.0f, ph * 0.35f);
+                brush->SetColor(D2D1::ColorF(0.06f, 0.07f, 0.09f, 0.90f * alpha));
+                d2->FillRoundedRectangle(D2D1::RoundedRect(pill_rect, pr, pr), brush.Get());
+                brush->SetColor(accent);
+                d2->DrawRoundedRectangle(D2D1::RoundedRect(pill_rect, pr, pr), brush.Get(), std::max(1.5f, min_dim * 0.002f));
+                brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+                d2->DrawTextLayout(D2D1::Point2F(pill_rect.left + pad_x - metrics.left, pill_rect.top + pad_y - metrics.top), layout.Get(), brush.Get());
+            };
+
+            if (e.shape == "arrow") {
+                const float stroke = std::max(3.0f, min_dim * 0.0045f);
+                const float dx = rect.right - rect.left;
+                const float dy = rect.bottom - rect.top;
+                const float len = std::hypot(dx, dy);
+                if (len > 1.0f) {
+                    const float ux = dx / len, uy = dy / len;
+                    const float px = -uy, py = ux;
+                    const float head_len = std::min(len * 0.45f, std::clamp(len * 0.25f, stroke * 3.5f, stroke * 8.0f));
+                    const float head_half = head_len * 0.56f;
+                    const auto shaft_end = D2D1::Point2F(rect.right - ux * head_len * 0.72f, rect.bottom - uy * head_len * 0.72f);
+                    ComPtr<ID2D1StrokeStyle> round_cap;
+                    auto props = D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND);
+                    FT_MEDIA_CHECK(factory->CreateStrokeStyle(props, nullptr, 0, &round_cap));
+                    brush->SetColor(accent);
+                    d2->DrawLine(D2D1::Point2F(rect.left, rect.top), shaft_end, brush.Get(), stroke, round_cap.Get());
+                    ComPtr<ID2D1PathGeometry> head;
+                    FT_MEDIA_CHECK(factory->CreatePathGeometry(&head));
+                    ComPtr<ID2D1GeometrySink> sink;
+                    FT_MEDIA_CHECK(head->Open(&sink));
+                    sink->BeginFigure(D2D1::Point2F(rect.right, rect.bottom), D2D1_FIGURE_BEGIN_FILLED);
+                    sink->AddLine(D2D1::Point2F(rect.right - ux * head_len + px * head_half, rect.bottom - uy * head_len + py * head_half));
+                    sink->AddLine(D2D1::Point2F(rect.right - ux * head_len - px * head_half, rect.bottom - uy * head_len - py * head_half));
+                    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                    FT_MEDIA_CHECK(sink->Close());
+                    d2->FillGeometry(head.Get(), brush.Get());
+                }
+                if (!e.text.empty()) {
+                    const float tag_fs = std::clamp(min_dim * 0.022f, 12.0f, 28.0f);
+                    draw_tag_pill(rect.left, rect.top - tag_fs * 1.1f, tag_fs);
+                }
+            } else if (e.shape == "rect") {
+                const float stroke = std::max(3.0f, min_dim * 0.004f);
+                const float corner = std::min(12.0f, std::min(w, h) * 0.14f);
+                const auto rr = D2D1::RoundedRect(rect, corner, corner);
+                brush->SetColor(parse_hex_color(e.color, 0.12f * alpha));
+                d2->FillRoundedRectangle(rr, brush.Get());
+                brush->SetColor(accent);
+                d2->DrawRoundedRectangle(rr, brush.Get(), stroke);
+                if (!e.text.empty()) {
+                    const float tag_fs = std::clamp(min_dim * 0.020f, 11.0f, 24.0f);
+                    draw_tag_pill(rect.left + stroke * 0.5f, rect.top + stroke * 0.5f, tag_fs);
+                }
+            } else if (e.shape == "circle") {
+                const float stroke = std::max(3.5f, min_dim * 0.0045f);
+                const auto ellipse = D2D1::Ellipse(
+                    D2D1::Point2F((rect.left + rect.right) * 0.5f, (rect.top + rect.bottom) * 0.5f),
+                    std::max(1.0f, w * 0.5f), std::max(1.0f, h * 0.5f));
+                brush->SetColor(parse_hex_color(e.color, 0.10f * alpha));
+                d2->FillEllipse(ellipse, brush.Get());
+                brush->SetColor(accent);
+                d2->DrawEllipse(ellipse, brush.Get(), stroke);
+            } else if (e.shape == "badge") {
+                const float radius = std::max(4.0f, std::min(w, h) * 0.5f);
+                const auto center = D2D1::Point2F((rect.left + rect.right) * 0.5f, (rect.top + rect.bottom) * 0.5f);
+                const auto ellipse = D2D1::Ellipse(center, radius, radius);
+                brush->SetColor(accent);
+                d2->FillEllipse(ellipse, brush.Get());
+                brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+                d2->DrawEllipse(ellipse, brush.Get(), std::max(2.0f, radius * 0.11f));
+                const auto badge_box = D2D1::RectF(center.x - radius, center.y - radius, center.x + radius, center.y + radius);
+                draw_centered_text(badge_box, std::max(10.0f, radius * 0.92f), L"Alibaba PuHuiTi 3.0", DWRITE_FONT_WEIGHT_BOLD, D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+            } else if (e.shape == "keycap") {
+                const float outer_r = std::min(14.0f, std::min(w, h) * 0.24f);
+                brush->SetColor(D2D1::ColorF(0.06f, 0.07f, 0.10f, 0.90f * alpha));
+                d2->FillRoundedRectangle(D2D1::RoundedRect(rect, outer_r, outer_r), brush.Get());
+                brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.18f * alpha));
+                d2->DrawRoundedRectangle(D2D1::RoundedRect(rect, outer_r, outer_r), brush.Get(), 1.2f);
+                const float ix = std::min(6.0f, w * 0.08f);
+                const float iy = std::min(5.0f, h * 0.10f);
+                const auto inner = D2D1::RectF(rect.left + ix, rect.top + iy * 0.7f, rect.right - ix, rect.bottom - iy * 1.3f);
+                const float inner_r = std::max(3.0f, outer_r - 3.0f);
+                brush->SetColor(D2D1::ColorF(0.14f, 0.16f, 0.21f, 0.96f * alpha));
+                d2->FillRoundedRectangle(D2D1::RoundedRect(inner, inner_r, inner_r), brush.Get());
+                brush->SetColor(parse_hex_color(e.color, 0.70f * alpha));
+                d2->DrawRoundedRectangle(D2D1::RoundedRect(inner, inner_r, inner_r), brush.Get(), 1.5f);
+                draw_centered_text(inner, std::max(9.0f, (inner.bottom - inner.top) * 0.46f), L"Cascadia Mono", DWRITE_FONT_WEIGHT_SEMI_BOLD, D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+            } else {
+                // "pill" (default)
+                const float pill_r = std::min(12.0f, std::min(w, h) * 0.35f);
+                brush->SetColor(D2D1::ColorF(0.06f, 0.07f, 0.09f, alpha * 0.85f));
+                d2->FillRoundedRectangle(D2D1::RoundedRect(rect, pill_r, pill_r), brush.Get());
+                brush->SetColor(parse_hex_color(e.color, alpha * 0.85f));
+                d2->DrawRoundedRectangle(D2D1::RoundedRect(rect, pill_r, pill_r), brush.Get(), std::max(1.5f, min_dim * 0.002f));
+                draw_centered_text(rect, std::max(8.0f, h * 0.42f), L"Alibaba PuHuiTi 3.0", DWRITE_FONT_WEIGHT_SEMI_BOLD, D2D1::ColorF(1.0f, 1.0f, 1.0f, alpha));
+            }
         }
         d2->SetTransform(original);
     }
@@ -250,10 +515,16 @@ ID3D11Texture2D* Renderer::render(const Project& p,const FrameScene& scene,uint3
             end();drawing=false;if(!visuals)visuals=std::make_unique<VisualGpu>(*this);
             if (scene.transition.has_value()) {
                 ensure_surface(screen_plane,w,h);begin(screen_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
-                layer(p,scene.transition->outgoing_screen,radius,true,cached_settings,true,scene.visual);end();drawing=false;
+                layer(p,scene.transition->outgoing_screen,radius,true,cached_settings,true,scene.visual);stickers(scene,true);end();drawing=false;
                 ensure_surface(transition_plane,w,h);begin(transition_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
-                layer(p,scene.transition->incoming_screen,radius,true,cached_settings,true,scene.visual);end();drawing=false;
-                visuals->transition(screen_plane.Get(),transition_plane.Get(),composition.Get(),scene.transition->style,scene.transition->progress);
+                layer(p,scene.transition->incoming_screen,radius,true,cached_settings,true,scene.visual);stickers(scene,true);end();drawing=false;
+                ensure_surface(transition_result_plane,w,h);
+                ComPtr<ID3D11RenderTargetView> transition_rtv;
+                FT_MEDIA_CHECK(device->CreateRenderTargetView(transition_result_plane.Get(),nullptr,&transition_rtv));
+                const float transparent[4]{0.f,0.f,0.f,0.f};
+                context->ClearRenderTargetView(transition_rtv.Get(),transparent);
+                visuals->transition(screen_plane.Get(),transition_plane.Get(),transition_result_plane.Get(),scene.transition->style,scene.transition->progress);
+                visuals->project(transition_result_plane.Get(),composition.Get(),scene.visual.screen,scene.width,scene.height);
             } else {
                 ensure_surface(screen_plane,w,h);begin(screen_plane.Get(),true);drawing=true;d2->Clear(D2D1::ColorF(0,0,0,0));
                 layer(p,scene.screen,radius,true,cached_settings,true,scene.visual);stickers(scene,true);end();drawing=false;

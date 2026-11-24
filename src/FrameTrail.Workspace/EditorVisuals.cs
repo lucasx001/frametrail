@@ -11,8 +11,127 @@ public static class VisualResources
     public static IEnumerable<string> Paths(ProjectSnapshot project)
     {
         if (project.Editor?.Backdrop is { Kind: "image" or "video" } backdrop) yield return backdrop.Path;
+        if (!string.IsNullOrEmpty(project.Editor?.BgmPath)) yield return project.Editor.BgmPath;
         foreach (var effect in project.Effects)
             if (effect.Parameters.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.String && path.GetString() is { Length: > 0 } value) yield return value;
+    }
+
+    public static IReadOnlyList<(long StartTicks, long EndTicks)> ResolveSubtitleCutRanges(
+        ProjectSnapshot snapshot,
+        IEnumerable<string> subtitleIds,
+        string? matchingSearchQuery = null)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        const long minKeepTicks = 1_000_000L; // 0.10s
+        long totalSource = Math.Max(0L, Ticks(snapshot.SourceDuration));
+        if (totalSource <= minKeepTicks) return Array.Empty<(long, long)>();
+
+        HashSet<string>? idSet = null;
+        if (matchingSearchQuery is not null)
+        {
+            if (string.IsNullOrWhiteSpace(matchingSearchQuery))
+                return Array.Empty<(long, long)>();
+        }
+        else
+        {
+            idSet = subtitleIds is null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(subtitleIds, StringComparer.Ordinal);
+            if (idSet.Count == 0) return Array.Empty<(long, long)>();
+        }
+
+        var raw = new List<(long StartTicks, long EndTicks)>();
+        foreach (var eff in snapshot.Effects)
+        {
+            if (!string.Equals(eff.Kind, "subtitle", StringComparison.Ordinal)) continue;
+            if (matchingSearchQuery is not null)
+            {
+                var p = SubtitleCueParameters.FromEffect(eff);
+                bool matchesPrimary = p.Text.Contains(matchingSearchQuery, StringComparison.OrdinalIgnoreCase);
+                bool matchesSecondary = !string.IsNullOrEmpty(p.SecondaryText) &&
+                    p.SecondaryText.Contains(matchingSearchQuery, StringComparison.OrdinalIgnoreCase);
+                if (!matchesPrimary && !matchesSecondary) continue;
+            }
+            else if (!idSet!.Contains(eff.Id))
+            {
+                continue;
+            }
+
+            long start = Math.Clamp(Ticks(eff.SourceStart), 0L, totalSource);
+            long end = Math.Clamp(start + Ticks(eff.SourceDuration), 0L, totalSource);
+            if (end > start) raw.Add((start, end));
+        }
+
+        if (raw.Count == 0) return Array.Empty<(long, long)>();
+        raw.Sort((a, b) => a.StartTicks != b.StartTicks ? a.StartTicks.CompareTo(b.StartTicks) : a.EndTicks.CompareTo(b.EndTicks));
+
+        var merged = new List<(long StartTicks, long EndTicks)>(raw.Count);
+        foreach (var r in raw)
+        {
+            if (merged.Count > 0 && r.StartTicks <= merged[^1].EndTicks)
+                merged[^1] = (merged[^1].StartTicks, Math.Max(merged[^1].EndTicks, r.EndTicks));
+            else
+                merged.Add(r);
+        }
+
+        var segments = snapshot.Segments.Count > 0
+            ? snapshot.Segments.Select(s =>
+            {
+                long sStart = Math.Clamp(Ticks(s.SourceStart), 0L, totalSource);
+                long sEnd = Math.Clamp(sStart + Ticks(s.SourceDuration), 0L, totalSource);
+                return (Start: sStart, End: sEnd);
+            }).Where(s => s.End > s.Start).ToList()
+            : new List<(long Start, long End)> { (0L, totalSource) };
+
+        if (HasSurvivingTimeline(segments, merged, minKeepTicks))
+            return merged;
+
+        // Clamp the tail of the cut ranges so at least 0.10s remains on the last valid segment.
+        int lastIdx = segments.FindLastIndex(s => s.End - s.Start >= minKeepTicks);
+        if (lastIdx < 0) return Array.Empty<(long, long)>();
+        long safeEnd = segments[lastIdx].End - minKeepTicks;
+        var clamped = new List<(long StartTicks, long EndTicks)>(merged.Count);
+        foreach (var r in merged)
+        {
+            if (r.StartTicks >= safeEnd) continue;
+            long end = Math.Min(r.EndTicks, safeEnd);
+            if (end > r.StartTicks) clamped.Add((r.StartTicks, end));
+        }
+        return clamped;
+    }
+
+    private static bool HasSurvivingTimeline(
+        IReadOnlyList<(long Start, long End)> segments,
+        IReadOnlyList<(long StartTicks, long EndTicks)> cuts,
+        long minKeepTicks)
+    {
+        foreach (var (segStart, segEnd) in segments)
+        {
+            var segCuts = new List<(long Start, long End)>();
+            foreach (var (cs, ce) in cuts)
+            {
+                if (ce <= segStart) continue;
+                if (cs >= segEnd) break;
+                long s = Math.Max(cs, segStart);
+                long e = Math.Min(ce, segEnd);
+                if (e <= s) continue;
+                if (s - segStart < minKeepTicks) s = segStart;
+                if (segEnd - e < minKeepTicks) e = segEnd;
+                if (segCuts.Count > 0 && s <= segCuts[^1].End + minKeepTicks)
+                    segCuts[^1] = (segCuts[^1].Start, Math.Max(segCuts[^1].End, e));
+                else
+                    segCuts.Add((s, e));
+            }
+            if (segCuts.Count == 0 && segEnd - segStart >= minKeepTicks) return true;
+            long cursor = segStart;
+            foreach (var (cs, ce) in segCuts)
+            {
+                if (cs > cursor && cs - cursor >= minKeepTicks) return true;
+                cursor = Math.Max(cursor, ce);
+            }
+            if (segEnd > cursor && segEnd - cursor >= minKeepTicks) return true;
+        }
+        return false;
     }
 }
 public sealed partial class EditorSession
@@ -23,6 +142,73 @@ public sealed partial class EditorSession
     // Keep bundled backgrounds in the project so reopening and export never depend on the installation.
     public Task<string> ImportWallpaperAsync(string source, CancellationToken cancellationToken = default) =>
         ImportVisualCoreAsync(source, false, true, cancellationToken);
+
+    public async Task<string> ImportBgmAsync(string sourcePath, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath))
+            throw new IOException(L.T("SB0C847A65D31"));
+        var extension = Path.GetExtension(sourcePath).ToLowerInvariant();
+        if (extension is not (".mp3" or ".wav" or ".m4a" or ".aac" or ".flac"))
+            throw new IOException(L.T("SB0C847A65D31"));
+        CheckSourceAncestors(sourcePath);
+        var inputInfo = new FileInfo(sourcePath);
+        if (!inputInfo.Exists)
+            throw new FileNotFoundException("Source BGM audio file not found.", sourcePath);
+        if (inputInfo.Length <= 0 || inputInfo.Length > 256L * 1024 * 1024)
+            throw new IOException(L.T("S1B19EF3E70E4"));
+
+        await gate.WaitAsync(cancellationToken);
+        string? created = null;
+        try
+        {
+            EnsureEditable();
+            await using var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read, 65536, FileOptions.Asynchronous);
+            string hash = Convert.ToHexString(await SHA256.HashDataAsync(input, cancellationToken)).ToLowerInvariant();
+            input.Position = 0;
+            var relative = $"assets/bgm-{hash[..16]}{extension}";
+            var destination = workspace.Resolve(relative);
+            if (File.Exists(destination))
+            {
+                await using var existing = File.OpenRead(destination);
+                string existingHash = Convert.ToHexString(await SHA256.HashDataAsync(existing, cancellationToken)).ToLowerInvariant();
+                if (string.Equals(existingHash, hash, StringComparison.OrdinalIgnoreCase))
+                {
+                    long existingDur = await Task.Run(() => RecordingUtilities.ProbeMedia(destination, false), cancellationToken);
+                    if (existingDur <= 0) throw new IOException($"Invalid audio file: {sourcePath}");
+                    return relative;
+                }
+                relative = $"assets/bgm-{hash}{extension}";
+                destination = workspace.Resolve(relative);
+                if (File.Exists(destination))
+                {
+                    long existingDur = await Task.Run(() => RecordingUtilities.ProbeMedia(destination, false), cancellationToken);
+                    if (existingDur <= 0) throw new IOException($"Invalid audio file: {sourcePath}");
+                    return relative;
+                }
+            }
+
+            created = destination;
+            Directory.CreateDirectory(Path.GetDirectoryName(created)!);
+            await using (var output = new FileStream(created, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
+                await input.CopyToAsync(output, cancellationToken);
+            long duration = await Task.Run(() => RecordingUtilities.ProbeMedia(created, false), cancellationToken);
+            if (duration <= 0)
+                throw new IOException($"Invalid audio file: {sourcePath}");
+            created = null;
+            return relative;
+        }
+        finally
+        {
+            try
+            {
+                if (created is not null && File.Exists(created)) File.Delete(created);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+    }
 
     private static void CheckSourceAncestors(string path)
     {

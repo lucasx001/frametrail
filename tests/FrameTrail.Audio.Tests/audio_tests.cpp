@@ -77,7 +77,109 @@ void smoke(const std::filesystem::path& directory) {
     std::this_thread::sleep_for(std::chrono::milliseconds(350)); ok(ft_audio_stop_at(handle, now()), "silent stop"); ft_audio_status status{}; status.struct_size = sizeof(status); ok(ft_audio_get_status(handle, &status), "silent status");
     expect(status.frames_written > 15000, "silence has duration"); std::cout << "PASS silent process track frames=" << status.frames_written << " packets=" << status.packets << '\n'; ft_audio_destroy(handle);
 }
+void dsp_math() {
+    constexpr double fs = 48000.0;
+    constexpr double pi = 3.14159265358979323846;
+
+    // 1. 2nd-order Butterworth 85 Hz high-pass biquad filter
+    const double w0 = 2.0 * pi * 85.0 / fs;
+    const double cos_w0 = std::cos(w0), sin_w0 = std::sin(w0);
+    const double alpha = sin_w0 / (2.0 * 0.7071067811865475);
+    const double a0 = 1.0 + alpha;
+    const double b0 = ((1.0 + cos_w0) * 0.5) / a0;
+    const double b1 = -(1.0 + cos_w0) / a0;
+    const double b2 = ((1.0 + cos_w0) * 0.5) / a0;
+    const double a1 = (-2.0 * cos_w0) / a0;
+    const double a2 = (1.0 - alpha) / a0;
+
+    auto run_hpf_rms = [&](double freq_hz) {
+        double x1 = 0, x2 = 0, y1 = 0, y2 = 0, sum_sq = 0;
+        const int total = 48000;
+        const int settle = 24000;
+        for (int i = 0; i < total; ++i) {
+            const double x = std::sin(2.0 * pi * freq_hz * i / fs);
+            const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+            x2 = x1; x1 = x; y2 = y1; y1 = y;
+            if (i >= settle) sum_sq += y * y;
+        }
+        return std::sqrt(sum_sq / (total - settle));
+    };
+    const double rms_30hz = run_hpf_rms(30.0);
+    const double rms_1khz = run_hpf_rms(1000.0);
+    expect(rms_30hz < 0.15, "85 Hz HPF attenuates 30 Hz rumble");
+    expect(rms_1khz > 0.68 && rms_1khz < 0.72, "85 Hz HPF preserves 1 kHz speech tone");
+
+    // 2. Soft-knee RMS noise gate (-42 dBFS threshold, 3:1 below threshold, 0.18 floor)
+    const double gate_atk = 1.0 - std::exp(-1.0 / (0.005 * fs));
+    const double gate_rel = 1.0 - std::exp(-1.0 / (0.060 * fs));
+    auto eval_gate = [&](double amp, int samples, double& env_sq) {
+        double gain = 1.0;
+        for (int i = 0; i < samples; ++i) {
+            const double sq = amp * amp;
+            env_sq += (sq > env_sq ? gate_atk : gate_rel) * (sq - env_sq);
+            const double rms = std::sqrt(std::max(0.0, env_sq));
+            const double level_db = 20.0 * std::log10(std::max(rms, 1e-9));
+            const double diff = -42.0 - level_db;
+            double gain_db = 0.0;
+            if (diff >= 3.0) gain_db = -2.0 * diff;
+            else if (diff > -3.0) { const double x = diff + 3.0; gain_db = -2.0 * (x * x) / 12.0; }
+            gain = std::max(0.18, std::pow(10.0, gain_db / 20.0));
+        }
+        return gain;
+    };
+    double gate_env_sq = 0.0;
+    const double noise_gain = eval_gate(0.001, 4800, gate_env_sq); // -60 dBFS
+    expect(std::abs(noise_gain - 0.18) < 1e-4, "noise gate attenuates -60 dBFS room tone to 0.18 floor");
+    const double speech_gain = eval_gate(0.1, 4800, gate_env_sq); // -20 dBFS
+    expect(std::abs(speech_gain - 1.0) < 1e-4, "noise gate opens to unity for -20 dBFS speech");
+
+    // 3. Auto voice ducking (15ms/280ms, -35 dBFS -> 0.28x)
+    const double duck_atk = 1.0 - std::exp(-1.0 / (0.015 * fs));
+    const double duck_rel = 1.0 - std::exp(-1.0 / (0.280 * fs));
+    const double smooth_down = 1.0 - std::exp(-1.0 / (0.010 * fs));
+    const double smooth_up = 1.0 - std::exp(-1.0 / (0.040 * fs));
+    double duck_env_sq = 0.0, duck_gain = 1.0;
+    for (int i = 0; i < 9600; ++i) {
+        const double sq = 0.1 * 0.1;
+        duck_env_sq += (sq > duck_env_sq ? duck_atk : duck_rel) * (sq - duck_env_sq);
+        const double target = std::sqrt(duck_env_sq) > 0.017782794 ? 0.28 : 1.0;
+        duck_gain += (target < duck_gain ? smooth_down : smooth_up) * (target - duck_gain);
+    }
+    expect(std::abs(duck_gain - 0.28) < 0.01, "voice ducker ducks background to 0.28x when speech active");
+
+    // 4. Loudness normalization (-16 dBFS target, max 2.5x) & -1.0 dBFS soft-knee limiter
+    const double norm_rms = 1.0 - std::exp(-1.0 / (0.100 * fs));
+    const double norm_atk = 1.0 - std::exp(-1.0 / (0.010 * fs));
+    const double norm_rel = 1.0 - std::exp(-1.0 / (0.150 * fs));
+    constexpr double target_rms = 0.158489319;
+    constexpr float limit_peak = 0.891250938f;
+    constexpr float knee_start = 0.70f * limit_peak;
+    constexpr float headroom = limit_peak - knee_start;
+    auto soft_limit = [&](float x) {
+        const float ax = std::abs(x);
+        if (ax <= knee_start) return x;
+        const float y = knee_start + headroom * std::tanh((ax - knee_start) / headroom);
+        return x < 0.0f ? -y : y;
+    };
+    double norm_env_sq = 0.0, norm_gain = 1.0;
+    for (int i = 0; i < 48000; ++i) {
+        const double s = 0.08 * std::sin(2.0 * pi * 440.0 * i / fs); // RMS = 0.05657 -> target/rms = 2.80 -> capped at 2.5x
+        const double sq = s * s;
+        norm_env_sq += norm_rms * (sq - norm_env_sq);
+        const double rms = std::sqrt(norm_env_sq);
+        double desired = 1.0;
+        if (rms > 1e-4) {
+            const double raw = std::clamp(target_rms / rms, 0.1, 2.5);
+            const double blend = std::clamp((rms - 1e-4) / 9e-4, 0.0, 1.0);
+            desired = 1.0 + blend * (raw - 1.0);
+        }
+        norm_gain += (desired < norm_gain ? norm_atk : norm_rel) * (desired - norm_gain);
+    }
+    expect(std::abs(norm_gain - 2.5) < 0.05, "loudness normalizer caps makeup gain at 2.5x for quiet signal");
+    expect(soft_limit(2.0f) <= limit_peak && soft_limit(-2.0f) >= -limit_peak, "soft limiter enforces -1.0 dBFS ceiling");
+    std::cout << "PASS: audio DSP high-pass filter, RMS noise gate, voice ducking, loudness normalizer, and soft limiter.\n";
+}
 int wmain(int argc, wchar_t** argv) {
-    try { clocks(); if (argc == 3 && std::wstring(argv[1]) == L"--smoke") smoke(argv[2]); return 0; }
+    try { clocks(); dsp_math(); if (argc == 3 && std::wstring(argv[1]) == L"--smoke") smoke(argv[2]); return 0; }
     catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

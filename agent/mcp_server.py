@@ -34,7 +34,21 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-TICKS_PER_SECOND = 10_000_000
+from agent.speech_rules import (
+    BOUNDARY_FILLERS,
+    INTENSITY_PRESETS,
+    MAX_CUT_RANGES,
+    MIN_KEEP_TICKS,
+    STRONG_FILLERS,
+    TICKS_PER_SECOND,
+    VERBATIM_FILLER_PROMPT,
+    clean_speech_token,
+    detect_speech_fillers_and_repeats,
+    merge_and_clamp_cut_ranges,
+    normalize_intensity,
+    resolve_intensity_options,
+)
+
 VALID_FRAME_STYLES = (
     "none",
     "windowLight",
@@ -564,15 +578,18 @@ class FrameTrailProjectBridge:
     def _commit_command(
         self, command: dict[str, Any], summary: str
     ) -> dict[str, Any]:
-        callback_result = self._post_callback(command)
-        if callback_result and callback_result.get("dispatched"):
-            return {
-                "ok": True,
-                "mode": "callback",
-                "summary": summary,
-                "command": command,
-                "callback": callback_result,
-            }
+        if self.callback_url:
+            callback_result = self._post_callback(command)
+            if callback_result and callback_result.get("dispatched"):
+                return {
+                    "ok": True,
+                    "mode": "callback",
+                    "summary": summary,
+                    "command": command,
+                    "callback": callback_result,
+                }
+            err = (callback_result or {}).get("error") or "Host callback dispatch failed."
+            raise ValueError(f"Live FrameTrail host callback failed: {err}")
 
         snapshot = self._load_project()
         updated = self._apply_local_command(snapshot, command)
@@ -1465,8 +1482,8 @@ class FrameTrailProjectBridge:
         if not out_ranges:
             raise ValueError("None of the specified ranges intersect the timeline.")
 
-        min_keep_ticks = max(100_000, min(10_000_000, _sec_to_ticks(min_keep_sec)))
-        command = {"op": "cutRanges", "ranges": out_ranges[:2000], "minKeepTicks": min_keep_ticks}
+        min_keep_ticks = max(MIN_KEEP_TICKS // 10, min(TICKS_PER_SECOND, _sec_to_ticks(min_keep_sec)))
+        command = {"op": "cutRanges", "ranges": out_ranges[:MAX_CUT_RANGES], "minKeepTicks": min_keep_ticks}
         return self._commit_command(command, f"Atomically cut {len(out_ranges)} range(s) ({space} time).")
 
     def optimize_speech_flow(
@@ -1484,9 +1501,10 @@ class FrameTrailProjectBridge:
         language: str = "auto",
         force_refresh: bool = False,
     ) -> dict[str, Any]:
+        norm_intensity = normalize_intensity(intensity)
         if self.callback_url:
             action_params: dict[str, Any] = {
-                "intensity": intensity,
+                "intensity": norm_intensity,
                 "remove_pauses": bool(remove_pauses),
                 "remove_fillers": bool(remove_fillers),
                 "remove_repeats": bool(remove_repeats),
@@ -1519,13 +1537,15 @@ class FrameTrailProjectBridge:
                         **(payload.get("data") or {}),
                     }
                 raise ValueError(str(cb.get("error") or "FrameTrail host speech optimization failed."))
+            if cb and cb.get("status") not in (501, 400):
+                raise ValueError(str(cb.get("error") or "Live FrameTrail host callback failed."))
 
         from agent.multimodal_tools import analyze_speech_polish
 
         snapshot = self._load_project()
         plan = analyze_speech_polish(
             project_dir=str(self.project_dir),
-            intensity=intensity,
+            intensity=norm_intensity,
             remove_pauses=remove_pauses,
             remove_fillers=remove_fillers,
             remove_repeats=remove_repeats,

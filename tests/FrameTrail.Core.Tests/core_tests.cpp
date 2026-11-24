@@ -382,6 +382,57 @@ void test_cut_ranges(const Project& base_project) {
         (void)edit_project(single, Json{{"op", "cutRanges"}, {"ranges", Json::array({{{"start", 10 * time_scale}, {"end", 5 * time_scale}}})}}.dump());
     }, "cutRanges rejects end <= start");
 }
+
+void test_export_settings(const Project& base_project) {
+    check(base_project.export_settings.quality == "standard", "default export quality is standard");
+    const auto serialized_default = Json::parse(serialize_project(base_project));
+    check(!serialized_default["export"].contains("quality"), "standard export quality is omitted from serialized JSON");
+
+    for (const auto* q : {"low", "high", "ultra"}) {
+        auto json = Json::parse(serialize_project(base_project));
+        json["export"]["quality"] = q;
+        const auto parsed = parse_project(json.dump());
+        check(parsed.export_settings.quality == q, "parse export.quality");
+        const auto roundtrip = Json::parse(serialize_project(parsed));
+        check(roundtrip["export"].contains("quality") && roundtrip["export"]["quality"] == q, "serialize non-standard export.quality");
+    }
+
+    for (const auto* bad_q : {"medium", "best", ""}) {
+        auto json = Json::parse(serialize_project(base_project));
+        json["export"]["quality"] = bad_q;
+        rejects([&] { (void)parse_project(json.dump()); }, "invalid export.quality");
+    }
+
+    // editor settings op: set quality, preserve when omitted, reset to standard
+    auto high_export = Json::parse(serialize_project(base_project))["export"];
+    high_export["quality"] = "high";
+    const auto with_high = edit_project(base_project, Json{{"op", "settings"}, {"export", high_export}}.dump());
+    check(with_high.export_settings.quality == "high", "settings op sets export.quality");
+
+    auto omitted_quality = Json::parse(serialize_project(base_project))["export"];
+    omitted_quality["width"] = 1280;
+    omitted_quality["height"] = 720;
+    const auto preserved = edit_project(with_high, Json{{"op", "settings"}, {"export", omitted_quality}}.dump());
+    check(preserved.export_settings.quality == "high" && preserved.export_settings.width == 1280, "settings op preserves existing non-standard quality when omitted");
+
+    auto reset_quality = omitted_quality;
+    reset_quality["quality"] = "standard";
+    const auto reset = edit_project(preserved, Json{{"op", "settings"}, {"export", reset_quality}}.dump());
+    check(reset.export_settings.quality == "standard", "settings op resets export.quality to standard");
+
+    // FPS validation: 10, 15, 24, 30, 60 allowed; 120 rejected
+    for (const int fps : {10, 15, 24, 30, 60}) {
+        auto json = Json::parse(serialize_project(base_project));
+        json["export"]["fps"] = {{"numerator", fps}, {"denominator", 1}};
+        const auto parsed = parse_project(json.dump());
+        check(parsed.export_settings.fps.numerator == fps && parsed.export_settings.fps.denominator == 1, "allowed export fps");
+    }
+    for (const int bad_fps : {12, 45, 120}) {
+        auto json = Json::parse(serialize_project(base_project));
+        json["export"]["fps"] = {{"numerator", bad_fps}, {"denominator", 1}};
+        rejects([&] { (void)parse_project(json.dump()); }, "unsupported export fps");
+    }
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -395,7 +446,7 @@ int main(int argc, char** argv) {
         const auto text = read(std::filesystem::path(FRAMETRAIL_FIXTURES) / "project-v1.json");
         test_protocol(text);
         const auto project = parse_project(text);
-        test_timeline(project); test_pointer(project); test_scene(project); test_append_media(project); test_cut_ranges(project);
+        test_timeline(project); test_pointer(project); test_scene(project); test_append_media(project); test_cut_ranges(project); test_export_settings(project);
         std::cout << "PASS: " << checks << " checks across protocol, timeline, pointer, scene\n";
         return 0;
     } catch (const std::exception& error) {

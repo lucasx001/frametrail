@@ -63,6 +63,8 @@ public sealed partial class EditorWindow
     private readonly TextBox subFindBox = new() { PlaceholderText = L.T("SubFindPlaceholder") };
     private readonly TextBox subReplaceBox = new() { PlaceholderText = L.T("SubReplacePlaceholder") };
     private readonly Button subReplaceAllBtn = new() { Content = L.T("SubReplaceAll"), HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button subCutMatchedBtn = new() { Content = L.T("SubCutMatchingRanges"), HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button subCutVideoBtn = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly CheckBox subBilingualCheck = new() { Content = L.T("SubBilingualToggle") };
     private readonly Button subAiTranslateBtn = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly Border subEmptyCard = new() { Visibility = Visibility.Collapsed };
@@ -164,6 +166,9 @@ public sealed partial class EditorWindow
                         break;
                     case "resetStyle":
                         await ResetSubtitleOverrideAsync(id);
+                        break;
+                    case "cutVideo":
+                        await CutVideoForSubtitlesAsync([id], matchingSearchQuery: null);
                         break;
                     case "delete":
                         if (!selectedSubtitleIds.Contains(id))
@@ -438,19 +443,27 @@ public sealed partial class EditorWindow
 
     private void BuildSubtitlesTranscriptPage()
     {
-        // Find & Replace tile
+        // Find & Replace + Cut Matching Clips tile
         var frStack = new StackPanel { Spacing = 8 };
         frStack.Children.Add(subFindBox);
-        var replaceRow = new Grid { ColumnSpacing = 6 };
-        replaceRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        replaceRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        replaceRow.Children.Add(subReplaceBox);
+        frStack.Children.Add(subReplaceBox);
+        var replaceActions = new Grid { ColumnSpacing = 6 };
+        replaceActions.ColumnDefinitions.Add(new ColumnDefinition());
+        replaceActions.ColumnDefinitions.Add(new ColumnDefinition());
         subReplaceAllBtn.Padding = new Thickness(10, 0, 10, 0);
         subReplaceAllBtn.FontSize = 11.5;
         subReplaceAllBtn.Click += async (_, _) => await SafeAsync(ReplaceAllSubtitlesAsync);
-        Grid.SetColumn(subReplaceAllBtn, 1);
-        replaceRow.Children.Add(subReplaceAllBtn);
-        frStack.Children.Add(replaceRow);
+        replaceActions.Children.Add(subReplaceAllBtn);
+        subCutMatchedBtn.Padding = new Thickness(10, 0, 10, 0);
+        subCutMatchedBtn.FontSize = 11.5;
+        subCutMatchedBtn.Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62));
+        ToolTipService.SetToolTip(subCutMatchedBtn, L.T("SubCutVideoRangeTip"));
+        AutomationProperties.SetName(subCutMatchedBtn, L.T("SubCutMatchingRanges"));
+        AutomationProperties.SetAutomationId(subCutMatchedBtn, "editor.subtitles.cutMatching");
+        subCutMatchedBtn.Click += async (_, _) => await SafeAsync(CutVideoForMatchedSubtitlesAsync);
+        Grid.SetColumn(subCutMatchedBtn, 1);
+        replaceActions.Children.Add(subCutMatchedBtn);
+        frStack.Children.Add(replaceActions);
         subTranscriptPage.Children.Add(new Border { Style = (Style)Application.Current.Resources["EditorTile"], Child = frStack });
 
         // Bilingual toggle + AI translate tile
@@ -470,6 +483,18 @@ public sealed partial class EditorWindow
         subAiTranslateBtn.Click += async (_, _) => await SafeAsync(TranslateSubtitlesWithAiAsync);
         biStack.Children.Add(subAiTranslateBtn);
         subTranscriptPage.Children.Add(new Border { Style = (Style)Application.Current.Resources["EditorTile"], Child = biStack });
+
+        // Transcript action bar (Delete & Cut Video)
+        var cutDangerBrush = new SolidColorBrush(ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62));
+        var cutContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
+        cutContent.Children.Add(new EditorGlyph { Kind = "Scissors", Width = 13, Height = 13, Foreground = cutDangerBrush });
+        cutContent.Children.Add(new TextBlock { Text = L.T("SubCutVideoRange"), FontSize = 12, Foreground = cutDangerBrush });
+        subCutVideoBtn.Content = cutContent;
+        ToolTipService.SetToolTip(subCutVideoBtn, L.T("SubCutVideoRangeTip"));
+        AutomationProperties.SetName(subCutVideoBtn, L.T("SubCutVideoRange"));
+        AutomationProperties.SetAutomationId(subCutVideoBtn, "editor.subtitles.cutVideo");
+        subCutVideoBtn.Click += async (_, _) => await SafeAsync(CutVideoForSelectedSubtitlesAsync);
+        subTranscriptPage.Children.Add(new Border { Style = (Style)Application.Current.Resources["EditorTile"], Child = subCutVideoBtn });
 
         // Empty state card
         var emptyStack = new StackPanel { Spacing = 8, Margin = new Thickness(0, 10, 0, 10), HorizontalAlignment = HorizontalAlignment.Center };
@@ -1448,6 +1473,24 @@ public sealed partial class EditorWindow
                 BorderBrush = lineBrush,
                 Child = cardBody
             };
+            var cardFlyout = new MenuFlyout();
+            var cutVideoItem = new MenuFlyoutItem { Text = L.T("SubCutVideoRange") };
+            cutVideoItem.Click += async (_, _) => await SafeAsync(() => CutVideoForSubtitlesAsync([cueId], matchingSearchQuery: null));
+            cardFlyout.Items.Add(cutVideoItem);
+            var deleteCueItem = new MenuFlyoutItem
+            {
+                Text = L.T("SubDeleteCue"),
+                Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62))
+            };
+            deleteCueItem.Click += async (_, _) => await SafeAsync(async () =>
+            {
+                await PerformAsync(() => editor.DeleteEffectAsync(cueId));
+                if (selectedSubtitleId == cueId) selectedSubtitleId = null;
+                selectedSubtitleIds.Remove(cueId);
+            });
+            cardFlyout.Items.Add(deleteCueItem);
+            card.ContextFlyout = cardFlyout;
+
             subCueCards[cueId] = card;
             subCueListPanel.Children.Add(card);
         }
@@ -1708,6 +1751,80 @@ public sealed partial class EditorWindow
         selectedSubtitleId = OrderedSubtitles.FirstOrDefault()?.Id;
         RefreshSubtitleInspector();
         timeline.SelectVisual(selectedSubtitleId);
+    }
+
+    public static IReadOnlyList<(long StartTicks, long EndTicks)> ResolveSubtitleCutRanges(
+        ProjectSnapshot snapshot,
+        IEnumerable<string> subtitleIds,
+        string? matchingSearchQuery = null) =>
+        VisualResources.ResolveSubtitleCutRanges(snapshot, subtitleIds, matchingSearchQuery);
+
+    private Task CutVideoForSelectedSubtitlesAsync()
+    {
+        var ids = new HashSet<string>(selectedSubtitleIds, StringComparer.Ordinal);
+        if (!string.IsNullOrEmpty(selectedSubtitleId)) ids.Add(selectedSubtitleId);
+        if (ids.Count == 0)
+        {
+            ShowNotice(L.T("SubTabTitle"), $"{L.T("SubCutVideoRange")}: 0");
+            return Task.CompletedTask;
+        }
+        return CutVideoForSubtitlesAsync(ids, matchingSearchQuery: null);
+    }
+
+    private Task CutVideoForMatchedSubtitlesAsync()
+    {
+        string query = (subFindBox.Text ?? "").Trim();
+        if (string.IsNullOrEmpty(query)) return Task.CompletedTask;
+        return CutVideoForSubtitlesAsync(Array.Empty<string>(), matchingSearchQuery: query);
+    }
+
+    private async Task CutVideoForSubtitlesAsync(IEnumerable<string> subtitleIds, string? matchingSearchQuery)
+    {
+        if (working || editor.IsExporting) return;
+        var snapshot = editor.Snapshot;
+        var ranges = ResolveSubtitleCutRanges(snapshot, subtitleIds, matchingSearchQuery);
+        if (ranges.Count == 0)
+        {
+            ShowNotice(L.T("SubTabTitle"), $"{L.T("SubCutVideoRange")}: 0");
+            return;
+        }
+
+        HashSet<string> cutCueIds;
+        if (matchingSearchQuery is not null)
+        {
+            cutCueIds = new HashSet<string>(
+                OrderedSubtitles
+                    .Where(e =>
+                    {
+                        var p = SubtitleCueParameters.FromEffect(e);
+                        return p.Text.Contains(matchingSearchQuery, StringComparison.OrdinalIgnoreCase) ||
+                               (!string.IsNullOrEmpty(p.SecondaryText) && p.SecondaryText.Contains(matchingSearchQuery, StringComparison.OrdinalIgnoreCase));
+                    })
+                    .Select(e => e.Id),
+                StringComparer.Ordinal);
+        }
+        else
+        {
+            cutCueIds = new HashSet<string>(subtitleIds, StringComparer.Ordinal);
+        }
+
+        var remaining = OrderedSubtitles.Where(c => !cutCueIds.Contains(c.Id)).ToArray();
+        var cutCmd = new
+        {
+            op = "cutRanges",
+            ranges = ranges
+                .Take(SpeechPolishAnalyzer.MaxCutRanges)
+                .Select(r => new { start = r.StartTicks, end = r.EndTicks })
+                .ToArray()
+        };
+        var replaceCmd = AiAgentCommandBuilder.BuildSubtitlesReplaceCommand(remaining);
+        await PerformAsync(() => editor.ExecuteAsync(new { op = "batch", commands = new object[] { cutCmd, replaceCmd } }));
+
+        selectedSubtitleIds.Clear();
+        selectedSubtitleId = OrderedSubtitles.FirstOrDefault()?.Id;
+        RefreshSubtitleInspector();
+        timeline.SelectVisual(selectedSubtitleId);
+        ShowNotice(L.T("SubTabTitle"), $"{L.T("SubCutVideoRange")}: {ranges.Count}", InfoBarSeverity.Success);
     }
 
     private async Task ReplaceAllSubtitlesAsync()

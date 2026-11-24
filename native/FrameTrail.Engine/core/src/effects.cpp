@@ -50,6 +50,16 @@ VisualEffect parse_visual_effect(const Effect& effect) {
     v.easing = choice(p,"easing","cubic",{"linear","cubic","spring"});
     v.attachment = choice(p,"attachment","screen",{"screen","canvas"}); v.target = choice(p,"target","screen",{"screen","camera"});
     if (effect.kind == "mask") v.mode = choice(p,"mode","solid",{"solid","pixelate","blur"});
+    if (effect.kind == "sticker") {
+        if (p.contains("shape") && !p["shape"].is_null())
+            v.shape = choice(p, "shape", "pill", {"pill", "arrow", "rect", "circle", "badge", "keycap"});
+        if (p.contains("color") && !p["color"].is_null()) {
+            if (!p["color"].is_string()) throw ValidationError("effects.parameters.color", "expected string");
+            auto c = p["color"].get<std::string>();
+            if (!valid_hex_color(c)) throw ValidationError("effects.parameters.color", "expected #RRGGBB hex color");
+            v.color = std::move(c);
+        }
+    }
     if (effect.kind == "intro") v.mode = choice(p,"style","fade",{"fade","rise","scale","slide"});
     if (effect.kind == "transition") {
         v.mode = choice(p,"style","crossfade",{"crossfade","fadeBlack","fadeWhite","slideLeft","slideRight","wipeLeft","wipeRight","zoomIn"});

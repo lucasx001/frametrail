@@ -12,7 +12,17 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Brand\FrameTrail.Icon.v1.ico</ApplicationIcon>
     <NativeBuildDirectory Condition="'$(NativeBuildDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\native</NativeBuildDirectory>
+    <IncludeValidationHarness Condition="'$(IncludeValidationHarness)' == ''">true</IncludeValidationHarness>
   </PropertyGroup>
+  <!--
+    Catalog UI and workflow validation harness partial classes (*Validation.cs / *.Validation.cs)
+    separately from production UI code so they can be inspected or excluded via
+    -p:IncludeValidationHarness=false without changing default self-test / inspect-ui builds.
+  -->
+  <ItemGroup>
+    <ValidationHarnessFiles Include="**\*Validation.cs" />
+    <Compile Remove="@(ValidationHarnessFiles)" Condition="'$(IncludeValidationHarness)' != 'true'" />
+  </ItemGroup>
   <ItemGroup>
     <Content Include="..\..\artifacts\android-runtime\**\*" Link="android-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\artifacts\ai-agent-runtime\**\*" Link="ai-agent-runtime\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

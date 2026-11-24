@@ -9,9 +9,41 @@ public sealed partial class EditorWindow
     private static string AudioContent(ProjectSnapshot p)
     {
         var settings = p.Editor ?? new();
-        return JsonSerializer.Serialize(new { p.Media, p.Segments, settings.SystemGain, settings.MicrophoneGain, settings.SystemMuted, settings.MicrophoneMuted, settings.ClipAudio });
+        return JsonSerializer.Serialize(new
+        {
+            p.Media,
+            p.Segments,
+            settings.SystemGain,
+            settings.MicrophoneGain,
+            settings.SystemMuted,
+            settings.MicrophoneMuted,
+            settings.ClipAudio,
+            settings.MicNoiseReduction,
+            settings.AudioNormalize,
+            settings.AudioDucking,
+            settings.BgmPath,
+            settings.BgmGain
+        });
     }
-    private static string PictureContent(ProjectSnapshot p) => JsonSerializer.Serialize(new { p.Media, p.Canvas, p.Effects, Editor = (p.Editor ?? new()) with { SystemGain = 1, MicrophoneGain = 1, SystemMuted = false, MicrophoneMuted = false, ClipAudio = new Dictionary<string, AudioLevel>() } });
+    private static string PictureContent(ProjectSnapshot p) => JsonSerializer.Serialize(new
+    {
+        p.Media,
+        p.Canvas,
+        p.Effects,
+        Editor = (p.Editor ?? new()) with
+        {
+            SystemGain = 1,
+            MicrophoneGain = 1,
+            SystemMuted = false,
+            MicrophoneMuted = false,
+            ClipAudio = new Dictionary<string, AudioLevel>(),
+            MicNoiseReduction = false,
+            AudioNormalize = false,
+            AudioDucking = true,
+            BgmPath = null,
+            BgmGain = 0.35
+        }
+    });
     private async Task UpdateEditedProjectAsync(ProjectSnapshot before, long? sourcePosition)
     {
         var snapshot = editor.Snapshot;

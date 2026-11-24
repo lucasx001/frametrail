@@ -127,4 +127,73 @@ public sealed class ProjectJsonTests
         // Actual evaluation is exercised by FrameTrail.Core.Tests. There is
         // intentionally no second TimelineMap implementation in managed code.
     }
+
+    [Theory]
+    [InlineData(1920u, 1080u, 1080u, 1920u, 1080u)]
+    [InlineData(1920u, 1080u, 1440u, 2560u, 1440u)]
+    [InlineData(1920u, 1080u, 2160u, 3840u, 2160u)]
+    [InlineData(1920u, 1080u, 720u, 1280u, 720u)]
+    [InlineData(1920u, 1080u, 480u, 854u, 480u)]
+    [InlineData(1080u, 1920u, 1080u, 1080u, 1920u)]
+    [InlineData(1080u, 1920u, 1440u, 1440u, 2560u)]
+    [InlineData(1080u, 1920u, 2160u, 2160u, 3840u)]
+    [InlineData(1080u, 1920u, 720u, 720u, 1280u)]
+    [InlineData(1080u, 1920u, 480u, 480u, 854u)]
+    [InlineData(1080u, 1080u, 1080u, 1080u, 1080u)]
+    [InlineData(7680u, 1080u, 2160u, 7680u, 2160u)]
+    [InlineData(0u, 0u, 1080u, 1080u, 1080u)]
+    public void ExportCalculateDimensionsPreservesAspectAndClampsEvenBounds(
+        uint canvasWidth, uint canvasHeight, uint targetShortEdge, uint expectedWidth, uint expectedHeight)
+    {
+        var (width, height) = ExportSettings.CalculateDimensions(canvasWidth, canvasHeight, targetShortEdge);
+        Assert.Equal(expectedWidth, width);
+        Assert.Equal(expectedHeight, height);
+        Assert.Equal(0u, width % 2);
+        Assert.Equal(0u, height % 2);
+        Assert.InRange(width, 2u, 7680u);
+        Assert.InRange(height, 2u, 7680u);
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(15)]
+    [InlineData(24)]
+    [InlineData(30)]
+    [InlineData(60)]
+    public void SupportedExportFrameRatesRoundtrip(int fps)
+    {
+        var project = ProjectJson.Deserialize(Fixture("project-v1.json"));
+        var updated = project with { Export = project.Export with { Fps = new Rational { Numerator = fps, Denominator = 1 } } };
+        var roundtrip = ProjectJson.Deserialize(ProjectJson.Serialize(updated));
+        Assert.Equal(fps, roundtrip.Export.Fps.Numerator);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("low")]
+    [InlineData("standard")]
+    [InlineData("high")]
+    [InlineData("ultra")]
+    public void ExportQualityPresetsRoundtripAndDefaultOmitsField(string? quality)
+    {
+        var project = ProjectJson.Deserialize(Fixture("project-v1.json"));
+        var updated = project with { Export = project.Export with { Quality = quality } };
+        var json = ProjectJson.Serialize(updated);
+        if (quality is null)
+            Assert.DoesNotContain("\"quality\"", json, StringComparison.Ordinal);
+        else
+            Assert.Contains($"\"quality\": \"{quality}\"", json, StringComparison.Ordinal);
+        var roundtrip = ProjectJson.Deserialize(json);
+        Assert.Equal(quality, roundtrip.Export.Quality);
+    }
+
+    [Theory]
+    [InlineData("medium")]
+    [InlineData("")]
+    public void InvalidExportQualityIsRejected(string quality)
+    {
+        var project = ProjectJson.Deserialize(Fixture("project-v1.json"));
+        Assert.Throws<ProjectFormatException>(() =>
+            ProjectJson.Serialize(project with { Export = project.Export with { Quality = quality } }));
+    }
 }

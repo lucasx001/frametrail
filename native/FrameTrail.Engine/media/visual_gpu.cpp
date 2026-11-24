@@ -12,6 +12,7 @@ SamplerState linearClamp : register(s0);
 cbuffer Settings : register(b0) {
     float4 info; // source pixel dimensions, opacity, region count
     float4 crop;
+    float4 motion_blur; // x = blur_dx, y = blur_dy, z = blur_dscale, w = enabled
     float4 rectangles[32];
     float4 modes[32]; // solid=1, pixelate=2, blur=3, focus=4; radius; opacity
 };
@@ -20,11 +21,18 @@ struct Pixel { float4 position:SV_POSITION; float2 uv:TEXCOORD0; };
 Pixel vs(Vertex v) { Pixel p; p.position=v.position; p.uv=v.uv; return p; }
 float4 blur(float2 uv,float radius) {
     float2 step=radius / info.xy;
-    float4 color=picture.Sample(linearClamp,uv)*0.25;
+    float2 diag=step * 0.70710678;
+    float2 inner_step=step * 0.5;
+    float2 inner_diag=diag * 0.5;
+    float4 color=picture.Sample(linearClamp,uv)*0.18;
+    color+=(picture.Sample(linearClamp,uv+float2(inner_step.x,0))+picture.Sample(linearClamp,uv-float2(inner_step.x,0))
+           +picture.Sample(linearClamp,uv+float2(0,inner_step.y))+picture.Sample(linearClamp,uv-float2(0,inner_step.y))
+           +picture.Sample(linearClamp,uv+inner_diag)+picture.Sample(linearClamp,uv-inner_diag)
+           +picture.Sample(linearClamp,uv+float2(inner_diag.x,-inner_diag.y))+picture.Sample(linearClamp,uv+float2(-inner_diag.x,inner_diag.y)))*0.0675;
     color+=(picture.Sample(linearClamp,uv+float2(step.x,0))+picture.Sample(linearClamp,uv-float2(step.x,0))
-           +picture.Sample(linearClamp,uv+float2(0,step.y))+picture.Sample(linearClamp,uv-float2(0,step.y)))*0.125;
-    color+=(picture.Sample(linearClamp,uv+step)+picture.Sample(linearClamp,uv-step)
-           +picture.Sample(linearClamp,uv+float2(step.x,-step.y))+picture.Sample(linearClamp,uv+float2(-step.x,step.y)))*0.0625;
+           +picture.Sample(linearClamp,uv+float2(0,step.y))+picture.Sample(linearClamp,uv-float2(0,step.y))
+           +picture.Sample(linearClamp,uv+diag)+picture.Sample(linearClamp,uv-diag)
+           +picture.Sample(linearClamp,uv+float2(diag.x,-diag.y))+picture.Sample(linearClamp,uv+float2(-diag.x,diag.y)))*0.035;
     return color;
 }
 float4 ps(Pixel p):SV_TARGET {
@@ -44,6 +52,17 @@ float4 ps(Pixel p):SV_TARGET {
             replaced=picture.Sample(linearClamp,clamp(quant,origin+0.5/info.xy,end-0.5/info.xy));
         } else replaced=blur(uv,m.y);
         color=lerp(color,replaced,m.z);
+    }
+    if (motion_blur.w > 0.5 && (abs(motion_blur.x) + abs(motion_blur.y) + abs(motion_blur.z)) > 0.0005) {
+        float2 vel = float2(motion_blur.x, motion_blur.y) + (uv - 0.5) * motion_blur.z;
+        float vlen = length(vel);
+        if (vlen > 0.06) vel *= (0.06 / vlen);
+        float4 accum = color * 0.28;
+        accum += picture.Sample(linearClamp, uv - vel * 0.25) * 0.22;
+        accum += picture.Sample(linearClamp, uv - vel * 0.50) * 0.18;
+        accum += picture.Sample(linearClamp, uv - vel * 0.75) * 0.16;
+        accum += picture.Sample(linearClamp, uv - vel * 1.00) * 0.16;
+        color = accum;
     }
     return color*info.z; // premultiplied alpha throughout projected layers
 }
@@ -123,7 +142,7 @@ float4 ps_transition(Pixel p) : SV_TARGET {
 }
 )hlsl";
 struct Vertex { float x,y,z,w,u,v; };
-struct alignas(16) Constants { float info[4], crop[4], rectangles[32][4], modes[32][4]; };
+struct alignas(16) Constants { float info[4], crop[4], motion_blur[4], rectangles[32][4], modes[32][4]; };
 struct alignas(16) TransitionConstants { float params[4]; };
 ComPtr<ID3DBlob> compile_source(const char* src, size_t len, const char* entry, const char* target) {
     ComPtr<ID3DBlob> code,error;
@@ -175,6 +194,11 @@ void VisualGpu::draw(ID3D11Texture2D* input,ID3D11Texture2D* target,const PlaneM
     D3D11_MAPPED_SUBRESOURCE mapped{}; FT_MEDIA_CHECK(gpu_.context->Map(vertices_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));memcpy(mapped.pData,quad,sizeof(quad));gpu_.context->Unmap(vertices_.Get(),0);
     Constants constants{};constants.info[0]=float(in.Width);constants.info[1]=float(in.Height);constants.info[2]=float(motion.opacity);constants.info[3]=float(regions.size());
     constants.crop[0]=float(crop.x);constants.crop[1]=float(crop.y);constants.crop[2]=float(crop.width);constants.crop[3]=float(crop.height);
+    const double motion_mag = std::abs(motion.motion_blur_x) + std::abs(motion.motion_blur_y) + std::abs(motion.motion_blur_scale);
+    constants.motion_blur[0] = float(motion.motion_blur_x);
+    constants.motion_blur[1] = float(motion.motion_blur_y);
+    constants.motion_blur[2] = float(motion.motion_blur_scale);
+    constants.motion_blur[3] = motion_mag > 0.0005 ? 1.0f : 0.0f;
     std::vector<const VisualEffect*> ordered;for(auto&e:regions)ordered.push_back(&e);
     auto priority=[](auto e){return e->kind=="focus"?0:e->mode=="blur"?1:e->mode=="pixelate"?2:3;};
     // A later blur must never sample original pixels over an opaque privacy mask.

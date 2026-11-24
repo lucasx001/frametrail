@@ -359,5 +359,58 @@ int main(){try{
         bad_trans.effects = {effect("trans-bad", "transition", {{"style", "starWarsWipe"}, {"duration", 0.6}}, 40'000'000, 6'000'000)};
         rejects([&]{ validate_project(bad_trans); }, "unsupported transition style rejected");
     }
+    // P1: Vector annotation sticker shapes/colors & shared EditorSettings fields + motionBlur
+    {
+        auto p1 = p;
+        p1.effects.clear();
+        for (const auto* s : {"pill", "arrow", "rect", "circle", "badge", "keycap"}) {
+            auto st = effect(std::string("st-") + s, "sticker", {{"shape", s}, {"color", "#FACC15"}, {"text", "1"}}, 0, 10'000'000);
+            auto parsed_st = parse_visual_effect(st);
+            expect(parsed_st.shape == s && parsed_st.color == "#FACC15", "sticker shape and hex color must parse cleanly");
+            p1.effects.push_back(st);
+        }
+        p1.editor_json = Json{
+            {"motionBlur", 0.75},
+            {"keystrokeHud", false},
+            {"micNoiseReduction", true},
+            {"audioNormalize", true},
+            {"audioDucking", false},
+            {"bgmPath", "assets/bgm-test.mp3"},
+            {"bgmGain", 0.6}
+        }.dump();
+        const auto rt = parse_project(serialize_project(p1));
+        const auto rt_editor = Json::parse(rt.editor_json);
+        expect(std::abs(rt_editor.at("motionBlur").get<double>() - 0.75) < 1e-9, "motionBlur must survive roundtrip");
+        expect(rt_editor.at("keystrokeHud").get<bool>() == false, "keystrokeHud must survive roundtrip");
+        expect(rt_editor.at("micNoiseReduction").get<bool>() == true, "micNoiseReduction must survive roundtrip");
+        expect(rt_editor.at("audioNormalize").get<bool>() == true, "audioNormalize must survive roundtrip");
+        expect(rt_editor.at("audioDucking").get<bool>() == false, "audioDucking must survive roundtrip");
+        expect(rt_editor.at("bgmPath").get<std::string>() == "assets/bgm-test.mp3", "bgmPath must survive roundtrip");
+        expect(std::abs(rt_editor.at("bgmGain").get<double>() - 0.6) < 1e-9, "bgmGain must survive roundtrip");
+
+        auto bad_sticker = p1;
+        bad_sticker.effects = {effect("st-bad-shape", "sticker", {{"shape", "star"}}, 0, 10'000'000)};
+        rejects([&]{ validate_project(bad_sticker); }, "unsupported sticker shape rejected");
+        bad_sticker.effects = {effect("st-bad-color", "sticker", {{"color", "blue"}}, 0, 10'000'000)};
+        rejects([&]{ validate_project(bad_sticker); }, "invalid sticker hex color rejected");
+
+        auto bad_ed = p1;
+        bad_ed.editor_json = Json{{"motionBlur", 1.5}}.dump();
+        rejects([&]{ validate_project(bad_ed); }, "out-of-range motionBlur rejected");
+        bad_ed.editor_json = Json{{"bgmGain", 2.5}}.dump();
+        rejects([&]{ validate_project(bad_ed); }, "out-of-range bgmGain rejected");
+        bad_ed.editor_json = Json{{"bgmPath", "C:/music.mp3"}}.dump();
+        rejects([&]{ validate_project(bad_ed); }, "non-asset bgmPath rejected");
+        bad_ed.editor_json = Json{{"bgmPath", ""}}.dump();
+        validate_project(bad_ed);
+
+        auto mb_proj = p;
+        mb_proj.segments = {{"seg-full", canonical_time(0), canonical_time(100'000'000), {1, 1}}};
+        mb_proj.effects = {effect("mb-zoom", "zoom", {{"scale", 2.0}, {"focusX", 0.8}, {"focusY", 0.2}, {"easing", "linear"}, {"enter", 0.7}, {"exit", 0.7}}, 0, 30'000'000)};
+        mb_proj.editor_json = Json{{"motionBlur", 1.0}}.dump();
+        FrameSceneEvaluator mb_eval(mb_proj);
+        const auto mb_scene = mb_eval.evaluate(3'500'000);
+        expect(mb_scene && mb_scene->visual.screen.motion_blur_scale > 0.001, "motionBlur computes positive zoom scale velocity during entry");
+    }
     std::cout<<"effects checks="<<checks<<'\n';return 0;
 }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

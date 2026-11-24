@@ -168,7 +168,15 @@ void apply_command(Project& p, const Json& cmd) {
         p=parse_project(json.dump());
     } else if (op == "settings") {
         auto json = Json::parse(serialize_project(p));
-        for (const auto* key : {"canvas", "export", "editor", "effects"}) if (cmd.contains(key)) json[key] = cmd[key];
+        for (const auto* key : {"canvas", "export", "editor", "effects"}) {
+            if (!cmd.contains(key)) continue;
+            if (std::string_view(key) == "export" && cmd[key].is_object() && !cmd[key].contains("quality") && p.export_settings.quality != "standard") {
+                json[key] = cmd[key];
+                json[key]["quality"] = p.export_settings.quality;
+            } else {
+                json[key] = cmd[key];
+            }
+        }
         p = parse_project(json.dump());
     } else if (op == "appendMedia") {
         const auto old_duration = normalized_ticks(p.source_duration);

@@ -28,7 +28,16 @@ public sealed partial class EditorWindow
     private readonly EditorBarSlider transitionDuration = VisualBar(0.1, 3.0, 0.05, "s");
     private readonly NumberBox introDuration = VisualNumber(L.T("SD96399EC8B17"), 0, 5);
     private readonly EditorBarSlider cursorSmooth = VisualBar(0, 0.5, 0.01, "s");
+    private readonly EditorBarSlider motionBlurSlider = VisualBar(0, 100, 5, "%");
     private readonly TextBox stickerText = new() { Header = L.T("S14B69BD6EEB0"), Text = L.T("SBF3B83E701D4"), PlaceholderText = L.T("SA582C47FD22C") };
+    private readonly ComboBox stickerShape = VisualChoice(L.T("StickerShapeLabel"), L.T("StickerShapePill"), L.T("StickerShapeArrow"), L.T("StickerShapeRect"), L.T("StickerShapeCircle"), L.T("StickerShapeBadge"), L.T("StickerShapeKeycap"));
+    private readonly ComboBox stickerColor = VisualChoice(
+        L.T("StickerColorLabel"),
+        AppText.Language == "en" ? "Blue (#38BDF8)" : "蓝色 (#38BDF8)",
+        AppText.Language == "en" ? "Yellow (#FACC15)" : "黄色 (#FACC15)",
+        AppText.Language == "en" ? "Red (#FB7185)" : "红色 (#FB7185)",
+        AppText.Language == "en" ? "Green (#4ADE80)" : "绿色 (#4ADE80)",
+        AppText.Language == "en" ? "Purple (#A855F7)" : "紫色 (#A855F7)");
     private readonly TextBlock visualAssetLabel = new() { TextWrapping = TextWrapping.Wrap };
     private readonly Dictionary<FrameworkElement, string[]> visualVisibility = new();
     private string? selectedEffect, visualAssetPath;
@@ -43,6 +52,8 @@ public sealed partial class EditorWindow
     }
     private static readonly string[] introStyles = { "fade", "rise", "scale", "slide" };
     private static readonly string[] transitionStyles = { "crossfade", "fadeBlack", "fadeWhite", "slideLeft", "slideRight", "wipeLeft", "wipeRight", "zoomIn" };
+    private static readonly string[] stickerShapes = { "pill", "arrow", "rect", "circle", "badge", "keycap" };
+    private static readonly string[] stickerColors = { "#38BDF8", "#FACC15", "#FB7185", "#4ADE80", "#A855F7" };
     private static string EffectName(string kind) => kind switch { "zoom" => L.T("SB762AEC769A3"), "tilt" => L.T("S17E14283A497"), "mask" => L.T("SAC7CE836857B"), "focus" => L.T("SED19BD5E2620"), "sticker" => L.T("S622DA0460277"), "intro" => L.T("SFD0D4B7258C2"), "transition" => L.T("TransitionName"), _ => kind };
     private static NumberBox VisualNumber(string label, double min, double max) => new() { Header = label, Minimum = min, Maximum = max, Value = 0, SmallChange = 0.1, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
     private static EditorBarSlider VisualBar(double min, double max, double step, string suffix = "") => new() { Minimum = min, Maximum = max, StepFrequency = step, Value = min, Suffix = suffix };
@@ -82,7 +93,8 @@ public sealed partial class EditorWindow
         effectScale.DefaultValue = 1; effectOpacity.DefaultValue = 100; transitionDuration.DefaultValue = 0.6;
         effectAngleX.DefaultValue = 0; effectAngleY.DefaultValue = 0; stickerRotation.DefaultValue = 0;
         springFrequency.DefaultValue = MotionDefaults.SpringFrequency; springDamping.DefaultValue = MotionDefaults.SpringDamping;
-        cursorSmooth.DefaultValue = 0;
+        cursorSmooth.DefaultValue = 0; motionBlurSlider.DefaultValue = 0;
+        AutomationProperties.SetAutomationId(motionBlurSlider, "editor.motion.blur");
         Field("", effectStart, effectProperties, "zoom", "mask", "focus", "tilt", "sticker", "intro"); Field("", effectEnd, effectProperties, "zoom", "mask", "focus", "tilt", "sticker", "intro");
         Field("", transitionStyle, effectProperties, "transition");
         Field(L.T("TransitionDurationLabel"), transitionDuration, effectProperties, "transition");
@@ -92,6 +104,8 @@ public sealed partial class EditorWindow
         Field("", effectMode, effectProperties, "mask"); Field(L.T("SA2846644A638"), effectStrength, effectProperties, "mask", "focus"); Field(L.T("S04405E4A9FFD"), effectOpacity, effectProperties, "mask", "focus", "sticker");
         Field(L.T("SA4B0DE41E601"), effectAngleX, effectProperties, "tilt"); Field(L.T("SD82466A62832"), effectAngleY, effectProperties, "tilt");
         Field(L.T("S68EB90FA809E"), stickerRotation, effectProperties, "sticker");
+        Field("", stickerShape, effectProperties, "sticker");
+        Field("", stickerColor, effectProperties, "sticker");
         Field("", effectAttachment, effectProperties, "mask", "focus", "sticker");
         var physicsDivider = SectionDivider(); dividers.Add(physicsDivider); effectProperties.Children.Add(physicsDivider); visualVisibility[physicsDivider] = ["zoom", "tilt", "intro", "transition"];
         var physicsHeader = new TextBlock { Text = AppText.Language == "en" ? "Timing & Physics" : "时间与物理", Style = (Style)Root.Resources["SectionLabel"], Margin = new Thickness(4, 2, 0, 0) };
@@ -107,6 +121,8 @@ public sealed partial class EditorWindow
         var actionsPanel = new StackPanel { Spacing = 6 };
         actionsPanel.Children.Add(VisualButton(L.T("S4D269086BCC1"), () => { copiedEffect = CurrentEffect; ShowNotice(L.T("S61639C86E5FF"), L.T("S91952A32E4CC")); return Task.CompletedTask; }, "editor.effect.copy"));
         motionSettings.Children.Add(VisualButton(L.T("SF87CEC6C5646"), PasteCopiedVisualAsync, "editor.effect.paste"));
+        motionSettings.Children.Add(VisualTile(VisualLabel(L.T("MotionBlurLabel")), motionBlurSlider));
+        motionBlurSlider.Committed += async (_, _) => { if (!loadingVisuals && ready) await PerformAsync(() => editor.ExecuteAsync(new { op = "settings", editor = (editor.Snapshot.Editor ?? new()) with { MotionBlur = Math.Clamp(motionBlurSlider.Value / 100.0, 0.0, 1.0) } })); };
         actionsPanel.Children.Add(VisualButton(L.T("S5FC2029B8F1F"), PasteAttributesAsync, "editor.effect.pasteAttributes"));
         var deleteEffectButton = VisualButton(L.T("SEEB94B34ECA0"), async () => { if (selectedEffect is not null) await editor.DeleteEffectAsync(selectedEffect); }, "editor.effect.delete");
         deleteEffectButton.Foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62));
@@ -218,7 +234,7 @@ public sealed partial class EditorWindow
         {
             var list = editor.Snapshot.Effects.Where(e => e.Kind != "subtitle").Select(e => new EffectEntry(e.Id, $"{EffectName(e.Kind)} · {VisualResources.Ticks(e.SourceStart) / 10_000_000.0:0.##}s")).ToArray();
             effectPicker.ItemsSource = list; effectPicker.SelectedItem = list.FirstOrDefault(e => e.Id == selectedEffect) ?? list.FirstOrDefault(); selectedEffect = (effectPicker.SelectedItem as EffectEntry)?.Id;
-            var settings = editor.Snapshot.Editor ?? new(); cursorSmooth.Value = settings.CursorSmoothing; cameraShape.SelectedIndex = Array.IndexOf(new[] { "rounded", "rectangle", "circle" }, settings.CameraShape);
+            var settings = editor.Snapshot.Editor ?? new(); cursorSmooth.Value = settings.CursorSmoothing; motionBlurSlider.Value = Math.Clamp(settings.MotionBlur * 100.0, 0, 100); cameraShape.SelectedIndex = Array.IndexOf(new[] { "rounded", "rectangle", "circle" }, settings.CameraShape);
             RefreshMockupInspector();
             var opening = editor.Snapshot.Effects.FirstOrDefault(e => e.Id == "opening-screen");
             if (opening is not null) { introStyle.SelectedIndex = Array.IndexOf(introStyles, StringValue(opening.Parameters, "style", "fade")); introDuration.Value = NumberValue(opening.Parameters, "enter", 0.7); }
@@ -247,6 +263,8 @@ public sealed partial class EditorWindow
             effectEnter.Value = NumberValue(p, "enter", effect.Kind is "zoom" or "tilt" or "intro" ? 0.7 : 0); effectExit.Value = NumberValue(p, "exit", effect.Kind is "zoom" or "tilt" ? 0.7 : 0);
             springFrequency.Value = NumberValue(p, "springFrequency", MotionDefaults.SpringFrequency); springDamping.Value = NumberValue(p, "damping", MotionDefaults.SpringDamping);
             stickerRotation.Value = NumberValue(p, "rotation", 0);
+            stickerShape.SelectedIndex = Math.Max(0, Array.IndexOf(stickerShapes, StringValue(p, "shape", "pill")));
+            stickerColor.SelectedIndex = Math.Max(0, Array.IndexOf(stickerColors, StringValue(p, "color", "#38BDF8").ToUpperInvariant()));
             stickerText.Text = StringValue(p, "text", L.T("SBF3B83E701D4")); visualAssetPath = StringValue(p, "path", ""); visualAssetLabel.Text = string.IsNullOrEmpty(visualAssetPath) ? L.T("SE2B3B077BDC5") : Path.GetFileName(visualAssetPath);
         }
         finally { loadingVisuals = false; }
@@ -272,7 +290,7 @@ public sealed partial class EditorWindow
         if (prior.Kind == "mask") Set("mode", new[] { "solid", "pixelate", "blur" }[Math.Max(0, effectMode.SelectedIndex)]);
         if (prior.Kind == "tilt") { Set("angleX", effectAngleX.Value); Set("angleY", effectAngleY.Value); }
         if (prior.Kind is "intro" or "tilt") Set("target", effectTarget.SelectedIndex == 1 ? "camera" : "screen");
-        if (prior.Kind == "sticker") { Set("text", stickerText.Text); Set("rotation", stickerRotation.Value); if (!string.IsNullOrEmpty(visualAssetPath)) Set("path", visualAssetPath); else p.Remove("path"); }
+        if (prior.Kind == "sticker") { Set("text", stickerText.Text); Set("rotation", stickerRotation.Value); Set("shape", stickerShapes[Math.Clamp(stickerShape.SelectedIndex, 0, stickerShapes.Length - 1)]); Set("color", stickerColors[Math.Clamp(stickerColor.SelectedIndex, 0, stickerColors.Length - 1)]); if (!string.IsNullOrEmpty(visualAssetPath)) Set("path", visualAssetPath); else p.Remove("path"); }
         return prior with { SourceStart = MediaTime.FromTicks(start), SourceDuration = MediaTime.FromTicks(end - start), Parameters = JsonSerializer.SerializeToElement(p) };
     }
     private Task ApplyOpeningAsync(bool camera)

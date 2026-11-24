@@ -84,6 +84,19 @@ std::optional<FrameScene> FrameSceneEvaluator::evaluate(std::int64_t output_tick
     // uses canvas coordinates, which also include padding and letterboxing.
     scene.visual.screen.focus_x=(scene.screen.output_rect.x+scene.visual.screen.focus_x*scene.screen.output_rect.width)/canvas.width;
     scene.visual.screen.focus_y=(scene.screen.output_rect.y+scene.visual.screen.focus_y*scene.screen.output_rect.height)/canvas.height;
+    if (project_.editor_json.find("motionBlur") != std::string::npos) {
+        const auto settings = nlohmann::json::parse(project_.editor_json);
+        const double motion_blur = std::clamp(settings.value("motionBlur", 0.0), 0.0, 1.0);
+        if (motion_blur > 0.001) {
+            const auto prev_source_ticks = (std::max<std::int64_t>)(0, mapped->ticks - time_scale / 60);
+            const auto prev_visual = evaluate_visuals(effects_, prev_source_ticks);
+            const double prev_focus_x = (scene.screen.output_rect.x + prev_visual.screen.focus_x * scene.screen.output_rect.width) / canvas.width;
+            const double prev_focus_y = (scene.screen.output_rect.y + prev_visual.screen.focus_y * scene.screen.output_rect.height) / canvas.height;
+            scene.visual.screen.motion_blur_x = (scene.visual.screen.focus_x - prev_focus_x) * motion_blur;
+            scene.visual.screen.motion_blur_y = (scene.visual.screen.focus_y - prev_focus_y) * motion_blur;
+            scene.visual.screen.motion_blur_scale = (scene.visual.screen.scale - prev_visual.screen.scale) * motion_blur;
+        }
+    }
     if(scene.camera && camera_shape_=="circle") { auto box=pixels(canvas.camera.rect,canvas); auto side=std::min(box.width,box.height); scene.camera->output_rect={box.x+(box.width-side)/2,box.y+(box.height-side)/2,side,side}; }
     if(scene.camera){auto r=scene.camera->output_rect;scene.visual.camera.focus_x=(r.x+r.width/2)/canvas.width;scene.visual.camera.focus_y=(r.y+r.height/2)/canvas.height;scene.visual.camera.fixed_anchor=true;}
 

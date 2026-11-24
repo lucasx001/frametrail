@@ -64,6 +64,7 @@ public sealed partial class EditorWindow : Window
         InitializeCanvasEditing();
         InitializeBrowsing();
         InitializeVisuals();
+        InitializeAudioInspector();
         InitializeSubtitles();
         InitializeAiCopilot();
         var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Primary).WorkArea;
@@ -301,6 +302,7 @@ public sealed partial class EditorWindow : Window
         SystemGain.Value = settings.SystemGain * 100; MicGain.Value = settings.MicrophoneGain * 100; SystemMute.IsChecked = settings.SystemMuted; MicMute.IsChecked = settings.MicrophoneMuted;
         var level = selected is not null && settings.ClipAudio.TryGetValue(selected, out var value) ? value : new AudioLevel();
         ClipSystemGain.Value = level.SystemGain * 100; ClipMicGain.Value = level.MicrophoneGain * 100; ClipSystemMute.IsChecked = level.SystemMuted; ClipMicMute.IsChecked = level.MicrophoneMuted;
+        LoadAudioInspector(settings);
         if (SelectedClip is ResolvedClip c) {
             ClipLabel.Text = L.T("S9D4973468893", editor.Timeline.Clips.IndexOf(c) + 1); TrimStart.Value = c.SourceStart / 10_000_000.0; TrimEnd.Value = (c.SourceStart + c.SourceDuration) / 10_000_000.0;
             var rates = new[] { 0.25, 0.5, 1, 1.5, 2, 4 }; RateValue.SelectedIndex = Array.IndexOf(rates, (double)c.Numerator / c.Denominator);
@@ -425,7 +427,7 @@ public sealed partial class EditorWindow : Window
     {
         var p = editor.Snapshot; var settings = p.Editor ?? new(); var levels = settings.ClipAudio.ToDictionary(k => k.Key, k => k.Value);
         if (selected is not null) levels[selected] = new AudioLevel { SystemGain = ClipSystemGain.Value / 100, MicrophoneGain = ClipMicGain.Value / 100, SystemMuted = ClipSystemMute.IsChecked == true, MicrophoneMuted = ClipMicMute.IsChecked == true };
-        settings = settings with { SystemGain = SystemGain.Value / 100, MicrophoneGain = MicGain.Value / 100, SystemMuted = SystemMute.IsChecked == true, MicrophoneMuted = MicMute.IsChecked == true, ClipAudio = levels };
+        settings = ApplyAudioInspectorSettings(settings with { SystemGain = SystemGain.Value / 100, MicrophoneGain = MicGain.Value / 100, SystemMuted = SystemMute.IsChecked == true, MicrophoneMuted = MicMute.IsChecked == true, ClipAudio = levels });
         await EditAsync(new { op = "settings", editor = settings });
     }
     private async void Background_Click(object sender, RoutedEventArgs e) {
@@ -461,18 +463,18 @@ public sealed partial class EditorWindow : Window
             Directory.CreateDirectory(Path.GetDirectoryName(coverPath)!); await preview.RenderAsync(position, true, coverPath);
             var cover = File.Exists(coverPath) ? new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(coverPath)) : BackgroundPreview.Source;
             var codecs = await Task.Run(CaptureSession.GetVideoCodecs);
-            var dialog = new EditorExportDialog(ProjectTitle.Text, editor.Timeline.Duration, editor.Snapshot.Canvas.Width, editor.Snapshot.Canvas.Height, cover, ExportWithOptionsAsync, codecs, editor.Snapshot.Export.VideoCodec, hasSubtitles: HasSubtitles, initialBurnSubtitles: editor.Snapshot.Export.BurnSubtitles) { XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
+            var dialog = new EditorExportDialog(ProjectTitle.Text, editor.Timeline.Duration, editor.Snapshot.Canvas.Width, editor.Snapshot.Canvas.Height, cover, ExportWithOptionsAsync, codecs, editor.Snapshot.Export.VideoCodec, hasSubtitles: HasSubtitles, initialBurnSubtitles: editor.Snapshot.Export.BurnSubtitles, initialQuality: editor.Snapshot.Export.Quality ?? "standard") { XamlRoot = Root.XamlRoot, RequestedTheme = Root.RequestedTheme };
             try { await dialog.ShowAsync(); } finally { showingExport = false; }
         });
         showingExport = false;
     }
     private Task<string?> ExportToAsync(int format, int resolution, int fps, string videoCodec, IProgress<MediaStatus> progress, CancellationToken cancellation) =>
-        ExportWithOptionsAsync(new EditorExportOptions(format, resolution, fps, videoCodec, editor.Snapshot.Export.BurnSubtitles, false, SubtitleExportFormat.Srt), progress, cancellation);
+        ExportWithOptionsAsync(new EditorExportOptions(format, resolution, fps, videoCodec, editor.Snapshot.Export.BurnSubtitles, false, SubtitleExportFormat.Srt, editor.Snapshot.Export.Quality ?? "standard"), progress, cancellation);
 
     private async Task<string?> ExportWithOptionsAsync(EditorExportOptions options, IProgress<MediaStatus> progress, CancellationToken cancellation)
     {
         string? path;
-        bool sources = options.Kind == 2, audioOnly = options.Kind == 1, subtitlesOnly = options.Kind == 3;
+        bool sources = options.Kind == 2, audioOnly = options.Kind == 1, subtitlesOnly = options.Kind == 3, gif = options.Kind == 4;
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
 
         if (subtitlesOnly)
@@ -499,17 +501,27 @@ public sealed partial class EditorWindow : Window
         else
         {
             var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = ProjectTitle.Text };
-            picker.FileTypeChoices.Add(audioOnly ? L.T("S2446F46DF86E") : L.T("SAB5C34012DBC"), new[] { audioOnly ? ".m4a" : ".mp4" });
+            if (gif)
+                picker.FileTypeChoices.Add(L.T("ExportGifFileType"), new[] { ".gif" });
+            else
+                picker.FileTypeChoices.Add(audioOnly ? L.T("S2446F46DF86E") : L.T("SAB5C34012DBC"), new[] { audioOnly ? ".m4a" : ".mp4" });
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
             var file = await picker.PickSaveFileAsync(); if (file is null) return null; path = file.Path;
-            var size = new[] { 1080, 1440, 2160 }[options.ResolutionIndex]; double ratio = (double)editor.Snapshot.Canvas.Width / editor.Snapshot.Canvas.Height;
+            uint targetShortEdge = gif
+                ? (uint)new[] { 480, 720, 1080 }[Math.Clamp(options.ResolutionIndex, 0, 2)]
+                : (uint)new[] { 1080, 1440, 2160 }[Math.Clamp(options.ResolutionIndex, 0, 2)];
+            var (exportWidth, exportHeight) = ExportSettings.CalculateDimensions(editor.Snapshot.Canvas.Width, editor.Snapshot.Canvas.Height, targetShortEdge);
+            int targetFps = gif
+                ? new[] { 10, 15, 24 }[Math.Clamp(options.FpsIndex, 0, 2)]
+                : (options.FpsIndex == 1 ? 60 : 30);
             var output = editor.Snapshot.Export with
             {
-                Width = Even(size * ratio),
-                Height = (uint)size,
-                Fps = new Rational { Numerator = options.FpsIndex == 1 ? 60 : 30 },
-                VideoCodec = audioOnly ? editor.Snapshot.Export.VideoCodec : options.VideoCodec,
-                BurnSubtitles = audioOnly ? editor.Snapshot.Export.BurnSubtitles : options.BurnSubtitles
+                Width = exportWidth,
+                Height = exportHeight,
+                Fps = audioOnly ? editor.Snapshot.Export.Fps : new Rational { Numerator = targetFps },
+                VideoCodec = audioOnly || gif ? editor.Snapshot.Export.VideoCodec : options.VideoCodec,
+                BurnSubtitles = audioOnly ? editor.Snapshot.Export.BurnSubtitles : options.BurnSubtitles,
+                Quality = audioOnly || gif ? editor.Snapshot.Export.Quality : options.Quality
             };
             var before = editor.Snapshot; var sourcePosition = SourcePosition;
             await editor.ExecuteAsync(new { op = "settings", export = output }); await UpdateEditedProjectAsync(before, sourcePosition);

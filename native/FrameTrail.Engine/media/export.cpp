@@ -100,6 +100,156 @@ void validate_output(const std::filesystem::path& path, bool video, int64_t expe
     ComPtr<IMFSample> sample; DWORD flags{}; FT_MEDIA_CHECK(reader->ReadSample(video ? video_stream_id : audio_stream_id, 0, nullptr, &flags, nullptr, &sample));
     if (!sample || std::filesystem::file_size(path) < 128) throw ValidationError("export", "finalized media has no readable sample");
 }
+
+void validate_gif(IWICImagingFactory* factory, const std::filesystem::path& path) {
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(path, ec);
+    if (ec || size < 64) throw ValidationError("export", "finalized GIF is empty or unreadable");
+    ComPtr<IWICBitmapDecoder> decoder;
+    FT_MEDIA_CHECK(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder));
+    UINT frame_count{};
+    FT_MEDIA_CHECK(decoder->GetFrameCount(&frame_count));
+    if (frame_count < 1) throw ValidationError("export", "finalized GIF has no frames");
+}
+
+uint32_t scaled_bitrate(uint32_t width, uint32_t height, int32_t fps, std::string_view quality) {
+    double factor = 1.0;
+    if (quality == "low") factor = 0.55;
+    else if (quality == "high") factor = 1.5;
+    else if (quality == "ultra") factor = 2.2;
+    const double base = static_cast<double>(width) * height * fps / 8.0;
+    return static_cast<uint32_t>(std::clamp(std::llround(base * factor), 2'000'000LL, 120'000'000LL));
+}
+
+void export_gif(Session& session, const std::filesystem::path& target) {
+    const auto id = job_id();
+    const auto temp = target.parent_path() / (L".frametrail-" + id + L".gif");
+    Cleanup cleanup{{temp}};
+    const auto duration = session.evaluator.timeline().output_duration();
+    const auto fps = session.project.export_settings.fps.numerator;
+    const auto w = session.project.export_settings.width;
+    const auto h = session.project.export_settings.height;
+    const uint64_t frame_count = std::max<uint64_t>(1, static_cast<uint64_t>((duration * fps + time_scale - 1) / time_scale));
+
+    ComPtr<IWICImagingFactory> factory;
+    FT_MEDIA_CHECK(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)));
+
+    {
+        ComPtr<IWICStream> stream;
+        FT_MEDIA_CHECK(factory->CreateStream(&stream));
+        FT_MEDIA_CHECK(stream->InitializeFromFilename(temp.c_str(), GENERIC_WRITE));
+        ComPtr<IWICBitmapEncoder> encoder;
+        FT_MEDIA_CHECK(factory->CreateEncoder(GUID_ContainerFormatGif, nullptr, &encoder));
+        FT_MEDIA_CHECK(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache));
+
+        ComPtr<IWICMetadataQueryWriter> encoder_meta;
+        if (SUCCEEDED(encoder->GetMetadataQueryWriter(&encoder_meta)) && encoder_meta) {
+            BYTE app_name[11] = {'N', 'E', 'T', 'S', 'C', 'A', 'P', 'E', '2', '.', '0'};
+            PROPVARIANT app_prop{};
+            app_prop.vt = VT_UI1 | VT_VECTOR;
+            app_prop.caub.cElems = sizeof(app_name);
+            app_prop.caub.pElems = app_name;
+            (void)encoder_meta->SetMetadataByName(L"/appext/Application", &app_prop);
+
+            BYTE loop_data[4] = {3, 1, 0, 0};
+            PROPVARIANT loop_prop{};
+            loop_prop.vt = VT_UI1 | VT_VECTOR;
+            loop_prop.caub.cElems = sizeof(loop_data);
+            loop_prop.caub.pElems = loop_data;
+            (void)encoder_meta->SetMetadataByName(L"/appext/Data", &loop_prop);
+        }
+
+        ComPtr<ID3D11Texture2D> staging;
+        std::vector<BYTE> bgra(static_cast<size_t>(w) * h * 4);
+        session.stage = 2;
+        session.progress(0, frame_count);
+
+        for (uint64_t video_position = 0; video_position < frame_count;) {
+            session.check_cancel();
+            const auto ticks = static_cast<int64_t>(video_position) * time_scale / fps;
+            const auto end = std::min<int64_t>(duration, static_cast<int64_t>(video_position + 1) * time_scale / fps);
+            const auto scene = session.evaluator.evaluate(ticks);
+            if (!scene) throw ValidationError("export", "missing scheduled output frame");
+            auto* texture = session.gpu().render(session.project, *scene, w, h, session.project.export_settings.burn_subtitles);
+            if (!staging) {
+                D3D11_TEXTURE2D_DESC desc{};
+                texture->GetDesc(&desc);
+                desc.BindFlags = desc.MiscFlags = 0;
+                desc.Usage = D3D11_USAGE_STAGING;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+                FT_MEDIA_CHECK(session.gpu().device->CreateTexture2D(&desc, nullptr, &staging));
+            }
+            session.gpu().context->CopyResource(staging.Get(), texture);
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            FT_MEDIA_CHECK(session.gpu().context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+            for (UINT y = 0; y < h; ++y) {
+                memcpy(bgra.data() + static_cast<size_t>(y) * w * 4,
+                       static_cast<const BYTE*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch,
+                       static_cast<size_t>(w) * 4);
+            }
+            session.gpu().context->Unmap(staging.Get(), 0);
+
+            ComPtr<IWICBitmap> wic_bitmap;
+            FT_MEDIA_CHECK(factory->CreateBitmapFromMemory(
+                w, h, GUID_WICPixelFormat32bppBGRA,
+                static_cast<UINT>(w) * 4, static_cast<UINT>(bgra.size()), bgra.data(),
+                &wic_bitmap));
+
+            ComPtr<IWICPalette> palette;
+            FT_MEDIA_CHECK(factory->CreatePalette(&palette));
+            FT_MEDIA_CHECK(palette->InitializeFromBitmap(wic_bitmap.Get(), 256, FALSE));
+
+            ComPtr<IWICFormatConverter> converter;
+            FT_MEDIA_CHECK(factory->CreateFormatConverter(&converter));
+            FT_MEDIA_CHECK(converter->Initialize(
+                wic_bitmap.Get(),
+                GUID_WICPixelFormat8bppIndexed,
+                WICBitmapDitherTypeErrorDiffusion,
+                palette.Get(),
+                0.0,
+                WICBitmapPaletteTypeCustom));
+
+            ComPtr<IWICBitmapFrameEncode> frame;
+            FT_MEDIA_CHECK(encoder->CreateNewFrame(&frame, nullptr));
+            FT_MEDIA_CHECK(frame->Initialize(nullptr));
+            FT_MEDIA_CHECK(frame->SetSize(w, h));
+            WICPixelFormatGUID pixel_format = GUID_WICPixelFormat8bppIndexed;
+            FT_MEDIA_CHECK(frame->SetPixelFormat(&pixel_format));
+            FT_MEDIA_CHECK(frame->SetPalette(palette.Get()));
+
+            const auto start_cs = (ticks * 100 + time_scale / 2) / time_scale;
+            const auto end_cs = (end * 100 + time_scale / 2) / time_scale;
+            const auto delay_cs = static_cast<USHORT>(std::clamp<int64_t>(end_cs - start_cs, 1, 65535));
+            ComPtr<IWICMetadataQueryWriter> frame_meta;
+            if (SUCCEEDED(frame->GetMetadataQueryWriter(&frame_meta)) && frame_meta) {
+                PROPVARIANT delay_prop{};
+                delay_prop.vt = VT_UI2;
+                delay_prop.uiVal = delay_cs;
+                FT_MEDIA_CHECK(frame_meta->SetMetadataByName(L"/grctlext/Delay", &delay_prop));
+                PROPVARIANT disposal_prop{};
+                disposal_prop.vt = VT_UI1;
+                disposal_prop.bVal = 1;
+                (void)frame_meta->SetMetadataByName(L"/grctlext/Disposal", &disposal_prop);
+            }
+
+            FT_MEDIA_CHECK(frame->WriteSource(converter.Get(), nullptr));
+            FT_MEDIA_CHECK(frame->Commit());
+            session.progress(++video_position, frame_count);
+        }
+
+        session.check_cancel();
+        session.stage = 3;
+        FT_MEDIA_CHECK(encoder->Commit());
+    }
+
+    session.check_cancel();
+    validate_gif(factory.Get(), temp);
+    session.check_cancel();
+    if (!MoveFileExW(temp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        FT_MEDIA_CHECK(HRESULT_FROM_WIN32(GetLastError()));
+    session.stage = 4;
+    session.progress(session.total, session.total);
+}
 }
 void Session::export_file(const std::filesystem::path& destination, bool audio_only) {
     export_gpu_frames=0;export_cpu_frames=0;export_convert_us=0;export_readback_us=0;export_write_us=0;export_wait_us=0;
@@ -116,6 +266,10 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
     }
     const bool has_audio = std::any_of(project.media.begin(), project.media.end(), [](auto& m) { return m.kind == MediaKind::microphone || m.kind == MediaKind::system_audio || m.kind == MediaKind::android_audio; });
     if (audio_only && !has_audio) throw ValidationError("audio", "project has no recorded audio track");
+    if (!audio_only && _wcsicmp(target.extension().c_str(), L".gif") == 0) {
+        export_gif(*this, target);
+        return;
+    }
     auto id = job_id();
     const auto temp = target.parent_path() / (L".frametrail-" + id + L".mp4");
     Cleanup cleanup{{temp}};
@@ -133,7 +287,7 @@ void Session::export_file(const std::filesystem::path& destination, bool audio_o
         ComPtr<IMFMediaType> type; FT_MEDIA_CHECK(MFCreateMediaType(&type)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)); FT_MEDIA_CHECK(type->SetGUID(MF_MT_SUBTYPE, frametrail::codecs::subtype(frametrail::codecs::id(project.export_settings.video_codec))));
         FT_MEDIA_CHECK(MFSetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, project.export_settings.width, project.export_settings.height)); FT_MEDIA_CHECK(MFSetAttributeRatio(type.Get(), MF_MT_FRAME_RATE, fps, 1));
         FT_MEDIA_CHECK(MFSetAttributeRatio(type.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1)); FT_MEDIA_CHECK(type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
-        FT_MEDIA_CHECK(type->SetUINT32(MF_MT_AVG_BITRATE, std::clamp<uint32_t>(project.export_settings.width * project.export_settings.height * fps / 8, 4000000, 80000000)));
+        FT_MEDIA_CHECK(type->SetUINT32(MF_MT_AVG_BITRATE, scaled_bitrate(project.export_settings.width, project.export_settings.height, fps, project.export_settings.quality)));
         FT_MEDIA_CHECK(type->SetUINT32(MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709)); FT_MEDIA_CHECK(type->SetUINT32(MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709));
         FT_MEDIA_CHECK(type->SetUINT32(MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709)); FT_MEDIA_CHECK(type->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235));
         FT_MEDIA_CHECK(writer->AddStream(type.Get(), &video_stream));

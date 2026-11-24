@@ -42,7 +42,7 @@ public sealed partial class EditorWindow
                     double.TryParse(box.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out var value) && value != box.Value) QueueVisualChange();
             });
         }
-        foreach (var box in new[] { effectMode, effectEasing, effectAttachment, effectTarget, transitionStyle }) box.SelectionChanged += (_, _) => QueueVisualChange();
+        foreach (var box in new[] { effectMode, effectEasing, effectAttachment, effectTarget, transitionStyle, stickerShape, stickerColor }) box.SelectionChanged += (_, _) => QueueVisualChange();
         stickerText.TextChanged += (_, _) => QueueVisualChange();
     }
     private bool TryVisualNumber(NumberBox box, out double value)

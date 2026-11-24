@@ -15,6 +15,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from unittest import mock
+
+from agent import mcp_server, multimodal_tools, speech_rules
 from agent.editor_tools import cut_time_ranges, reset_project_context, set_project_context
 from agent.graph import validate_commands_dry_run
 from agent.mcp_server import FrameTrailProjectBridge
@@ -228,6 +231,134 @@ class SpeechPolishTests(unittest.TestCase):
         self.assertEqual(len(collapsed["ranges"]), 2)
         self.assertEqual(collapsed["ranges"][0]["start"], 850_000)
         self.assertEqual(collapsed["ranges"][1]["start"], 5_000_000)
+
+    def test_speech_rules_intensity_presets_and_lexicons_match_csharp_spec(self) -> None:
+        self.assertEqual(
+            speech_rules.INTENSITY_PRESETS,
+            {
+                "gentle": {"min_pause_sec": 1.00, "padding_sec": 0.24, "remove_repeats": False},
+                "standard": {"min_pause_sec": 0.70, "padding_sec": 0.16, "remove_repeats": True},
+                "tight": {"min_pause_sec": 0.45, "padding_sec": 0.10, "remove_repeats": True},
+            },
+        )
+        self.assertEqual(speech_rules.normalize_intensity("轻度"), "gentle")
+        self.assertEqual(speech_rules.normalize_intensity("conservative"), "gentle")
+        self.assertEqual(speech_rules.normalize_intensity("紧凑"), "tight")
+        self.assertEqual(speech_rules.normalize_intensity("aggressive"), "tight")
+        self.assertEqual(speech_rules.normalize_intensity(None), "standard")
+
+        self.assertEqual(
+            speech_rules.resolve_intensity_options("gentle"),
+            ("gentle", 1.00, 0.24, False),
+        )
+        self.assertEqual(
+            speech_rules.resolve_intensity_options("standard"),
+            ("standard", 0.70, 0.16, True),
+        )
+        self.assertEqual(
+            speech_rules.resolve_intensity_options("tight", min_pause_sec=0.55),
+            ("tight", 0.55, 0.10, True),
+        )
+
+        self.assertTrue({"嗯", "呃", "额", "um", "uh", "erm", "hmm"}.issubset(speech_rules.STRONG_FILLERS))
+        self.assertEqual(speech_rules.BOUNDARY_FILLERS, frozenset({"啊", "哦", "哎", "呐", "嘛", "呢", "呀"}))
+        self.assertIn("Verbatim speech transcript", speech_rules.VERBATIM_FILLER_PROMPT)
+        self.assertEqual(speech_rules.clean_speech_token("“嗯，”"), "嗯")
+        self.assertEqual(speech_rules.clean_speech_token("(um...)"), "um")
+
+    def test_speech_rules_merge_and_clamp_cut_ranges_preserves_timeline(self) -> None:
+        snapshot = {
+            "sourceDuration": {"ticks": 40_000_000, "timescale": TICKS_PER_SECOND},
+            "segments": [
+                {
+                    "id": "clip-1",
+                    "sourceStart": {"ticks": 0, "timescale": TICKS_PER_SECOND},
+                    "sourceDuration": {"ticks": 40_000_000, "timescale": TICKS_PER_SECOND},
+                }
+            ],
+        }
+        raw_cuts = [
+            {"start": 5_000_000, "end": 12_000_000, "reason": "pause", "label": "0.7s"},
+            {"start": 12_500_000, "end": 16_000_000, "reason": "filler", "label": "「嗯」"},
+            {"start": 30_000_000, "end": 35_000_000, "reason": "repeat", "label": "「我」"},
+        ]
+        merged = speech_rules.merge_and_clamp_cut_ranges(snapshot, raw_cuts)
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(merged[0], {"start": 5_000_000, "end": 16_000_000, "reason": "filler", "label": "「嗯」"})
+        self.assertEqual(merged[1], {"start": 30_000_000, "end": 35_000_000, "reason": "repeat", "label": "「我」"})
+
+        # Never erase 100% of timeline segments
+        full_wipe = [{"start": 0, "end": 40_000_000, "reason": "pause", "label": "4.0s"}]
+        self.assertEqual(speech_rules.merge_and_clamp_cut_ranges(snapshot, full_wipe), [])
+
+    def test_multimodal_tools_and_mcp_server_share_speech_rules(self) -> None:
+        self.assertIs(multimodal_tools._normalize_intensity, speech_rules.normalize_intensity)
+        self.assertIs(multimodal_tools._clean_speech_token, speech_rules.clean_speech_token)
+        self.assertIs(multimodal_tools._detect_speech_fillers_and_repeats, speech_rules.detect_speech_fillers_and_repeats)
+        self.assertIs(multimodal_tools._merge_and_clamp_cut_ranges, speech_rules.merge_and_clamp_cut_ranges)
+        self.assertIs(multimodal_tools._STRONG_FILLERS, speech_rules.STRONG_FILLERS)
+        self.assertIs(multimodal_tools._BOUNDARY_FILLERS, speech_rules.BOUNDARY_FILLERS)
+        self.assertIs(multimodal_tools._VERBATIM_FILLER_PROMPT, speech_rules.VERBATIM_FILLER_PROMPT)
+
+        self.assertIs(mcp_server.normalize_intensity, speech_rules.normalize_intensity)
+        self.assertIs(mcp_server.clean_speech_token, speech_rules.clean_speech_token)
+        self.assertIs(mcp_server.detect_speech_fillers_and_repeats, speech_rules.detect_speech_fillers_and_repeats)
+        self.assertIs(mcp_server.merge_and_clamp_cut_ranges, speech_rules.merge_and_clamp_cut_ranges)
+        self.assertIs(mcp_server.STRONG_FILLERS, speech_rules.STRONG_FILLERS)
+        self.assertIs(mcp_server.BOUNDARY_FILLERS, speech_rules.BOUNDARY_FILLERS)
+        self.assertIs(mcp_server.INTENSITY_PRESETS, speech_rules.INTENSITY_PRESETS)
+
+    def test_mcp_bridge_prioritizes_host_callback_and_falls_back_only_offline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _make_project(root, duration_sec=10.0)
+            live_bridge = FrameTrailProjectBridge(str(root), callback_url="http://127.0.0.1:18765/api/commands/")
+
+            with mock.patch.object(
+                live_bridge,
+                "_post_action_callback",
+                return_value={
+                    "supported": True,
+                    "ok": True,
+                    "response": {
+                        "revision": 7,
+                        "engineUsed": "whisper-local",
+                        "message": "Applied via host",
+                        "data": {"cutCount": 2},
+                    },
+                },
+            ) as mock_action:
+                res = live_bridge.optimize_speech_flow(intensity="轻度")
+            self.assertEqual(res["appliedVia"], "host_callback")
+            self.assertEqual(res["revision"], 7)
+            self.assertEqual(mock_action.call_args.args[0], "optimize_speech_flow")
+            self.assertEqual(mock_action.call_args.args[1]["intensity"], "gentle")
+
+            cmd = {"op": "cutRanges", "ranges": [{"start": 1_000_000, "end": 2_000_000}], "minKeepTicks": 1_000_000}
+            with mock.patch.object(
+                live_bridge,
+                "_post_callback",
+                return_value={"dispatched": True, "status": 200, "response": {"ok": True}},
+            ):
+                cb_res = live_bridge._commit_command(cmd, "cut via callback")
+            self.assertEqual(cb_res["mode"], "callback")
+            disk_after_cb = json.loads((root / "project.json").read_text(encoding="utf-8"))
+            self.assertEqual(disk_after_cb["revision"], 1)
+
+            with mock.patch.object(
+                live_bridge,
+                "_post_callback",
+                return_value={"dispatched": False, "error": "connection refused"},
+            ):
+                with self.assertRaises(ValueError):
+                    live_bridge._commit_command(cmd, "should not mutate disk")
+            disk_after_err = json.loads((root / "project.json").read_text(encoding="utf-8"))
+            self.assertEqual(disk_after_err["revision"], 1)
+
+            offline_bridge = FrameTrailProjectBridge(str(root), callback_url="")
+            direct_res = offline_bridge._commit_command(cmd, "cut offline")
+            self.assertEqual(direct_res["mode"], "direct")
+            self.assertEqual(direct_res["revision"], 2)
 
 
 if __name__ == "__main__":

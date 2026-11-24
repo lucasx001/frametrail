@@ -67,14 +67,22 @@ struct Renderer {
     ComPtr<ID2D1Device> d2device;
     ComPtr<ID2D1DeviceContext> d2;
     ComPtr<ID3D11Texture2D> output;
-    ComPtr<ID3D11Texture2D> composition, screen_plane, camera_plane, transition_plane;
+    ComPtr<ID3D11Texture2D> composition, screen_plane, camera_plane, transition_plane, transition_result_plane;
     std::unique_ptr<VisualGpu> visuals;
     std::unique_ptr<VideoReader> backdrop_reader;
     std::string backdrop_path;
     ComPtr<IDWriteFactory> text_factory;
+    struct KeyEvent {
+        int64_t ticks{};
+        std::string label;
+    };
     std::unordered_map<std::string, std::unique_ptr<VideoReader>> readers;
     std::unordered_map<std::string, PointerTrack> pointers;
+    std::unordered_map<std::string, std::vector<KeyEvent>> pointer_keys;
     std::unordered_map<std::wstring, ComPtr<ID2D1Bitmap1>> images;
+    uint64_t cache_clock{};
+    std::unordered_map<std::string, uint64_t> reader_lru;
+    std::unordered_map<std::wstring, uint64_t> image_lru;
     std::filesystem::path root;
     uint32_t width{}, height{}, software{}, fallbacks{};
     uint32_t viewport_width{}, viewport_height{};
@@ -85,7 +93,7 @@ struct Renderer {
     void resize(uint32_t w, uint32_t h, double sx, double sy);
     ID3D11Texture2D* render(const Project& project, const FrameScene& scene, uint32_t w, uint32_t h, bool render_subtitles = true);
     void present();
-    void clear_decoders() { readers.clear(); }
+    void clear_decoders() { readers.clear(); reader_lru.clear(); }
 private:
     ComPtr<ID2D1Bitmap1> bitmap(ID3D11Texture2D* texture, bool target = false, bool alpha = false);
     ComPtr<ID2D1Bitmap1> image(const std::filesystem::path& path);

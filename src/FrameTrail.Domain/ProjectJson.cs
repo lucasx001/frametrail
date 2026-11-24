@@ -130,10 +130,22 @@ public static class ProjectJson
         var output = snapshot.Export;
         ValidateRatio(output.Fps);
         if (output.Width is < 2 or > 7680 || output.Height is < 2 or > 7680 || output.Width % 2 != 0 || output.Height % 2 != 0 ||
-            output.Fps.Denominator != 1 || output.Fps.Numerator is not (30 or 60) || !VideoCodecs.IsSupported(output.VideoCodec) || output.AudioCodec != "aac" || output.Container != "mp4")
+            output.Fps.Denominator != 1 || output.Fps.Numerator is not (10 or 15 or 24 or 30 or 60) ||
+            !VideoCodecs.IsSupported(output.VideoCodec) || output.AudioCodec != "aac" || output.Container != "mp4" ||
+            output.Quality is not (null or "low" or "standard" or "high" or "ultra"))
             throw new ProjectFormatException("Unsupported export settings.");
-        if (snapshot.Editor?.SubtitleStyle is { } subtitleStyle)
-            ValidateSubtitleStyle(subtitleStyle);
+        if (snapshot.Editor is { } editorSettings)
+        {
+            if (!double.IsFinite(editorSettings.MotionBlur) || editorSettings.MotionBlur is < 0.0 or > 1.0)
+                throw new ProjectFormatException("Editor motionBlur must be 0..1.");
+            if (!double.IsFinite(editorSettings.BgmGain) || editorSettings.BgmGain is < 0.0 or > 2.0)
+                throw new ProjectFormatException("Editor bgmGain must be 0..2.");
+            if (!string.IsNullOrEmpty(editorSettings.BgmPath) &&
+                (!IsProjectRelativePath(editorSettings.BgmPath) || !editorSettings.BgmPath.StartsWith("assets/", StringComparison.Ordinal)))
+                throw new ProjectFormatException("Editor bgmPath must reference a project asset.");
+            if (editorSettings.SubtitleStyle is { } subtitleStyle)
+                ValidateSubtitleStyle(subtitleStyle);
+        }
     }
 
     public static void ValidateSubtitleStyle(SubtitleStyleSettings style)

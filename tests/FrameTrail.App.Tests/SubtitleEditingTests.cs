@@ -1,5 +1,6 @@
 using FrameTrail.App;
 using FrameTrail.Domain;
+using FrameTrail.Workspace;
 using Xunit;
 
 namespace FrameTrail.App.Tests;
@@ -195,5 +196,95 @@ public sealed class SubtitleEditingTests
         Assert.Null(p1.Words); // cleared because primary text changed
         Assert.Equal("Unchanged line", p2.Text);
         Assert.NotNull(p2.Words); // preserved on untouched cue
+    }
+
+    private static ProjectSnapshot MakeSnapshot(long totalSec, params SourceEffect[] effects) => new()
+    {
+        ProjectId = "proj-sub-cut",
+        SourceDuration = MediaTime.FromTicks(totalSec * SubtitleCueMath.TicksPerSecond),
+        Media =
+        [
+            new MediaAsset
+            {
+                Id = "screen-1",
+                Kind = MediaKind.Screen,
+                Path = "media/screen.mp4",
+                Duration = MediaTime.FromTicks(totalSec * SubtitleCueMath.TicksPerSecond),
+                Width = 1920,
+                Height = 1080
+            }
+        ],
+        Segments =
+        [
+            new RecordingSegment
+            {
+                Id = "seg-1",
+                SourceStart = MediaTime.FromTicks(0),
+                SourceDuration = MediaTime.FromTicks(totalSec * SubtitleCueMath.TicksPerSecond)
+            }
+        ],
+        Effects = effects
+    };
+
+    [Fact]
+    public void ResolveSubtitleCutRanges_SelectedCues_ExtractsExactRanges()
+    {
+        var c1 = MakeCue("sub-1", 1, 2, "First");
+        var c2 = MakeCue("sub-2", 4, 3, "Second");
+        var c3 = MakeCue("sub-3", 8, 2, "Third");
+        var snap = MakeSnapshot(15, c1, c2, c3);
+
+        var ranges = VisualResources.ResolveSubtitleCutRanges(snap, ["sub-1", "sub-3"]);
+        Assert.Equal(2, ranges.Count);
+        Assert.Equal((1 * SubtitleCueMath.TicksPerSecond, 3 * SubtitleCueMath.TicksPerSecond), ranges[0]);
+        Assert.Equal((8 * SubtitleCueMath.TicksPerSecond, 10 * SubtitleCueMath.TicksPerSecond), ranges[1]);
+    }
+
+    [Fact]
+    public void ResolveSubtitleCutRanges_OverlappingAndAdjacentCues_MergeChronologically()
+    {
+        var c1 = MakeCue("sub-1", 2, 3, "A"); // [2, 5)
+        var c2 = MakeCue("sub-2", 4, 2, "B"); // [4, 6) overlaps
+        var c3 = MakeCue("sub-3", 6, 2, "C"); // [6, 8) adjacent
+        var c4 = MakeCue("sub-4", 10, 2, "D"); // [10, 12) separate
+        var snap = MakeSnapshot(15, c4, c2, c3, c1);
+
+        var ranges = VisualResources.ResolveSubtitleCutRanges(snap, ["sub-1", "sub-2", "sub-3", "sub-4"]);
+        Assert.Equal(2, ranges.Count);
+        Assert.Equal((2 * SubtitleCueMath.TicksPerSecond, 8 * SubtitleCueMath.TicksPerSecond), ranges[0]);
+        Assert.Equal((10 * SubtitleCueMath.TicksPerSecond, 12 * SubtitleCueMath.TicksPerSecond), ranges[1]);
+    }
+
+    [Fact]
+    public void ResolveSubtitleCutRanges_SearchQueryMatchesPrimaryOrSecondaryCaseInsensitive()
+    {
+        var c1 = MakeCue("sub-1", 1, 2, "Um hello", "你好");
+        var c2 = MakeCue("sub-2", 4, 2, "Clean speech", "嗯 对的");
+        var c3 = MakeCue("sub-3", 7, 2, "Another UM pause");
+        var snap = MakeSnapshot(15, c1, c2, c3);
+
+        var umRanges = VisualResources.ResolveSubtitleCutRanges(snap, [], matchingSearchQuery: "um");
+        Assert.Equal(2, umRanges.Count);
+        Assert.Equal((1 * SubtitleCueMath.TicksPerSecond, 3 * SubtitleCueMath.TicksPerSecond), umRanges[0]);
+        Assert.Equal((7 * SubtitleCueMath.TicksPerSecond, 9 * SubtitleCueMath.TicksPerSecond), umRanges[1]);
+
+        var secRanges = VisualResources.ResolveSubtitleCutRanges(snap, [], matchingSearchQuery: "嗯");
+        Assert.Single(secRanges);
+        Assert.Equal((4 * SubtitleCueMath.TicksPerSecond, 6 * SubtitleCueMath.TicksPerSecond), secRanges[0]);
+
+        Assert.Empty(VisualResources.ResolveSubtitleCutRanges(snap, ["sub-1"], matchingSearchQuery: "   "));
+    }
+
+    [Fact]
+    public void ResolveSubtitleCutRanges_WholeTimelineSafety_LeavesAtLeast100ms()
+    {
+        var c1 = MakeCue("sub-1", 0, 5, "First half");
+        var c2 = MakeCue("sub-2", 5, 5, "Second half");
+        var snap = MakeSnapshot(10, c1, c2);
+
+        var ranges = VisualResources.ResolveSubtitleCutRanges(snap, ["sub-1", "sub-2"]);
+        Assert.Single(ranges);
+        Assert.Equal(0L, ranges[0].StartTicks);
+        Assert.Equal(10 * SubtitleCueMath.TicksPerSecond - 1_000_000L, ranges[0].EndTicks);
     }
 }

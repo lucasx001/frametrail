@@ -216,7 +216,7 @@ Project parse_project(std::string_view text) {
             }
         }
         const auto& output = required(root, "export", "$");
-        object(output, "export", {"width", "height", "fps", "videoCodec", "audioCodec", "container", "burnSubtitles"});
+        object(output, "export", {"width", "height", "fps", "videoCodec", "audioCodec", "container", "burnSubtitles", "quality"});
         result.export_settings.width = static_cast<std::uint32_t>(integer(required(output, "width", "export"), "export.width", 2, 7680));
         result.export_settings.height = static_cast<std::uint32_t>(integer(required(output, "height", "export"), "export.height", 2, 7680));
         result.export_settings.fps = read_rational(required(output, "fps", "export"), "export.fps");
@@ -225,6 +225,8 @@ Project parse_project(std::string_view text) {
         result.export_settings.container = string_value(required(output, "container", "export"), "export.container", 16);
         if (output.contains("burnSubtitles") && !output["burnSubtitles"].is_null())
             result.export_settings.burn_subtitles = boolean(output["burnSubtitles"], "export.burnSubtitles");
+        if (output.contains("quality") && !output["quality"].is_null())
+            result.export_settings.quality = string_value(output["quality"], "export.quality", 16);
         validate_project(result);
         return result;
     } catch (const ValidationError&) { throw; }
@@ -233,7 +235,24 @@ Project parse_project(std::string_view text) {
 
 void validate_project(const Project& project) {
     const auto editor = Json::parse(project.editor_json);
-    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "cursorStyle", "cursorHideWhenIdle", "cursorIdleDelay", "cursorTimeOffset", "cursorClickStyle", "cursorClickOpacity", "cursorClickScale", "cursorClickColor", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "backdrop", "subtitleStyle"});
+    object(editor, "editor", {"systemGain", "microphoneGain", "systemMuted", "microphoneMuted", "clipAudio", "cornerRadius", "shadow", "cursorScale", "crop", "cursorSmoothing", "cursorStyle", "cursorHideWhenIdle", "cursorIdleDelay", "cursorTimeOffset", "cursorClickStyle", "cursorClickOpacity", "cursorClickScale", "cursorClickColor", "frameStyle", "frameScale", "frameToolbarScale", "frameOuterCornerRadius", "frameTitle", "frameBrowserAddress", "cameraShape", "motionBlur", "keystrokeHud", "micNoiseReduction", "audioNormalize", "audioDucking", "bgmPath", "bgmGain", "backdrop", "subtitleStyle"});
+    if (editor.contains("motionBlur")) {
+        const auto v = number(editor["motionBlur"], "editor.motionBlur");
+        if (v < 0.0 || v > 1.0) invalid("editor.motionBlur", "motionBlur must be 0..1");
+    }
+    for (const auto* key : {"keystrokeHud", "micNoiseReduction", "audioNormalize", "audioDucking"})
+        if (editor.contains(key)) (void)boolean(editor[key], std::string("editor.") + key);
+    if (editor.contains("bgmGain")) {
+        const auto v = number(editor["bgmGain"], "editor.bgmGain");
+        if (v < 0.0 || v > 2.0) invalid("editor.bgmGain", "bgmGain must be 0..2");
+    }
+    if (editor.contains("bgmPath") && !editor["bgmPath"].is_null()) {
+        if (!editor["bgmPath"].is_string()) invalid("editor.bgmPath", "expected string");
+        const auto& value = editor["bgmPath"].get_ref<const std::string&>();
+        if (value.size() > 1024) invalid("editor.bgmPath", "bgmPath too long");
+        if (!value.empty() && (!is_project_relative_path(value) || !value.starts_with("assets/")))
+            invalid("editor.bgmPath", "bgmPath must reference a project asset");
+    }
     if(editor.contains("cursorStyle")) { auto value=string_value(editor["cursorStyle"],"editor.cursorStyle",16); if(value!="recorded" && value!="arrow" && value!="dot" && value!="crosshair")invalid("editor.cursorStyle","invalid cursor style"); }
     if(editor.contains("cursorClickStyle")) { auto value=string_value(editor["cursorClickStyle"],"editor.cursorClickStyle",16); if(value!="none" && value!="ripple" && value!="highlight")invalid("editor.cursorClickStyle","invalid click style"); }
     if(editor.contains("cursorHideWhenIdle") && !editor["cursorHideWhenIdle"].is_boolean())invalid("editor.cursorHideWhenIdle","must be boolean");
@@ -435,8 +454,11 @@ void validate_project(const Project& project) {
     const auto& output = project.export_settings;
     if (output.width < 2 || output.height < 2 || output.width > 7680 || output.height > 7680 || output.width % 2 || output.height % 2)
         invalid("export", "H.264 output dimensions must be even and in 2..7680");
-    if (output.fps.denominator != 1 || (output.fps.numerator != 30 && output.fps.numerator != 60)) invalid("export.fps", "schema 1 supports 30/1 or 60/1");
+    if (output.fps.denominator != 1 || (output.fps.numerator != 10 && output.fps.numerator != 15 && output.fps.numerator != 24 && output.fps.numerator != 30 && output.fps.numerator != 60))
+        invalid("export.fps", "supported frame rates are 10, 15, 24, 30, or 60");
     if ((output.video_codec != "h264" && output.video_codec != "hevc" && output.video_codec != "av1") || output.audio_codec != "aac" || output.container != "mp4") invalid("export", "requires h264, hevc or av1 video with aac/mp4");
+    if (output.quality != "low" && output.quality != "standard" && output.quality != "high" && output.quality != "ultra")
+        invalid("export.quality", "unsupported export quality");
 }
 
 std::string serialize_project(const Project& project) {
@@ -463,6 +485,7 @@ std::string serialize_project(const Project& project) {
     result["export"] = {{"width", output.width}, {"height", output.height}, {"fps", ratio_json(output.fps)},
         {"videoCodec", output.video_codec}, {"audioCodec", output.audio_codec}, {"container", output.container}};
     if (!output.burn_subtitles) result["export"]["burnSubtitles"] = false;
+    if (output.quality != "standard") result["export"]["quality"] = output.quality;
     if (!project.primary_source_json.empty()) result["primarySource"] = Json::parse(project.primary_source_json);
     if (project.editor_json != "{}") result["editor"] = Json::parse(project.editor_json);
     auto text = result.dump(2);
