@@ -51,7 +51,9 @@ $nuget = Join-Path $env:USERPROFILE '.nuget\packages'; if ($env:NUGET_PACKAGES) 
 Copy-Item -LiteralPath (Join-Path $nuget "microsoft.netcore.app.runtime.win-x64\$runtimeVersion\LICENSE.TXT") -Destination (Join-Path $licenses 'dotnet-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $nuget "microsoft.netcore.app.runtime.win-x64\$runtimeVersion\THIRD-PARTY-NOTICES.TXT") -Destination (Join-Path $licenses 'dotnet-NOTICES.txt')
 [xml] $appProject = Get-Content (Join-Path $ProjectRoot 'src\FrameTrail.App\FrameTrail.App.csproj') -Raw -Encoding UTF8
-$appSdkVersion = ($appProject.Project.ItemGroup.PackageReference | Where-Object Include -eq 'Microsoft.WindowsAppSDK').Version
+$appSdkNode = $appProject.SelectSingleNode('//PackageReference[@Include="Microsoft.WindowsAppSDK"]')
+if (!$appSdkNode) { throw 'Could not find Microsoft.WindowsAppSDK PackageReference in FrameTrail.App.csproj.' }
+$appSdkVersion = [string]$appSdkNode.GetAttribute('Version')
 Copy-Item -LiteralPath (Join-Path $nuget "microsoft.windowsappsdk\$appSdkVersion\NOTICE.txt") -Destination (Join-Path $licenses 'WindowsAppSDK-NOTICE.txt')
 Copy-Item -LiteralPath (Join-Path $NativeBuildDirectory '_deps\nlohmann_json-src\LICENSE.MIT') -Destination (Join-Path $licenses 'nlohmann-json-MIT.txt')
 foreach ($required in @('FrameTrail.App.exe','FrameTrail.App.dll','FrameTrail.App.pri','App.xbf','MainWindow.xbf','EditorWindow.xbf','RecorderStyles.xbf','EditorStyles.xbf','coreclr.dll','hostfxr.dll','Microsoft.UI.Xaml.dll','Microsoft.WindowsAppRuntime.dll','Assets\Fonts\LICENSE.txt','Assets\Brand\FrameTrail.Icon.v1.ico','PackageAssets\StoreLogo.png','PackageAssets\Square44x44Logo.png','PackageAssets\Square150x150Logo.png','Licenses\dogsc-MIT.txt','THIRD-PARTY-NOTICES.md','Docs\privacy.md','ai-agent-runtime\frametrail-agent.exe','ai-ui\index.html')) {
