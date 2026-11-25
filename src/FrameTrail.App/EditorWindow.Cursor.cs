@@ -15,20 +15,38 @@ public sealed partial class EditorWindow
     private readonly EditorBarSlider cursorClickOpacity = VisualBar(0, 1, 0.05), cursorClickScale = VisualBar(0.4, 3, 0.1, "×");
     private static readonly string[] cursorStyles = ["recorded", "arrow", "dot", "crosshair"], clickStyles = ["none", "ripple", "highlight"];
     private static readonly SdrColor[] clickColors = [new() { R = 0.35, G = 0.68, B = 1 }, new() { R = 1, G = 0.8, B = 0.15 }, new() { R = 1, G = 0.25, B = 0.3 }];
+    private readonly StackPanel cursorClickDetails = new() { Spacing = 8 };
+    private readonly StackPanel cursorIdleDelayRow = new() { Spacing = 4 };
     private bool loadingCursor;
     private void InitializeCursor()
     {
         AutomationProperties.SetAutomationId(cursorStyle, "editor.cursor.style"); AutomationProperties.SetAutomationId(cursorClick, "editor.cursor.click");
         AutomationProperties.SetAutomationId(cursorIdle, "editor.cursor.idle"); AutomationProperties.SetAutomationId(cursorOffset, "editor.cursor.offset");
         AutomationProperties.SetAutomationId(keystrokeHudToggle, "editor.cursor.keystrokeHud");
-        CursorSettings.Children.Add(VisualTile(cursorStyle, cursorClick, cursorColor, VisualLabel(L.T("SE97F164E8917")), cursorClickOpacity, VisualLabel(L.T("S713F392B0F60")), cursorClickScale));
-        CursorSettings.Children.Add(VisualTile(cursorIdle, VisualLabel(L.T("S2A149D8ADB7F")), cursorDelay));
-        CursorSettings.Children.Add(VisualTile(keystrokeHudToggle));
-        CursorSettings.Children.Add(VisualTile(VisualLabel(L.T("SAF2F03C18F32")), cursorOffset, new TextBlock { Text = L.T("S3B71B905D70B"), TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, FontSize = 11 }));
-        foreach (var box in new[] { cursorStyle, cursorClick, cursorColor }) box.SelectionChanged += async (_, _) => await CommitCursorAsync();
-        cursorIdle.Toggled += async (_, _) => await CommitCursorAsync();
+        TextBlock FieldLabel(string text) => new() { Text = text, Style = (Microsoft.UI.Xaml.Style)Root.Resources["SmallLabel"] };
+
+        cursorClickDetails.Children.Add(cursorColor);
+        cursorClickDetails.Children.Add(FieldLabel(L.T("SE97F164E8917")));
+        cursorClickDetails.Children.Add(cursorClickOpacity);
+        cursorClickDetails.Children.Add(FieldLabel(L.T("S713F392B0F60")));
+        cursorClickDetails.Children.Add(cursorClickScale);
+        CursorSettings.Children.Add(VisualTile(cursorStyle, cursorClick, cursorClickDetails));
+
+        cursorIdleDelayRow.Children.Add(FieldLabel(L.T("S2A149D8ADB7F")));
+        cursorIdleDelayRow.Children.Add(cursorDelay);
+        CursorSettings.Children.Add(VisualTile(cursorIdle, cursorIdleDelayRow, keystrokeHudToggle));
+
+        CursorSettings.Children.Add(VisualTile(FieldLabel(L.T("SAF2F03C18F32")), cursorOffset, new TextBlock { Text = L.T("S3B71B905D70B"), Style = (Microsoft.UI.Xaml.Style)Root.Resources["SmallLabel"], TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap }));
+        foreach (var box in new[] { cursorStyle, cursorClick, cursorColor }) box.SelectionChanged += async (_, _) => { UpdateCursorFieldVisibility(); await CommitCursorAsync(); };
+        cursorIdle.Toggled += async (_, _) => { UpdateCursorFieldVisibility(); await CommitCursorAsync(); };
         keystrokeHudToggle.Toggled += async (_, _) => await CommitCursorAsync();
         foreach (var slider in new[] { cursorDelay, cursorOffset, cursorClickOpacity, cursorClickScale }) slider.Committed += async (_, _) => await CommitCursorAsync();
+        UpdateCursorFieldVisibility();
+    }
+    private void UpdateCursorFieldVisibility()
+    {
+        cursorClickDetails.Visibility = cursorClick.SelectedIndex > 0 ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
+        cursorIdleDelayRow.Visibility = cursorIdle.IsOn ? Microsoft.UI.Xaml.Visibility.Visible : Microsoft.UI.Xaml.Visibility.Collapsed;
     }
     private async Task CommitCursorAsync()
     {
@@ -52,5 +70,6 @@ public sealed partial class EditorWindow
             cursorIdle.IsOn = value.CursorHideWhenIdle; keystrokeHudToggle.IsOn = value.KeystrokeHud; cursorDelay.Value = value.CursorIdleDelay; cursorOffset.Value = value.CursorTimeOffset;
             cursorClickOpacity.Value = value.CursorClickOpacity; cursorClickScale.Value = value.CursorClickScale;
         } finally { loadingCursor = false; }
+        UpdateCursorFieldVisibility();
     }
 }

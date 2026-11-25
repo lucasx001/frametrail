@@ -15,12 +15,13 @@ internal sealed partial class EditorSettingsWindow : Window
     private readonly string directory;
     private readonly Action<ElementTheme> setAppearance;
     private readonly EditorMediaCache? mediaCache;
+    private readonly Func<Task>? requestRestart;
     private readonly string[] names = [L.T("S40FAE00B7C6D"), L.T("S3B7F5965BDBF"), L.T("S4B6EF790032F"), L.T("S978CBCA6265D"), L.T("S52D25A9E30BA")];
     private readonly string[] icons = ["Sliders", "Scene", "Opening", "Check", "Settings"];
     private bool languageChanged;
-    internal EditorSettingsWindow(string directory, Action<ElementTheme> setAppearance, EditorMediaCache? mediaCache = null)
+    internal EditorSettingsWindow(string directory, Action<ElementTheme> setAppearance, EditorMediaCache? mediaCache = null, Func<Task>? requestRestart = null)
     {
-        this.directory = directory; this.setAppearance = setAppearance; this.mediaCache = mediaCache; Title = L.T("S888F02152174");
+        this.directory = directory; this.setAppearance = setAppearance; this.mediaCache = mediaCache; this.requestRestart = requestRestart; Title = L.T("S888F02152174");
         AppIcon.Apply(this);
         root.RequestedTheme = EditorAppearance.Current; root.Background = RecorderTheme.Brush(root, "EditorStage");
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(112) }); root.RowDefinitions.Add(new RowDefinition());
@@ -60,13 +61,22 @@ internal sealed partial class EditorSettingsWindow : Window
                 Visibility = languageChanged ? Visibility.Visible : Visibility.Collapsed
             };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(restart, "settings.language.restart");
-            restart.Click += (_, _) => {
+            restart.Click += async (_, _) => {
+                restart.IsEnabled = false;
                 try {
-                    if (!string.IsNullOrEmpty(Environment.ProcessPath))
-                        Process.Start(new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = true });
-                    Close();
-                    Application.Current.Exit();
-                } catch (Exception error) { page.Children.Add(Text(error.Message)); }
+                    if (requestRestart is not null) {
+                        await requestRestart();
+                        restart.IsEnabled = true;
+                    } else {
+                        Close();
+                        if (!string.IsNullOrEmpty(Environment.ProcessPath))
+                            Process.Start(new ProcessStartInfo(Environment.ProcessPath) { UseShellExecute = false, WorkingDirectory = AppContext.BaseDirectory });
+                        Application.Current.Exit();
+                    }
+                } catch (Exception error) {
+                    restart.IsEnabled = true;
+                    page.Children.Add(Text(error.Message));
+                }
             };
             language.SelectionChanged+=(_,_)=>{try{FrameTrail.Domain.AppText.SavePreference(new[]{"system","zh-Hans","en"}[language.SelectedIndex]);languageChanged=true;restart.Visibility=Visibility.Visible;}catch(Exception error){page.Children.Add(Text(error.Message));}};
             page.Children.Add(language);page.Children.Add(Text(L.T("S1CF8288F24FE"),11,true));page.Children.Add(restart);

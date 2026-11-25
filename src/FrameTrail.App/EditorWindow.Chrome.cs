@@ -21,6 +21,7 @@ public sealed partial class EditorWindow
     private readonly HashSet<NumberBox> pictureNumbers = new();
     private bool pictureInputCommitQueued, flushingPictureInputs;
     private readonly string[] tabLabels = [L.T("SD051DF30A636"), L.T("SFD0D4B7258C2"), L.T("SCFCC288E1D3D"), L.T("S47A75CA0B8FE"), L.T("SFAC308FBABB8"), L.T("S473400815C0F"), L.T("SubTabTitle")];
+    private readonly string[] tabShortLabels = [L.T("InspectorTabShortCanvas"), L.T("InspectorTabShortOpening"), L.T("InspectorTabShortMotion"), L.T("InspectorTabShortCursor"), L.T("InspectorTabShortCamera"), L.T("InspectorTabShortAudio"), L.T("InspectorTabShortSubtitles")];
     private readonly string[] tabGlyphs = ["Scene", "Opening", "Zoom", "Cursor", "Camera", "Speaker", "Subtitles"];
     private static SolidColorBrush Hex(uint n) => new(Windows.UI.Color.FromArgb(255, (byte)(n >> 16), (byte)(n >> 8), (byte)n));
     private void InitializeChrome()
@@ -54,17 +55,43 @@ public sealed partial class EditorWindow
     private void DrawInspectorTabs()
     {
         InspectorTabs.Children.Clear();
+        if (InspectorTabs.ColumnDefinitions.Count != tabLabels.Length)
+        {
+            InspectorTabs.ColumnDefinitions.Clear();
+            for (int i = 0; i < tabLabels.Length; i++)
+                InspectorTabs.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        }
         for (int i = 0; i < tabLabels.Length; i++) {
             int index = i; bool active = inspectorTab == i;
             var ink = active ? RecorderTheme.Brush(Root, "EditorAccentInk") : RecorderTheme.Brush(Root, "EditorSecondary");
-            var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-            content.Children.Add(new EditorGlyph { Kind = tabGlyphs[i], Width = 16, Height = 16, Foreground = ink });
-            if (active) content.Children.Add(new TextBlock { Text = tabLabels[i], FontFamily = (FontFamily)Application.Current.Resources["RecorderSemiboldFont"], FontSize = 12, Foreground = ink });
-            var button = new Button { Style = (Style)Application.Current.Resources["EditorButton"], Content = content, MinWidth = 34, Height = 38, Padding = active ? new Thickness(10, 0, 12, 0) : new Thickness(0), CornerRadius = new CornerRadius(19), Background = active ? RecorderTheme.Brush(Root, "EditorAccent") : new SolidColorBrush(Colors.Transparent) };
+            var content = new StackPanel { Orientation = Orientation.Vertical, Spacing = 3, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            content.Children.Add(new EditorGlyph { Kind = tabGlyphs[i], Width = 15, Height = 15, Foreground = ink, HorizontalAlignment = HorizontalAlignment.Center });
+            content.Children.Add(new TextBlock
+            {
+                Text = tabShortLabels[i],
+                FontFamily = (FontFamily)Application.Current.Resources[active ? "RecorderSemiboldFont" : "RecorderFont"],
+                FontSize = 10,
+                Foreground = ink,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+            var button = new Button
+            {
+                Style = (Style)Application.Current.Resources["EditorButton"],
+                Content = content,
+                MinWidth = 0,
+                Height = 44,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(2, 4, 2, 4),
+                CornerRadius = new CornerRadius(10),
+                Background = active ? RecorderTheme.Brush(Root, "EditorAccent") : new SolidColorBrush(Colors.Transparent)
+            };
             bool available = i != 4 || editor.Snapshot.Media.Any(m => m.Kind == FrameTrail.Domain.MediaKind.Camera);
             button.IsEnabled = available; ToolTipService.SetToolTip(button, available ? tabLabels[i] : L.T("S00C39FE87C1F"));
             AutomationProperties.SetName(button, tabLabels[i]); AutomationProperties.SetAutomationId(button, "editor.inspector." + tabGlyphs[i].ToLowerInvariant());
-            button.Click += (_, _) => ShowInspector(index); InspectorTabs.Children.Add(button);
+            button.Click += (_, _) => ShowInspector(index);
+            Grid.SetColumn(button, i);
+            InspectorTabs.Children.Add(button);
         }
     }
     private void ShowInspector(int tab)
@@ -81,7 +108,6 @@ public sealed partial class EditorWindow
         openingSettings.Visibility = tab == 1 ? Visibility.Visible : Visibility.Collapsed;
         motionSettings.Visibility = tab == 2 ? Visibility.Visible : Visibility.Collapsed;
         InspectorHeading.Text = tab == 7 ? L.T("S908E56FE5ED8") : tabLabels[tab];
-        InspectorScope.Text = tab == 7 && SelectedClip is { } c ? L.T("S85F334543581", editor.Timeline.Clips.IndexOf(c) + 1) : tab == 4 ? L.T("S9B436B8DF494") : L.T("SC78DFFE1E8AB");
         InspectorScroll.ChangeView(null, 0, null, true); DrawInspectorTabs();
         if (tab == 6) RefreshSubtitleInspector();
         timeline.SelectVisual(tab == 2 ? selectedEffect : tab == 6 ? selectedSubtitleId : null);
@@ -115,7 +141,16 @@ public sealed partial class EditorWindow
         await ApplyPictureAsync();
     }
     private async void PictureBar_Committed(object? sender, EventArgs e) => await CommitPictureAsync();
-    private async void PictureToggle_Click(object sender, RoutedEventArgs e) => await CommitPictureAsync();
+    private async void PictureToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (ReferenceEquals(sender, CropEnabled))
+        {
+            bool cropOn = CropEnabled.IsChecked == true;
+            CropFieldsGrid.Visibility = cropOn ? Visibility.Visible : Visibility.Collapsed;
+            CropDisabledHint.Visibility = cropOn ? Visibility.Collapsed : Visibility.Visible;
+        }
+        await CommitPictureAsync();
+    }
     private static T? InputAncestor<T>(DependencyObject? element) where T : DependencyObject
     {
         while (element is not null) { if (element is T match) return match; element = VisualTreeHelper.GetParent(element); }
@@ -170,16 +205,18 @@ public sealed partial class EditorWindow
     private void UpdateBackgroundChoice()
     {
         uint rgb = (uint)Math.Round(background.R * 255) << 16 | (uint)Math.Round(background.G * 255) << 8 | (uint)Math.Round(background.B * 255);
+        var line = RecorderTheme.Brush(Root, "EditorLine");
+        var accent = RecorderTheme.Brush(Root, "EditorAccent");
         foreach (var item in BackgroundColors.Children.OfType<Button>()) {
             bool match = Convert.ToUInt32(((string)item.Tag)[1..], 16) == rgb;
-            item.Content = match ? new EditorGlyph { Kind = "Check", Width = 22, Height = 22, Foreground = Hex(rgb > 0xAAAAAA ? 0x1A1A1Au : 0xFFFFFFu) } : null;
-            item.BorderThickness = new Thickness(match ? 2 : 0); item.BorderBrush = RecorderTheme.Brush(Root, "EditorAccent");
+            item.Content = match ? new EditorGlyph { Kind = "Check", Width = 20, Height = 20, Foreground = Hex(rgb > 0xAAAAAA ? 0x1A1A1Au : 0xFFFFFFu) } : null;
+            item.BorderThickness = new Thickness(match ? 2 : 1); item.BorderBrush = match ? accent : line;
         }
     }
     private void Appearance_Click(object sender, RoutedEventArgs e) { Root.RequestedTheme = Root.ActualTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark; EditorAppearance.Save(Root.RequestedTheme); UpdateFrameNavigation(); timeline.RefreshAppearance(); }
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
-        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; UpdateFrameNavigation(); timeline.RefreshAppearance(); }, mediaCache); settingsWindow.Closed += (_, _) => settingsWindow = null; }
+        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(editor.DirectoryPath, theme => { Root.RequestedTheme = theme; UpdateFrameNavigation(); timeline.RefreshAppearance(); }, mediaCache, restartApp is not null ? () => restartApp(editor.DirectoryPath) : null); settingsWindow.Closed += (_, _) => settingsWindow = null; }
         settingsWindow.Activate();
     }
     private void Snap_Click(object sender, RoutedEventArgs e) { timeline.SnappingEnabled = !timeline.SnappingEnabled; UpdateSnapButton(); }

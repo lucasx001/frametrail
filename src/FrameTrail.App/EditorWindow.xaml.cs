@@ -37,6 +37,7 @@ public sealed partial class EditorWindow : Window
     private readonly Func<string, Task>? deleteProject;
     private readonly Action? browseProjects;
     private readonly Action? newVideoProject;
+    private readonly Func<string?, Task>? restartApp;
     private bool switchingProjects;
     private bool projectTransition;
     private bool showingDeleteConfirmation;
@@ -44,7 +45,7 @@ public sealed partial class EditorWindow : Window
     internal Task<bool> Startup => startup.Task;
     internal bool HasClosed => allowClose;
 
-    internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null, Action? browseProjects = null, Action? newVideoProject = null)
+    internal EditorWindow(ProjectWorkspace workspace, string? validationDirectory = null, Func<string, Task>? openProject = null, Func<string, Task>? deleteProject = null, Action? browseProjects = null, Action? newVideoProject = null, Func<string?, Task>? restartApp = null)
     {
         editor = new EditorSession(workspace);
         editController = new EditorEditController(editor);
@@ -53,6 +54,7 @@ public sealed partial class EditorWindow : Window
         this.deleteProject = deleteProject;
         this.browseProjects = browseProjects;
         this.newVideoProject = newVideoProject;
+        this.restartApp = restartApp;
         var launchArguments = Environment.GetCommandLineArgs();
         int presetTestIndex = Array.IndexOf(launchArguments, "--preset-library");
         if (launchArguments.Contains("--inspect-ui") && presetTestIndex >= 0 && launchArguments.Length > presetTestIndex + 1)
@@ -298,6 +300,9 @@ public sealed partial class EditorWindow : Window
         CameraVisible.IsChecked = p.Canvas.Camera.Enabled; CameraVisible.IsEnabled = p.Media.Any(m => m.Kind == MediaKind.Camera); CameraMirror.IsChecked = p.Canvas.Camera.Mirror; CameraSize.Value = p.Canvas.Camera.Width * 100;
         CameraX.Value = p.Canvas.Camera.X * 100; CameraY.Value = p.Canvas.Camera.Y * 100;
         CropEnabled.IsChecked = settings.Crop is not null; CropX.Value = (settings.Crop?.X ?? 0) * 100; CropY.Value = (settings.Crop?.Y ?? 0) * 100; CropWidth.Value = (settings.Crop?.Width ?? 1) * 100; CropHeight.Value = (settings.Crop?.Height ?? 1) * 100;
+        bool cropOn = settings.Crop is not null;
+        CropFieldsGrid.Visibility = cropOn ? Visibility.Visible : Visibility.Collapsed;
+        CropDisabledHint.Visibility = cropOn ? Visibility.Collapsed : Visibility.Visible;
         PrimaryAudioLabel.Text = ClipPrimaryAudioLabel.Text = p.PrimarySource?.Kind == "androidUsb" ? L.T("S060AB6DF2ED4") : L.T("SAAA9A8F072BD");
         SystemGain.Value = settings.SystemGain * 100; MicGain.Value = settings.MicrophoneGain * 100; SystemMute.IsChecked = settings.SystemMuted; MicMute.IsChecked = settings.MicrophoneMuted;
         var level = selected is not null && settings.ClipAudio.TryGetValue(selected, out var value) ? value : new AudioLevel();

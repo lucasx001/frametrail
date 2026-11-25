@@ -92,13 +92,14 @@ public sealed partial class EditorWindow
         var bgmBody = new StackPanel { Spacing = 8 };
         bgmFileNameLabel.Foreground = RecorderTheme.Brush(Root, "EditorSecondary");
         bgmBody.Children.Add(bgmFileNameLabel);
+        importBgmButton.Style = (Style)Application.Current.Resources["EditorSecondaryButton"];
         bgmBody.Children.Add(importBgmButton);
-        removeBgmButton.Foreground = new SolidColorBrush(ColorHelper.FromArgb(255, 0xE3, 0x5D, 0x62));
+        removeBgmButton.Style = (Style)Application.Current.Resources["EditorDangerGhostButton"];
         bgmBody.Children.Add(removeBgmButton);
         var bgmGainHeader = new TextBlock
         {
             Text = L.T("AudioBgmGainLabel"),
-            Foreground = RecorderTheme.Brush(Root, "EditorSecondary")
+            Style = (Style)Root.Resources["SmallLabel"]
         };
         bgmBody.Children.Add(bgmGainHeader);
         bgmBody.Children.Add(bgmGainSlider);

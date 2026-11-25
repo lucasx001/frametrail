@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Hosting;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Windows.System;
@@ -317,8 +318,78 @@ public sealed partial class MainWindow : Window
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         HideFlyouts();
-        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(opened?.DirectoryPath ?? projects, SetAppearance); settingsWindow.Closed += (_, _) => settingsWindow = null; }
+        if (settingsWindow is null) { settingsWindow = new EditorSettingsWindow(opened?.DirectoryPath ?? projects, SetAppearance, requestRestart: () => RestartApplicationAsync()); settingsWindow.Closed += (_, _) => settingsWindow = null; }
         settingsWindow.Activate();
+    }
+    private async Task RestartApplicationAsync(string? reopenProjectDirectory = null)
+    {
+        if (closing) return;
+        if (coordinator.State is not (RecordingWorkspaceState.Setup or RecordingWorkspaceState.RecordingComplete))
+            throw new InvalidOperationException(L.T("S0CAF0D47B58B"));
+        if (busy) throw new InvalidOperationException(L.T("S498C41790F69"));
+
+        string? reopenProject = reopenProjectDirectory ?? (editorWindow is not null ? (opened ?? coordinator.Workspace)?.DirectoryPath : null);
+        busy = true;
+        closing = true;
+        try
+        {
+            if (editorWindow is { } activeEditor)
+            {
+                await activeEditor.RequestCloseAsync();
+                if (!activeEditor.HasClosed)
+                {
+                    closing = false;
+                    busy = false;
+                    return;
+                }
+                editorWindow = null;
+            }
+            CancelCountdown();
+            micPreviewGeneration++;
+            micPreviewTimer?.Stop();
+            if (memo is { } activeMemo && !await activeMemo.RequestCloseAsync()) throw new IOException(L.T("S4C0E1E7A6623"));
+            selection?.Dispose(); selection = null;
+            if (androidWindow is { } activeAndroid) await activeAndroid.ShutdownAsync();
+            HideFlyouts();
+            await StopMicPreviewAsync();
+            if (cameraPreview is { } cp) { await cp.StopAsync(); cp.Close(); cameraPreview = null; }
+            settingsWindow?.Close(); settingsWindow = null;
+            projectLibraryWindow?.Close(); projectLibraryWindow = null;
+            newProjectWindow?.Close(); newProjectWindow = null;
+            completion?.Close(); completion = null;
+            await coordinator.DisposeAsync();
+            if (opened is not null) { await opened.DisposeAsync(); opened = null; }
+            App.AiSidecar.Dispose();
+            UnregisterHotkeys();
+            if (previousProcedure != 0) { SetWindowLongPtr(hwnd, -4, previousProcedure); previousProcedure = 0; }
+            session?.Dispose(); session = null;
+
+            if (!string.IsNullOrEmpty(Environment.ProcessPath))
+            {
+                var startInfo = new ProcessStartInfo(Environment.ProcessPath)
+                {
+                    UseShellExecute = false,
+                    WorkingDirectory = AppContext.BaseDirectory
+                };
+                if (!string.IsNullOrEmpty(reopenProject) && Directory.Exists(reopenProject))
+                {
+                    startInfo.ArgumentList.Add("--editor");
+                    startInfo.ArgumentList.Add(reopenProject);
+                }
+                Process.Start(startInfo);
+            }
+
+            allowClose = true;
+            Close();
+            Application.Current.Exit();
+            _ = Task.Run(async () => { await Task.Delay(1200); Environment.Exit(0); });
+        }
+        catch
+        {
+            closing = false;
+            busy = false;
+            throw;
+        }
     }
     private void Recovery_Click(object sender, RoutedEventArgs e) => ToggleFlyout(RecoveryFlyout, MoreButton);
     private void ShowFeedback(string title, string message, bool show = true, bool deviceIssue = false)
@@ -802,7 +873,7 @@ public sealed partial class MainWindow : Window
     private EditorWindow CreateEditor(ProjectWorkspace workspace, string? validation = null)
     {
         RememberCatalogProject(workspace.DirectoryPath);
-        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync, ShowProjectLibrary, ShowNewProjectWindow);
+        var window = new EditorWindow(workspace, validation, OpenExistingProjectAsync, DeleteExistingProjectAsync, ShowProjectLibrary, ShowNewProjectWindow, RestartApplicationAsync);
         window.Closed += async (_, _) => {
             if (!ReferenceEquals(editorWindow, window)) return;
             editorWindow = null;

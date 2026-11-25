@@ -226,12 +226,36 @@
     <Style x:Key="EditorDangerButton" TargetType="Button" BasedOn="{StaticResource EditorPrimaryButton}">
         <Setter Property="Background" Value="{ThemeResource EditorDanger}"/><Setter Property="Foreground" Value="{ThemeResource EditorDangerInk}"/>
     </Style>
+    <Style x:Key="EditorSecondaryButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
+        <Setter Property="Background" Value="{ThemeResource EditorPanel}"/><Setter Property="Foreground" Value="{ThemeResource EditorInk}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource EditorLine}"/><Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="10"/><Setter Property="Height" Value="32"/><Setter Property="Padding" Value="10,0"/>
+        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+            <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}">
+                <VisualStateManager.VisualStateGroups><VisualStateGroup x:Name="CommonStates">
+                    <VisualState x:Name="Normal"/><VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Hover.Opacity" Value="1"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Presenter.Opacity" Value="0.65"/></VisualState.Setters></VisualState>
+                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Surface.Opacity" Value="0.38"/></VisualState.Setters></VisualState>
+                </VisualStateGroup></VisualStateManager.VisualStateGroups>
+                <Grid><Border x:Name="Hover" Background="{ThemeResource EditorHover}" CornerRadius="{TemplateBinding CornerRadius}" Opacity="0" IsHitTestVisible="False"/><ContentPresenter x:Name="Presenter" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{TemplateBinding Foreground}" Padding="{TemplateBinding Padding}" HorizontalContentAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/></Grid>
+            </Border>
+        </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="EditorDangerGhostButton" TargetType="Button" BasedOn="{StaticResource EditorSecondaryButton}">
+        <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{ThemeResource EditorDanger}"/>
+        <Setter Property="BorderBrush" Value="#38DC2626"/>
+    </Style>
+    <Style x:Key="EditorChipButton" TargetType="Button" BasedOn="{StaticResource EditorSecondaryButton}">
+        <Setter Property="Height" Value="26"/><Setter Property="MinWidth" Value="0"/><Setter Property="Padding" Value="6,0"/>
+        <Setter Property="CornerRadius" Value="8"/><Setter Property="FontSize" Value="11"/>
+        <Setter Property="Foreground" Value="{ThemeResource EditorSecondary}"/>
+    </Style>
     <Style x:Key="EditorDialogCancelButton" TargetType="Button" BasedOn="{StaticResource EditorButton}">
         <Setter Property="Background" Value="{ThemeResource EditorControlTrack}"/><Setter Property="Foreground" Value="{ThemeResource EditorInk}"/>
         <Setter Property="FontFamily" Value="{StaticResource RecorderSemiboldFont}"/><Setter Property="Padding" Value="14,0"/>
     </Style>
     <Style x:Key="DefaultButtonStyle" TargetType="Button" BasedOn="{StaticResource EditorDialogCancelButton}"/>
-    <Style x:Key="EditorTile" TargetType="Border"><Setter Property="Background" Value="{ThemeResource EditorWell}"/><Setter Property="CornerRadius" Value="18"/><Setter Property="Padding" Value="14"/></Style>
+    <Style x:Key="EditorTile" TargetType="Border"><Setter Property="Background" Value="{ThemeResource EditorWell}"/><Setter Property="BorderBrush" Value="{ThemeResource EditorLine}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="14"/><Setter Property="Padding" Value="12"/></Style>
     <Style x:Key="EditorSwitch" TargetType="CheckBox">
         <Setter Property="Foreground" Value="{ThemeResource EditorAccent}"/><Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
         <Setter Property="MinHeight" Value="32"/><Setter Property="Padding" Value="0"/><Setter Property="Background" Value="{ThemeResource EditorControlTrack}"/>
@@ -241,7 +265,7 @@
     <Style x:Key="EditorInput" TargetType="NumberBox">
         <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
         <Setter Property="MinHeight" Value="30"/><Setter Property="Background" Value="{ThemeResource EditorPanel}"/>
-        <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource EditorLine}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/>
         <Setter Property="SpinButtonPlacementMode" Value="Inline"/>
     </Style>
     <Style x:Key="EditorWallpaperButton" TargetType="ToggleButton">
@@ -265,8 +289,8 @@
     </Style>
     <Style x:Key="EditorCombo" TargetType="ComboBox">
         <Setter Property="FontFamily" Value="{StaticResource RecorderFont}"/><Setter Property="FontSize" Value="12"/>
-        <Setter Property="MinHeight" Value="30"/><Setter Property="Background" Value="{ThemeResource EditorPanel}"/>
-        <Setter Property="BorderThickness" Value="0"/><Setter Property="CornerRadius" Value="15"/>
+        <Setter Property="MinHeight" Value="32"/><Setter Property="Background" Value="{ThemeResource EditorPanel}"/>
+        <Setter Property="BorderBrush" Value="{ThemeResource EditorLine}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="10"/>
         <Setter Property="HorizontalAlignment" Value="Stretch"/>
     </Style>
 </ResourceDictionary>
