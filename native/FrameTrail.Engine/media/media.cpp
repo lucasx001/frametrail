@@ -111,7 +111,7 @@ void __cdecl ft_media_destroy(ft_media_handle handle) {
 }
 int32_t __cdecl ft_media_swapchain(ft_media_handle handle, void** output) {
     if (!output) return E_POINTER; *output = nullptr;
-    return protect([&] { auto s = get(handle); std::scoped_lock lock(s->mutex); auto& gpu = s->gpu(); s->software = gpu.software; FT_MEDIA_CHECK(gpu.swapchain.CopyTo(__uuidof(IDXGISwapChain1), output)); });
+    return protect([&] { auto s = get(handle); std::scoped_lock lock(s->mutex); auto& gpu = s->gpu(); s->software = gpu.software; if (!gpu.swapchain) winrt::throw_hresult(DXGI_ERROR_UNSUPPORTED); FT_MEDIA_CHECK(gpu.swapchain.CopyTo(__uuidof(IDXGISwapChain1), output)); });
 }
 int32_t __cdecl ft_media_resize(ft_media_handle handle, uint32_t width, uint32_t height, double sx, double sy) {
     return protect([&] { auto s = get(handle); std::scoped_lock lock(s->mutex); s->gpu().resize(width, height, sx, sy); });

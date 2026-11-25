@@ -49,7 +49,9 @@ ComPtr<IDWriteTextLayout> create_text_layout(
 Renderer::Renderer(const std::filesystem::path& path) : root(path) {
     FT_MEDIA_CHECK(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED,__uuidof(IDWriteFactory),reinterpret_cast<IUnknown**>(text_factory.GetAddressOf())));
     UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
-    auto hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context);
+    wchar_t warp_env[8]{};
+    const bool force_warp = GetEnvironmentVariableW(L"FRAMETRAIL_FORCE_WARP", warp_env, 8) > 0 && warp_env[0] == L'1';
+    auto hr = force_warp ? E_FAIL : D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context);
     if (FAILED(hr)) { software = 1; FT_MEDIA_CHECK(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context)); }
     ComPtr<ID3D10Multithread> multithread; if (SUCCEEDED(context.As(&multithread))) multithread->SetMultithreadProtected(TRUE);
     UINT token{}; FT_MEDIA_CHECK(MFCreateDXGIDeviceManager(&token, &manager)); FT_MEDIA_CHECK(manager->ResetDevice(device.Get(), token));
@@ -58,11 +60,13 @@ Renderer::Renderer(const std::filesystem::path& path) : root(path) {
     ComPtr<IDXGIAdapter> adapter; FT_MEDIA_CHECK(dxgi->GetAdapter(&adapter)); ComPtr<IDXGIFactory2> dxgifactory; FT_MEDIA_CHECK(adapter->GetParent(IID_PPV_ARGS(&dxgifactory)));
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width = desc.Height = 2; desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; desc.SampleDesc.Count = 1;
     desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount = 2; desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-    FT_MEDIA_CHECK(dxgifactory->CreateSwapChainForComposition(device.Get(), &desc, nullptr, &swapchain));
+    auto swapchain_hr = dxgifactory->CreateSwapChainForComposition(device.Get(), &desc, nullptr, &swapchain);
+    if (FAILED(swapchain_hr) && !software) FT_MEDIA_CHECK(swapchain_hr);
 }
 Renderer::~Renderer() = default;
 void Renderer::resize(uint32_t w, uint32_t h, double sx, double sy) {
     if (!w || !h || w > 8192 || h > 8192 || !std::isfinite(sx) || !std::isfinite(sy) || sx <= 0 || sy <= 0) winrt::throw_hresult(E_INVALIDARG);
+    if (!swapchain) winrt::throw_hresult(DXGI_ERROR_UNSUPPORTED);
     d2->SetTarget(nullptr); FT_MEDIA_CHECK(swapchain->ResizeBuffers(2, w, h, DXGI_FORMAT_B8G8R8A8_UNORM, 0));
     ComPtr<IDXGISwapChain2> chain; FT_MEDIA_CHECK(swapchain.As(&chain)); DXGI_MATRIX_3X2_F matrix{static_cast<float>(1 / sx), 0, 0, static_cast<float>(1 / sy), 0, 0};
     FT_MEDIA_CHECK(chain->SetMatrixTransform(&matrix));
@@ -107,7 +111,7 @@ void Renderer::layer(const Project& p, const MediaFrame& frame, float radius, bo
     if (asset == p.media.end()) throw ValidationError("scene", "missing media ID");
     if (!readers.contains(asset->id)) {
         evict_lru_entry(readers, reader_lru, 8);
-        readers[asset->id] = std::make_unique<VideoReader>(safe_path(root, asset->path), manager.Get());
+        readers[asset->id] = std::make_unique<VideoReader>(safe_path(root, asset->path), software ? nullptr : manager.Get());
     }
     reader_lru[asset->id] = ++cache_clock;
     auto& reader = *readers.at(asset->id); auto texture = reader.frame(frame.local_ticks, device.Get(), context.Get());
@@ -334,7 +338,7 @@ void Renderer::background(const Project&,const FrameScene& scene) {
     auto path=b.at("path").get<std::string>();ComPtr<ID2D1Bitmap1> source;
     if(kind=="image")source=image(safe_path(root,path));
     else {
-        if(!backdrop_reader || backdrop_path!=path){backdrop_reader=std::make_unique<VideoReader>(safe_path(root,path),manager.Get());backdrop_path=path;}
+        if(!backdrop_reader || backdrop_path!=path){backdrop_reader=std::make_unique<VideoReader>(safe_path(root,path),software ? nullptr : manager.Get());backdrop_path=path;}
         auto duration=std::max(int64_t(1),backdrop_reader->duration);auto texture=backdrop_reader->frame(scene.output_ticks%duration,device.Get(),context.Get());source=bitmap(texture.Get());
     }
     auto size=source->GetSize();float scale=std::max(scene.width/size.width,scene.height/size.height);
@@ -543,6 +547,7 @@ ID3D11Texture2D* Renderer::render(const Project& p,const FrameScene& scene,uint3
     return output.Get();
 }
 void Renderer::present() {
+    if (!swapchain) return;
     ComPtr<ID3D11Texture2D> back; FT_MEDIA_CHECK(swapchain->GetBuffer(0, IID_PPV_ARGS(&back))); auto target = bitmap(back.Get(), true); auto source = bitmap(output.Get());
     d2->SetTarget(target.Get()); d2->SetTransform(D2D1::Matrix3x2F::Identity()); d2->BeginDraw();
     auto size = target->GetSize(); d2->Clear(D2D1::ColorF(0.055f, 0.06f, 0.07f)); auto src = source->GetSize(); const auto scale = std::min(size.width / src.width, size.height / src.height);

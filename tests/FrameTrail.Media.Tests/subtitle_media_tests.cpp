@@ -554,6 +554,11 @@ void test_transition_render_tilt_and_stickers() {
             "ft_media_create succeeded for transition render test");
         const auto png_path = temp_dir / png_name;
         const int32_t hr = ft_media_render(handle, 10'000'000, 1, png_path.c_str());
+        if (hr != S_OK) {
+            wchar_t err[512]{};
+            ft_media_error(err, 512);
+            std::wcerr << L"ft_media_render failed hr=0x" << std::hex << static_cast<uint32_t>(hr) << std::dec << L" error=" << err << L'\n';
+        }
         ft_media_destroy(handle);
         expect(hr == S_OK, "ft_media_render S_OK at transition midpoint");
         uint32_t w = 0, h = 0;

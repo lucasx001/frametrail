@@ -40,7 +40,11 @@ VideoReader::VideoReader(const std::filesystem::path& path, IMFDXGIDeviceManager
         if (SUCCEEDED(type->GetUINT32(MF_MT_YUV_MATRIX, &matrix))) matrix709 = matrix == MFVideoTransferMatrix_BT709;
         FT_MEDIA_CHECK(MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE, &width, &height));
     };
-    try { open(true); } catch (winrt::hresult_error const&) { reader.Reset(); cpu = true; open(false); }
+    if (manager) {
+        try { open(true); } catch (winrt::hresult_error const&) { reader.Reset(); cpu = true; open(false); }
+    } else {
+        cpu = true; open(false);
+    }
     PROPVARIANT media_duration{};
     if (SUCCEEDED(reader->GetPresentationAttribute(media_source_id, MF_PD_DURATION, &media_duration)) && media_duration.vt == VT_UI8) duration = static_cast<int64_t>(media_duration.uhVal.QuadPart);
     PropVariantClear(&media_duration);
@@ -86,9 +90,11 @@ ComPtr<ID3D11Texture2D> VideoReader::frame(int64_t ticks, ID3D11Device* device, 
         if (eof && !next) break;
     }
     if (!current) winrt::throw_hresult(MF_E_END_OF_STREAM);
+    ComPtr<ID3D11VideoDevice> video;
+    const bool has_video = SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&video)));
     ComPtr<IMFMediaBuffer> buffer; FT_MEDIA_CHECK(current->GetBufferByIndex(0, &buffer));
     ComPtr<IMFDXGIBuffer> dxgi; ComPtr<ID3D11Texture2D> texture;
-    if (SUCCEEDED(buffer.As(&dxgi))) {
+    if (has_video && SUCCEEDED(buffer.As(&dxgi))) {
         FT_MEDIA_CHECK(dxgi->GetResource(IID_PPV_ARGS(&texture))); UINT subresource{}; FT_MEDIA_CHECK(dxgi->GetSubresourceIndex(&subresource));
         D3D11_TEXTURE2D_DESC desc{}; texture->GetDesc(&desc);
         // Copy out of decoder-owned buffers before ReadSample can recycle them.
@@ -107,12 +113,49 @@ ComPtr<ID3D11Texture2D> VideoReader::frame(int64_t ticks, ID3D11Device* device, 
     std::vector<BYTE> packed(static_cast<size_t>(width) * height * 3 / 2);
     for (uint32_t y = 0; y < height + height / 2; ++y) memcpy(packed.data() + static_cast<size_t>(y) * width, bytes + static_cast<ptrdiff_t>(y) * stride, width);
     if (is2d) two->Unlock2D(); else buffer->Unlock();
-    if (!upload) {
-        D3D11_TEXTURE2D_DESC desc{}; desc.Width = width; desc.Height = height; desc.MipLevels = desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_NV12; desc.SampleDesc.Count = 1; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        FT_MEDIA_CHECK(device->CreateTexture2D(&desc, nullptr, &upload));
+    if (has_video) {
+        if (!upload) {
+            D3D11_TEXTURE2D_DESC desc{}; desc.Width = width; desc.Height = height; desc.MipLevels = desc.ArraySize = 1;
+            desc.Format = DXGI_FORMAT_NV12; desc.SampleDesc.Count = 1; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            FT_MEDIA_CHECK(device->CreateTexture2D(&desc, nullptr, &upload));
+        }
+        context->UpdateSubresource(upload.Get(), 0, nullptr, packed.data(), width, 0);
+        return to_rgb(device, context);
     }
-    context->UpdateSubresource(upload.Get(), 0, nullptr, packed.data(), width, 0); return to_rgb(device, context);
+    if (!converted) {
+        D3D11_TEXTURE2D_DESC target{}; target.Width = width; target.Height = height; target.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        target.ArraySize = target.MipLevels = 1; target.SampleDesc.Count = 1;
+        target.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        FT_MEDIA_CHECK(device->CreateTexture2D(&target, nullptr, &converted));
+    }
+    std::vector<BYTE> bgra(static_cast<size_t>(width) * height * 4);
+    const BYTE* y_plane = packed.data();
+    const BYTE* uv_plane = packed.data() + static_cast<size_t>(width) * height;
+    const double kr = matrix709 ? 1.5748 : 1.402;
+    const double kgu = matrix709 ? -0.187324 : -0.344136;
+    const double kgv = matrix709 ? -0.468124 : -0.714136;
+    const double kb = matrix709 ? 1.8556 : 1.772;
+    const double y_offset = full_range ? 0.0 : 16.0;
+    const double y_scale = full_range ? (1.0 / 255.0) : (1.0 / 219.0);
+    const double uv_scale = full_range ? (1.0 / 255.0) : (1.0 / 224.0);
+    for (uint32_t y = 0; y < height; ++y) {
+        const BYTE* y_row = y_plane + static_cast<size_t>(y) * width;
+        const BYTE* uv_row = uv_plane + static_cast<size_t>(y / 2) * width;
+        BYTE* dst = bgra.data() + static_cast<size_t>(y) * width * 4;
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint32_t uv_x = x & ~1u;
+            const double fy = (static_cast<double>(y_row[x]) - y_offset) * y_scale;
+            const double fu = (static_cast<double>(uv_row[uv_x]) - 128.0) * uv_scale;
+            const double fv = (static_cast<double>(uv_row[uv_x + 1]) - 128.0) * uv_scale;
+            const auto to_byte = [](double c) -> BYTE { return static_cast<BYTE>(std::clamp(c, 0.0, 1.0) * 255.0 + 0.5); };
+            dst[x * 4 + 0] = to_byte(fy + kb * fu);
+            dst[x * 4 + 1] = to_byte(fy + kgu * fu + kgv * fv);
+            dst[x * 4 + 2] = to_byte(fy + kr * fv);
+            dst[x * 4 + 3] = 255;
+        }
+    }
+    context->UpdateSubresource(converted.Get(), 0, nullptr, bgra.data(), width * 4, 0);
+    return converted;
 }
 ComPtr<ID3D11Texture2D> VideoReader::to_rgb(ID3D11Device* device, ID3D11DeviceContext* immediate) {
     ComPtr<ID3D11VideoDevice> video; FT_MEDIA_CHECK(device->QueryInterface(IID_PPV_ARGS(&video)));
